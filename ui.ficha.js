@@ -1,11 +1,11 @@
 /* =============================================================================
-  ui.ficha.js — RIP 2026 UI Ficha (READ-ONLY) — v2
-  - Resumen:
-      · Saldo = SUM(Movimiento) filtrado por MS P / MS SP si existen
-      · Última CLASE (Tipo="Clase")
-      · Último PAGO (Tipo="Pago")
-      · Pivot chips: SUM(Movimiento) por (Clasificación, Clasificación pagos)
-  - Tabla completa del estudiante (solo lectura)
+  ui.ficha.js — RIP 2026 UI · Ficha de Estudiante + botón “2025”
+  ------------------------------------------------------------------------------
+  - Abre ficha completa (registro 2026 filtrado por estudianteKey)
+  - Render de resumen + tabla
+  - Botón “2025” (on-demand): carga TSV 2025, filtra por estudiante (col D),
+    muestra columnas C→L y ordena por fecha desc (col E)
+  - NO toca el resto del flujo (dashboards / filtros siguen igual)
 ============================================================================= */
 (function () {
   'use strict';
@@ -15,106 +15,80 @@
     return;
   }
 
-  const { escapeHTML, fmtMoney, norm } = window.RIPUI.shared;
+  const RIPCore = window.RIPCore;
+  const { escapeHTML, fmtMoney, setBadge, norm, toast } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
 
-  function showFichaView(ctx) {
-    const { el } = ctx;
-    if (el.dashboardClasView) el.dashboardClasView.style.display = 'none';
-    if (el.dashboardSaldoView) el.dashboardSaldoView.style.display = 'none';
-    if (el.fichaView) el.fichaView.style.display = '';
-  }
+  // ✅ TSV 2025 (Registro 2025 publicado)
+  const TSV_REGISTRO_2025_URL =
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv';
 
-  function setFichaHeader(ctx, title, sub) {
-    const { el } = ctx;
-    if (el.fichaTitle) el.fichaTitle.textContent = title || 'Ficha';
-    if (el.fichaSub) el.fichaSub.textContent = sub || '';
-  }
+  // Cache simple para no re-fetchear cada click
+  const cache2025 = { stamp: 0, headers: null, rows: null };
 
-  // Regla MS P / MS SP
-  function pickRelevantRows(rows) {
-    const hasMSP = rows.some(r => String(r.clasif || '').trim() === 'MS P');
-    const hasMSSP = rows.some(r => String(r.clasif || '').trim() === 'MS SP');
+  // Guardamos el thead “normal” (2026) para poder restaurar luego
+  let baseTheadHTML = '';
+  let baseTheadCaptured = false;
 
-    if (hasMSP || hasMSSP) {
-      const allowed = new Set();
-      if (hasMSP) allowed.add('MS P');
-      if (hasMSSP) allowed.add('MS SP');
-      return rows.filter(r => allowed.has(String(r.clasif || '').trim()));
+  function ensureBaseThead(ctx) {
+    const table = ctx?.el?.tablaContainer?.querySelector?.('table.tbl');
+    const thead = table?.querySelector?.('thead');
+    if (!thead) return null;
+    if (!baseTheadCaptured) {
+      baseTheadHTML = thead.innerHTML;
+      baseTheadCaptured = true;
     }
-    return rows;
+    return thead;
   }
 
-  function inferTipo(r) {
+  function setThead(ctx, headers) {
+    const thead = ensureBaseThead(ctx);
+    if (!thead) return;
+
+    // restore
+    if (!headers || !headers.length) {
+      thead.innerHTML = baseTheadHTML || thead.innerHTML;
+      return;
+    }
+
+    thead.innerHTML =
+      '<tr>' + headers.map((h) => `<th>${escapeHTML(h)}</th>`).join('') + '</tr>';
+  }
+
+  function renderEmpty(ctx, msg, colSpan = 12) {
+    const { el } = ctx;
+    if (!el.tableBody) return;
+    el.tableBody.innerHTML = `<tr><td colspan="${colSpan}" class="empty-td">${escapeHTML(
+      msg || 'No hay registros.'
+    )}</td></tr>`;
+    setBadge(el.badgeCount, 0);
+  }
+
+  function inferTipoLabel(r) {
     const t = String(r.tipo || '').trim();
     if (t) return t;
     const hasPago = !!String(r.pago || '').trim();
     return hasPago ? 'Pago' : 'Clase';
   }
 
-  function findLastDateByTipo(rowsDesc, tipoNeed) {
-    const need = norm(tipoNeed);
-    const hit = rowsDesc.find(r => norm(inferTipo(r)) === need);
-    return hit ? (hit.fechaRaw || '—') : '—';
-  }
-
-  function buildPivot(rows) {
-    const pivot = new Map(); // "a||b" -> sum
-    for (const r of rows) {
-      const a = (r.clasif || '').trim() || 'Sin clasificar';
-      const b = (r.clasifPago || '').trim() || 'Sin clasif. pago';
-      const k = `${a}||${b}`;
-      pivot.set(k, (pivot.get(k) || 0) + (Number(r.movimiento) || 0));
-    }
-
-    return Array.from(pivot.entries())
-      .map(([k, sum]) => {
-        const [a, b] = k.split('||');
-        return { a, b, sum };
-      })
-      .sort((x, y) => Math.abs(y.sum) - Math.abs(x.sum));
-  }
-
-  function renderMiniSaldoChips(ctx, pivotItems) {
-    const { el } = ctx;
-    if (!el.fichaSaldosMini) return;
-
-    const chips = (pivotItems || [])
-      .filter((p) => p.sum !== 0)
-      .slice(0, 36)
-      .map((p) => {
-        const sign = p.sum > 0 ? '+' : '';
-        const cls = p.sum < 0 ? 'saldo-chip neg' : p.sum > 0 ? 'saldo-chip pos' : 'saldo-chip zero';
-        return `
-          <span class="${cls}">
-            <span>${escapeHTML(p.a)} · ${escapeHTML(p.b)}</span>
-            <b>${sign}${fmtMoney(p.sum)}</b>
-          </span>
-        `;
-      })
-      .join('');
-
-    el.fichaSaldosMini.innerHTML = `
-      <div class="saldo-mini">
-        ${chips || `<span class="muted">Sin movimientos agrupables (o todo en 0).</span>`}
-      </div>
-    `;
-  }
-
-  function renderStudentTable(ctx, rows) {
+  function renderTable2026(ctx, rows) {
     const { el } = ctx;
     if (!el.tableBody) return;
 
+    // restaurar headers base (12 cols)
+    setThead(ctx, null);
+
     if (!rows || !rows.length) {
-      el.tableBody.innerHTML = `<tr><td colspan="12" class="empty-td">Sin registros para este estudiante.</td></tr>`;
+      renderEmpty(ctx, 'Este estudiante no tiene registros en 2026.', 12);
       return;
     }
 
     const html = rows
-      .slice(0, 1600)
+      .slice()
+      .sort((a, b) => (b.fechaTs || 0) - (a.fechaTs || 0))
+      .slice(0, 2000)
       .map((r) => {
-        const tipo = inferTipo(r);
-
+        const tipo = inferTipoLabel(r);
         const mov = Number(r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
         const movText = `${mov > 0 ? '+' : ''}${fmtMoney(mov)}`;
@@ -131,7 +105,7 @@
             <td>${escapeHTML(r.comentario)}</td>
             <td class="mono">${escapeHTML(r.id)}</td>
             <td>${escapeHTML(r.clasif)}</td>
-            <td>${escapeHTML(r.clasifPago)}</td>
+            <td>${escapeHTML(r.clasifPago || '')}</td>
             <td class="${movClass}">${movText}</td>
           </tr>
         `;
@@ -139,60 +113,271 @@
       .join('');
 
     el.tableBody.innerHTML = html;
+    setBadge(el.badgeCount, rows.length);
   }
 
-  function renderFicha(ctx, { studentName, fichaRowsDesc, paramClasif }) {
-    const { el } = ctx;
-    showFichaView(ctx);
+  function renderMiniPivots(ctx, rows) {
+    const elMini = ctx?.el?.fichaSaldosMini;
+    if (!elMini) return;
 
-    setFichaHeader(
-      ctx,
-      studentName,
-      `Resumen + registro (solo lectura) · Parámetros: ${paramClasif || '—'}`
-    );
-
-    // Última clase / último pago según Tipo (col C)
-    const lastClase = findLastDateByTipo(fichaRowsDesc, 'Clase');
-    const lastPago = findLastDateByTipo(fichaRowsDesc, 'Pago');
-
-    // Reutilizamos los slots existentes en tu HTML:
-    if (el.fichaFecha) el.fichaFecha.textContent = lastClase;    // "Última clase"
-    if (el.fichaProxPago) el.fichaProxPago.textContent = lastPago; // "Último pago"
-
-    // Saldo con regla MS P / MS SP
-    const relevantRows = pickRelevantRows(fichaRowsDesc);
-    const saldo = relevantRows.reduce((acc, r) => acc + (Number(r.movimiento) || 0), 0);
-
-    if (el.fichaUltPago) {
-      el.fichaUltPago.innerHTML = `
-        <span class="${saldo < 0 ? 'mov-neg' : saldo > 0 ? 'mov-pos' : 'mov-zero'}">
-          ${saldo > 0 ? '+' : ''}${fmtMoney(saldo)}
-        </span>
-      `;
+    if (!rows || !rows.length) {
+      elMini.innerHTML = '';
+      return;
     }
 
-    // Chips pivot con filas relevantes
-    const pivotItems = buildPivot(relevantRows);
-    renderMiniSaldoChips(ctx, pivotItems);
+    const m = new Map();
+    for (const r of rows) {
+      const k = String(r.clasifPago || r.clasif || '').trim() || 'Sin clasif';
+      const key = norm(k);
+      const cur = m.get(key) || { label: k, sum: 0, count: 0 };
+      cur.sum += Number(r.movimiento) || 0;
+      cur.count += 1;
+      m.set(key, cur);
+    }
+    const piv = Array.from(m.values()).sort((a, b) => (b.sum || 0) - (a.sum || 0));
 
-    // Tabla completa del estudiante (toda)
-    renderStudentTable(ctx, fichaRowsDesc);
+    elMini.innerHTML = piv
+      .slice(0, 14)
+      .map((p) => {
+        const sum = Number(p.sum) || 0;
+        const tone = sum < 0 ? 'neg' : sum > 0 ? 'pos' : 'zero';
+        return `
+          <span class="chip ${tone}">
+            <span class="chip-t">${escapeHTML(p.label)}</span>
+            <span class="chip-v">${escapeHTML(fmtMoney(sum))}</span>
+            <span class="chip-n">${escapeHTML(String(p.count))}</span>
+          </span>
+        `;
+      })
+      .join('');
   }
 
+  // =========================
+  // 2025 (TSV) helpers
+  // =========================
+  function parseTSVText(tsvText) {
+    const lines = String(tsvText || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .filter(Boolean);
+
+    if (!lines.length) return { headers: [], rows: [] };
+
+    const headers = lines[0].split('\t').map((s) => s.trim());
+    const rows = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split('\t');
+      while (parts.length < headers.length) parts.push('');
+      rows.push(parts);
+    }
+
+    return { headers, rows };
+  }
+
+  function pickIndex(headers, candidates, fallbackIndex) {
+    const lower = headers.map((h) => norm(h));
+    for (const c of candidates) {
+      const idx = lower.indexOf(norm(c));
+      if (idx >= 0) return idx;
+    }
+    return fallbackIndex;
+  }
+
+  function toDateTs(raw) {
+    const d = RIPCore.util.parseDate(raw);
+    return d ? d.getTime() : 0;
+  }
+
+  async function loadRegistro2025Once() {
+    const now = Date.now();
+    if (cache2025.rows && now - cache2025.stamp < 1000 * 60 * 10) return cache2025;
+
+    const res = await fetch(TSV_REGISTRO_2025_URL, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!res.ok) throw new Error(`No pude cargar TSV 2025 (${res.status})`);
+
+    const text = await res.text();
+    const parsed = parseTSVText(text);
+
+    cache2025.stamp = now;
+    cache2025.headers = parsed.headers;
+    cache2025.rows = parsed.rows;
+
+    return cache2025;
+  }
+
+  function renderTable2025(ctx, headers, rowsCL) {
+    const { el } = ctx;
+    if (!el.tableBody) return;
+
+    setThead(ctx, headers);
+
+    if (!rowsCL || !rowsCL.length) {
+      renderEmpty(ctx, 'No hay registros en 2025 para este estudiante.', headers.length);
+      return;
+    }
+
+    const html = rowsCL
+      .slice(0, 2500)
+      .map((cells) => '<tr>' + cells.map((c) => `<td>${escapeHTML(c)}</td>`).join('') + '</tr>')
+      .join('');
+
+    el.tableBody.innerHTML = html;
+    setBadge(el.badgeCount, rowsCL.length);
+  }
+
+  async function show2025ForStudent(ctx, studentName) {
+    const { el } = ctx;
+    if (el?.fichaSub) el.fichaSub.textContent = 'Cargando 2025…';
+
+    const pack = await loadRegistro2025Once();
+    const headers = pack.headers || [];
+    const rows = pack.rows || [];
+
+    // En 2025: estudiante = col D, fecha = col E
+    const idxStudent = pickIndex(headers, ['Estudiantes', 'Estudiante', 'Nombre', 'Nombre estudiante'], 3);
+    const idxFecha = pickIndex(headers, ['Fecha', 'fecha'], 4);
+
+    // Mostrar C→L => índices 2..11
+    const start = 2;
+    const endExcl = 12;
+
+    const headersCL = headers.length
+      ? headers.slice(start, endExcl)
+      : Array.from({ length: 10 }, (_, i) => `Col ${String.fromCharCode(67 + i)}`);
+
+    const target = norm(studentName);
+
+    const filtered = rows
+      .filter((r) => norm(r[idxStudent]) === target)
+      .map((r) => ({
+        dt: toDateTs(r[idxFecha]),
+        cells: r.slice(start, endExcl).map((v) => String(v ?? ''))
+      }))
+      .sort((a, b) => (b.dt || 0) - (a.dt || 0));
+
+    renderTable2025(ctx, headersCL, filtered.map((x) => x.cells));
+    if (el?.fichaSub) el.fichaSub.textContent = 'Mostrando Registro 2025 (solo lectura)';
+  }
+
+  // =========================
+  // UI: botón 2025 (reusable)
+  // =========================
+  function ensureBtn2025(onClick) {
+    const actions = document.querySelector('.ficha-actions');
+    if (!actions) return null;
+
+    let btn = document.getElementById('btnLoad2025');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'btnLoad2025';
+      btn.type = 'button';
+      btn.className = 'btn ghost';
+      btn.textContent = '2025';
+      btn.title = 'Ver registro 2025 de este estudiante';
+
+      // Insertar a la izquierda del PDF
+      const pdf = document.getElementById('btnPDF');
+      if (pdf && pdf.parentNode === actions) actions.insertBefore(btn, pdf);
+      else actions.prepend(btn);
+    }
+
+    btn.onclick = onClick;
+    btn.style.display = '';
+    return btn;
+  }
+
+  // =========================
+  // Helper: habilitar toggle 2025 para la vista actual (ficha o base)
+  // - restoreFn se encarga de volver a pintar 2026 sin tocar nada más
+  // =========================
+  function enable2025Toggle(ctx, opts) {
+    const { el } = ctx || {};
+    const studentName = opts?.studentName || '';
+    const restoreFn = typeof opts?.restoreFn === 'function' ? opts.restoreFn : null;
+
+    if (!studentName) {
+      const b = document.getElementById('btnLoad2025');
+      if (b) b.style.display = 'none';
+      return;
+    }
+
+    let showing = false;
+    const btn = ensureBtn2025(async () => {
+      try {
+        if (!showing) {
+          toast(el?.toastWrap, 'Cargando registro 2025…', 'info');
+          await show2025ForStudent(ctx, studentName);
+          showing = true;
+          btn.textContent = 'Volver 2026';
+          btn.title = 'Volver a ver 2026';
+        } else {
+          setThead(ctx, null);
+          if (restoreFn) restoreFn();
+          showing = false;
+          btn.textContent = '2025';
+          btn.title = 'Ver registro 2025 de este estudiante';
+        }
+      } catch (err) {
+        console.error(err);
+        toast(el?.toastWrap, String(err?.message || err), 'warn');
+        setThead(ctx, null);
+        if (restoreFn) restoreFn();
+        showing = false;
+        btn.textContent = '2025';
+        btn.title = 'Ver registro 2025 de este estudiante';
+      }
+    });
+
+    return btn;
+  }
+
+  // =========================
+  // Public API: abrir ficha (desde dashboard)
+  // =========================
   function openFichaByKey(ctx, state, studentKey) {
-    if (!studentKey) return;
+    const { el } = ctx;
+    if (!el?.fichaView) return;
 
-    state.currentStudentKey = studentKey;
+    state.currentStudentKey = studentKey || '';
 
-    const s = state.allStudents.find((x) => x.key === studentKey);
-    const name = s ? s.name : 'Estudiante';
-    const paramClasif = s ? (s.paramClasif || '') : '';
+    // mostrar ficha
+    if (el.dashboardClasView) el.dashboardClasView.style.display = 'none';
+    if (el.dashboardSaldoView) el.dashboardSaldoView.style.display = 'none';
+    el.fichaView.style.display = '';
 
-    const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
-    const rowsDesc = ficha.rows || [];
+    // datos estudiante
+    const student = (state.allStudents || []).find((s) => s.key === studentKey);
+    const name = student?.name || 'Estudiante';
 
-    renderFicha(ctx, { studentName: name, fichaRowsDesc: rowsDesc, paramClasif });
+    if (el.fichaTitle) el.fichaTitle.textContent = 'Ficha · Registro';
+    if (el.fichaSub) el.fichaSub.textContent = 'Mostrando Registro 2026 (solo lectura)';
+    if (el.fichaStudent) el.fichaStudent.textContent = name;
+
+    const rows = (state.registro || []).filter((r) => r.estudianteKey === studentKey);
+    const last = rows.slice().sort((a, b) => (b.fechaTs || 0) - (a.fechaTs || 0))[0];
+
+    if (el.fichaFecha) el.fichaFecha.textContent = last?.fechaRaw || '—';
+
+    const saldo = rows.reduce((acc, r) => acc + (Number(r.movimiento) || 0), 0);
+    if (el.fichaUltPago) el.fichaUltPago.textContent = fmtMoney(saldo);
+
+    const clasifParam = student?.clasifParam || student?.clasif || student?.paramClasif || '';
+    if (el.fichaProxPago) el.fichaProxPago.textContent = clasifParam || '—';
+
+    renderMiniPivots(ctx, rows);
+    renderTable2026(ctx, rows);
+
+    // habilitar 2025 y restaurar a la misma ficha 2026
+    enable2025Toggle(ctx, {
+      studentName: name,
+      restoreFn: () => renderTable2026(ctx, rows)
+    });
   }
 
-  RIPUI.ficha = { openFichaByKey };
+  RIPUI.ficha = { openFichaByKey, enable2025Toggle };
 })();
