@@ -354,24 +354,6 @@ body{
   background: rgba(12,65,196,.03);
 }
 
-/* =========================
-   Modo histórico 2025
-   - Solo C→L (10 columnas)
-   - Oculta: Clasif. pagos + Movimiento
-========================= */
-body.mode-2025 #tablaContainer .tbl thead th:nth-child(11),
-body.mode-2025 #tablaContainer .tbl thead th:nth-child(12),
-body.mode-2025 #tablaContainer .tbl tbody td:nth-child(11),
-body.mode-2025 #tablaContainer .tbl tbody td:nth-child(12){
-  display:none;
-}
-
-body.mode-2025 .brand-title::after{
-  content:" · 2025";
-  font-weight:800;
-  opacity:.65;
-}
-
 .mov-pos{ color: var(--ok); font-weight: 900; }
 .mov-neg{ color: var(--warn); font-weight: 900; }
 .mov-zero{ color: #475569; font-weight: 800; }
