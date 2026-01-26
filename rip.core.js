@@ -331,7 +331,124 @@
     };
   };
 
+  
   // =========================
+  // Fast path: cargar SOLO 2026 (para que la UI quede usable en 1er paint)
+  // =========================
+  RIPCore.loadRegistroFast = async ({ force = false } = {}) => {
+    const meta = readCacheMeta();
+    const canUseCache = !force;
+
+    // Registro (cache first)
+    let registroPack = null;
+    if (canUseCache && isFresh(meta.registroStamp)) {
+      registroPack = readCache(RIPCore.CONFIG.CACHE_KEYS.registro);
+    }
+
+    if (!registroPack) {
+      const t = await fetchText(RIPCore.CONFIG.TSV_REGISTRO_URL);
+      const parsed = parseTSV(t);
+
+      validateHeaders(parsed.headers);
+
+      const HAS_MOV = parsed.headers.includes(COLS.movimiento);
+      const HAS_CLASIF_PAGO = parsed.headers.includes(COLS.clasifPago);
+
+      const rows = parsed.rows.map((r) => {
+        const estudiante = r[COLS.estudiante] || '';
+        const d = parseDate(r[COLS.fecha]);
+        const movimiento = HAS_MOV ? safeNum(r[COLS.movimiento]) : 0;
+
+        return {
+          raw: r,
+          id: r[COLS.id] || '',
+          estudiante,
+          estudianteKey: norm(estudiante),
+          fechaRaw: r[COLS.fecha] || '',
+          fechaObj: d,
+          fechaTs: d ? d.getTime() : 0,
+          servicio: r[COLS.servicio] || '',
+          servicioKey: norm(r[COLS.servicio] || ''),
+          hora: r[COLS.hora] || '',
+          profesor: r[COLS.profesor] || '',
+          profesorKey: norm(r[COLS.profesor] || ''),
+          tipo: r[COLS.tipo] || '',
+          pago: r[COLS.pago] || '',
+          comentario: r[COLS.comentario] || '',
+          clasif: r[COLS.clasif] || '',
+          clasifPago: HAS_CLASIF_PAGO ? (r[COLS.clasifPago] || '') : '',
+          movimiento
+        };
+      });
+
+      registroPack = { rows };
+      writeCache(RIPCore.CONFIG.CACHE_KEYS.registro, registroPack);
+      meta.registroStamp = now();
+      writeCacheMeta(meta);
+    }
+
+    const registro = registroPack.rows || [];
+
+    // Estudiantes únicos (SIN params todavía)
+    const set = new Map();
+    for (const r of registro) {
+      if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+    }
+    const allStudents = Array.from(set.entries())
+      .map(([k, name]) => ({ key: k, name, paramClasif: '' }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+    return {
+      registro,
+      allStudents,
+      meta: readCacheMeta()
+    };
+  };
+
+  // =========================
+  // Fast path: cargar SOLO parámetros (para dashboards / clasificación)
+  // =========================
+  RIPCore.loadParamsOnly = async ({ force = false } = {}) => {
+    const meta = readCacheMeta();
+    const canUseCache = !force;
+
+    let paramsPack = null;
+    if (canUseCache && isFresh(meta.paramsStamp)) {
+      paramsPack = readCache(RIPCore.CONFIG.CACHE_KEYS.params);
+    }
+
+    if (!paramsPack) {
+      const t = await fetchText(RIPCore.CONFIG.TSV_PARAMS_URL);
+
+      // Params: Col A estudiante, Col F índice 5 clasificación
+      const lines = String(t ?? '')
+        .replace(/\r/g, '')
+        .split('\n')
+        .filter((l) => l.trim().length);
+
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split('\t');
+        const student = (parts[0] ?? '').trim();
+        const clasif = (parts[5] ?? '').trim(); // F = index 5
+        if (student) rows.push({ student, clasif });
+      }
+
+      const map = new Map();
+      rows.forEach((p) => map.set(norm(p.student), p.clasif || ''));
+
+      paramsPack = { rows, map };
+      writeCache(RIPCore.CONFIG.CACHE_KEYS.params, paramsPack);
+      meta.paramsStamp = now();
+      writeCacheMeta(meta);
+    }
+
+    return {
+      paramsMap: paramsPack.map || new Map(),
+      meta: readCacheMeta()
+    };
+  };
+// =========================
   // Dashboards
   // =========================
   RIPCore.buildClasificacionDashboard = (students) => {
