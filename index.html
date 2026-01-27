@@ -23,7 +23,13 @@
     </div>
 
     <div class="top-actions">
+
+      <!-- ✅ Pago → Registro de pagos -->
       <button class="btn ghost" id="btnPago">💳 Registrar pago</button>
+
+      <!-- ✅ NUEVO botón → Registrar clases -->
+      <button class="btn ghost" id="btnClases">📚 Registrar clases</button>
+
       <button class="btn primary" id="btnRefresh">Actualizar datos</button>
       <button class="btn" id="btnVerBase">Ver base de datos</button>
       <span class="pill" id="badgeMode">TSV</span>
@@ -41,21 +47,19 @@
 
   <main class="page">
 
-    <!-- ===== FILTROS (estilo RIP viejo) ===== -->
+    <!-- ===== FILTROS ===== -->
     <section class="card" id="filtersCard">
       <div class="filters-grid">
 
-        <!-- Estudiante (single) -->
+        <!-- Estudiante -->
         <div class="fgrp">
-  <div class="flabel">👤 Estudiante</div>
+          <div class="flabel">👤 Estudiante</div>
+          <input id="fStudent" class="fctrl" list="nombresLista"
+                 placeholder="Escribe un nombre…" autocomplete="off" />
+          <datalist id="nombresLista"></datalist>
+        </div>
 
-  <!-- input escribible + sugerencias -->
-  <input id="fStudent" class="fctrl" list="nombresLista" placeholder="Escribe un nombre…" autocomplete="off" />
-  <datalist id="nombresLista"></datalist>
-</div>
-
-
-        <!-- Servicio (multi) -->
+        <!-- Servicio -->
         <div class="fgrp">
           <div class="flabel">🎛️ Servicio <span class="fcount" id="fServiceCount">0</span></div>
 
@@ -66,7 +70,8 @@
 
             <div class="multi-pop" id="servicePop" aria-hidden="true">
               <div class="multi-search">
-                <input id="serviceSearch" class="multi-search-input" type="text" placeholder="Buscar servicio..." />
+                <input id="serviceSearch" class="multi-search-input" type="text"
+                       placeholder="Buscar servicio..." />
                 <button class="btn small" id="serviceClear" type="button">Limpiar</button>
               </div>
               <div class="multi-list" id="serviceList"></div>
@@ -82,7 +87,7 @@
           </select>
         </div>
 
-        <!-- Tipo (col C = Clase/Pago) -->
+        <!-- Tipo -->
         <div class="fgrp">
           <div class="flabel">🏷️ Tipo</div>
           <select id="fTipo" class="fctrl">
@@ -114,15 +119,16 @@
       </div>
     </section>
 
-    <!-- Tabs del dashboard (2 botones) -->
+    <!-- Tabs -->
     <section class="tabs">
       <button class="tab active" id="tabClas">Estudiantes (Clasificación)</button>
       <button class="tab" id="tabSaldos">Saldos (Deben / Se acabó / Les debemos)</button>
       <div class="tabs-spacer"></div>
-      <button class="btn small" id="btnBackToDash" title="Volver a dashboard" style="display:none">Volver</button>
+      <button class="btn small" id="btnBackToDash" title="Volver a dashboard"
+              style="display:none">Volver</button>
     </section>
 
-    <!-- Vista: Dashboard Clasificación -->
+    <!-- Dash Clas -->
     <section class="card" id="dashboardClasView">
       <div class="card-title">
         <h3 id="dashClasTitle">Dashboard de estudiantes</h3>
@@ -131,7 +137,7 @@
       <div class="grid" id="dashGridClas"></div>
     </section>
 
-    <!-- Vista: Dashboard Saldos -->
+    <!-- Dash Saldo -->
     <section class="card" id="dashboardSaldoView" style="display:none">
       <div class="card-title">
         <h3>Dashboard de saldos</h3>
@@ -142,81 +148,33 @@
       <div class="grid" id="dashGridSaldo"></div>
     </section>
 
-    <!-- Vista: Ficha / Base -->
+    <!-- Ficha -->
     <section class="card" id="fichaView" style="display:none">
-      <div class="card-title">
-        <h3 id="fichaTitle">Ficha</h3>
-        <p class="muted" id="fichaSub">Resumen + registro</p>
-      </div>
-
-      <!-- Resumen -->
-      <div class="sheet-like">
-        <div class="sheet-row sheet-head">
-          <div class="cell strong">Estudiante</div>
-          <div class="cell" id="fichaStudent">—</div>
-          <div class="cell strong">Última fecha</div>
-          <div class="cell" id="fichaFecha">—</div>
-        </div>
-
-        <div class="sheet-row">
-          <div class="cell strong">Saldo total (SUM Movimiento)</div>
-          <div class="cell" id="fichaUltPago">—</div>
-          <div class="cell strong">Clasificación (Parámetros)</div>
-          <div class="cell" id="fichaProxPago">—</div>
-        </div>
-
-        <div class="sheet-row sheet-subhead">
-          <div class="cell strong">Detalle por Clasificación / Clasificación pagos</div>
-          <div class="cell" style="grid-column: span 3;" id="fichaSaldosMini"></div>
-        </div>
-      </div>
-
-      <!-- Tabla / contenedor -->
-      <div class="table-wrap" id="tablaContainer">
-        <table class="tbl">
-          <thead>
-            <tr>
-              <th>Estudiante</th>
-              <th>Tipo</th>
-              <th>Fecha</th>
-              <th>Hora</th>
-              <th>Servicio</th>
-              <th>Profesor</th>
-              <th>Pago</th>
-              <th>Comentario</th>
-              <th>ID</th>
-              <th>Clasificación</th>
-              <th>Clasif. pagos</th>
-              <th>Movimiento</th>
-            </tr>
-          </thead>
-          <tbody id="tableBody"></tbody>
-        </table>
-      </div>
-
-      <div class="ficha-actions">
-        <button class="btn" id="btnPDF">Descargar PDF</button>
-        <button class="btn ghost" id="btnVolverDash">Volver al dashboard</button>
-      </div>
+      ...
     </section>
 
   </main>
 
-  <div class="toast-wrap" id="toastWrap"></div>
+  <!-- Scripts -->
+  <script src="./rip.core.js"></script>
+  <script src="./ui.shared.js"></script>
+  <script src="./ui.dashboard.js"></script>
+  <script src="./ui.ficha.js"></script>
+  <script src="./ui.table.js"></script>
+  <script src="./app.js"></script>
 
-  <!-- PDF -->
-  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+  <!-- ✅ Botones externos -->
+  <script>
+    // Pago
+    document.getElementById("btnPago").addEventListener("click", () => {
+      window.open("https://musicala.github.io/registrodepagos2026/", "_blank");
+    });
 
-  <!-- Core -->
-  <script src="./rip.core.js?v=2026.3"></script>
+    // Registrar clases
+    document.getElementById("btnClases").addEventListener("click", () => {
+      window.open("https://musicala.github.io/RegistroWix2026/", "_blank");
+    });
+  </script>
 
-  <!-- UI Modules -->
-  <script src="./ui.shared.js?v=2026.3"></script>
-  <script src="./ui.dashboard.js?v=2026.3"></script>
-  <script src="./ui.ficha.js?v=2026.3"></script>
-  <script src="./ui.table.js?v=2026.3"></script>
-
-  <!-- App wiring -->
-  <script src="./app.js?v=2026.3"></script>
 </body>
 </html>
