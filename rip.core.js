@@ -69,24 +69,58 @@
 
   // Fecha: soporta ISO, dd/mm/yyyy, yyyy-mm-dd, etc.
   const parseDate = (s) => {
-    const raw = String(s ?? '').trim();
-    if (!raw) return null;
+  const raw = String(s ?? '').trim();
+  if (!raw) return null;
 
-    // ISO o yyyy-mm-dd
-    const iso = Date.parse(raw);
-    if (!Number.isNaN(iso)) return new Date(iso);
+  // 1) PRIORIDAD TOTAL: formato día/mes/año
+  // soporta dd/mm/aa, dd/mm/aaaa, dd-mm-aa, dd-mm-aaaa
+  let m = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (m) {
+    const dd = Number(m[1]);
+    const mm = Number(m[2]);
+    let yy = Number(m[3]);
 
-    // dd/mm/yyyy o dd-mm-yyyy
-    const m = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-    if (m) {
-      const dd = Number(m[1]);
-      const mm = Number(m[2]) - 1;
-      const yy = Number(m[3].length === 2 ? '20' + m[3] : m[3]);
-      const d = new Date(yy, mm, dd);
-      if (!Number.isNaN(d.getTime())) return d;
+    if (yy < 100) yy += 2000;
+
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      const d = new Date(yy, mm - 1, dd);
+      // validación real de fecha
+      if (
+        d.getFullYear() === yy &&
+        d.getMonth() === mm - 1 &&
+        d.getDate() === dd
+      ) {
+        return d;
+      }
     }
-    return null;
-  };
+  }
+
+  // 2) ISO real: yyyy-mm-dd
+  m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) {
+    const yy = Number(m[1]);
+    const mm = Number(m[2]);
+    const dd = Number(m[3]);
+
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      const d = new Date(yy, mm - 1, dd);
+      if (
+        d.getFullYear() === yy &&
+        d.getMonth() === mm - 1 &&
+        d.getDate() === dd
+      ) {
+        return d;
+      }
+    }
+  }
+
+  // 3) Último intento solo para formatos largos tipo:
+  // "Wed Mar 12 2026 ..." o similares no ambiguos
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  return null;
+};
 
   const fmtMoney = (n) => {
     const v = Number(n) || 0;
@@ -513,46 +547,48 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
   // Filtros de tabla
   // =========================
   RIPCore.applyFilters = (registro, filters) => {
-    const {
-      estudianteKey, // exact match
-      profesores, // string o ''
-      tipo, // 'all'|'clase'|'pago'
-      serviciosSet, // Set(norm(serv))
-      fromTs, // number|0
-      toTs // number|0 (inclusive)
-    } = filters || {};
+  const {
+    estudianteKey,
+    profesores,
+    tipo,
+    serviciosSet,
+    fromTs,
+    toTs
+  } = filters || {};
 
-    return registro.filter((r) => {
-      if (estudianteKey && r.estudianteKey !== estudianteKey) return false;
+  return registro.filter((r) => {
+    if (estudianteKey && r.estudianteKey !== estudianteKey) return false;
 
-      if (profesores && norm(r.profesor) !== norm(profesores)) return false;
+    if (profesores && norm(r.profesor) !== norm(profesores)) return false;
 
-      // Si tu TSV usa COLS.tipo (“Clase”) como tipo literal, úsalo aquí
-      // Si no, caemos al heurístico viejo usando campos pago (y listo).
-      if (tipo === 'clase') {
-        const t = norm(r.tipo);
-        const isClase = t ? t.includes('clase') : !String(r.pago || '').trim();
-        if (!isClase) return false;
-      } else if (tipo === 'pago') {
-        const t = norm(r.tipo);
-        const isPago = t ? t.includes('pago') : !!String(r.pago || '').trim();
-        if (!isPago) return false;
-      }
+    if (tipo === 'clase') {
+      const t = norm(r.tipo);
+      const isClase = t ? t.includes('clase') : !String(r.pago || '').trim();
+      if (!isClase) return false;
+    } else if (tipo === 'pago') {
+      const t = norm(r.tipo);
+      const isPago = t ? t.includes('pago') : !!String(r.pago || '').trim();
+      if (!isPago) return false;
+    }
 
-      if (serviciosSet && serviciosSet.size) {
-        if (!serviciosSet.has(r.servicioKey)) return false;
-      }
+    if (serviciosSet && serviciosSet.size) {
+      if (!serviciosSet.has(r.servicioKey)) return false;
+    }
 
-      if (fromTs) {
-        if (!r.fechaTs || r.fechaTs < fromTs) return false;
-      }
-      if (toTs) {
-        if (!r.fechaTs || r.fechaTs > toTs) return false;
-      }
+    // Fecha robusta: si no existe fechaTs, la calcula desde fechaRaw
+    let rowTs = Number(r.fechaTs) || 0;
+    if (!rowTs && r.fechaRaw) {
+      const d = parseDate(r.fechaRaw);
+      rowTs = d ? d.getTime() : 0;
+      r.fechaTs = rowTs; // cachea en memoria para próximas vueltas
+    }
 
-      return true;
-    });
-  };
+    if (fromTs && (!rowTs || rowTs < fromTs)) return false;
+    if (toTs && (!rowTs || rowTs > toTs)) return false;
+
+    return true;
+  });
+};
 
   // Exports
   RIPCore.COL_LABELS = COLS;

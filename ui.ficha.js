@@ -1,10 +1,11 @@
 /* =============================================================================
-  ui.ficha.js — RIP 2026 UI Ficha (READ-ONLY) + Toggle 2025 (On-demand)
+  ui.ficha.js — RIP 2026 UI Ficha (READ-ONLY) + Toggle 2025 + Sync Programación
   - openFichaByKey: abre ficha completa de un estudiante (2026)
   - Toggle 2025: botón "2025" (solo cuando hay estudiante seleccionado)
     * Carga TSV 2025 (col D = estudiante, col E = fecha dd/mm/aaaa)
     * Muestra columnas C..L, ordenado por fecha desc
     * No calcula movimientos
+  - Integra automáticamente bloque de Programación si existe window.RIPProgramacion
 ============================================================================= */
 (function () {
   'use strict';
@@ -14,7 +15,7 @@
     return;
   }
 
-  const { escapeHTML, fmtMoney, toast, norm } = window.RIPUI.shared;
+  const { escapeHTML, fmtMoney, toast, norm, show, hide, setText, setHTML } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
 
   const TSV_REGISTRO_2025_URL =
@@ -40,7 +41,7 @@
 
   function parseDMY(dmy) {
     const s = String(dmy || '').trim();
-    // dd/mm/aaaa
+
     let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
     if (m) {
       let dd = parseInt(m[1], 10);
@@ -50,7 +51,7 @@
       const dt = new Date(yy, mm - 1, dd);
       return isNaN(dt.getTime()) ? 0 : dt.getTime();
     }
-    // yyyy-mm-dd (por si acaso)
+
     m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
     if (m) {
       const yy = parseInt(m[1], 10);
@@ -59,6 +60,7 @@
       const dt = new Date(yy, mm - 1, dd);
       return isNaN(dt.getTime()) ? 0 : dt.getTime();
     }
+
     return 0;
   }
 
@@ -92,7 +94,7 @@
   }
 
   // =========================
-  // Render helpers (2026)
+  // Helpers render 2026
   // =========================
   function inferTipoLabel(r) {
     const t = String(r.tipo || '').trim();
@@ -141,11 +143,12 @@
   }
 
   // =========================
-  // Render helpers (2025)
+  // Helpers render 2025
   // =========================
   function setTableHeader(headersSlice) {
     const thead = document.querySelector('#tablaContainer thead');
     if (!thead) return;
+
     thead.innerHTML =
       '<tr>' + headersSlice.map((h) => '<th>' + escapeHTML(h || '') + '</th>').join('') + '</tr>';
   }
@@ -165,12 +168,12 @@
   }
 
   // =========================
-  // Toggle 2025 wiring
+  // Botones 2025
   // =========================
-  function showYearButtons(ctx, show) {
+  function showYearButtons(ctx, showButtons) {
     const { el } = ctx;
-    if (el.btnTop2025) el.btnTop2025.style.display = show ? '' : 'none';
-    if (el.btn2025) el.btn2025.style.display = show ? '' : 'none';
+    if (el.btnTop2025) el.btnTop2025.style.display = showButtons ? '' : 'none';
+    if (el.btn2025) el.btn2025.style.display = showButtons ? '' : 'none';
   }
 
   function attachToggle(ctx, state) {
@@ -178,7 +181,6 @@
 
     if (!el.btnTop2025 && !el.btn2025) return;
 
-    // guarda el thead 2026 (una vez)
     if (!state.__thead2026HTML) {
       const thead = document.querySelector('#tablaContainer thead');
       state.__thead2026HTML = thead ? thead.innerHTML : '';
@@ -186,12 +188,13 @@
 
     const go2026 = () => {
       state.__viewYear = '2026';
-      // restaura header y re-render de la ficha 2026
+
       const thead = document.querySelector('#tablaContainer thead');
       if (thead && state.__thead2026HTML) thead.innerHTML = state.__thead2026HTML;
 
-      // reabre ficha para garantizar consistencia (sin tocar filtros globales)
-      if (state.currentStudentKey) openFichaByKey(ctx, state, state.currentStudentKey);
+      if (state.currentStudentKey) {
+        openFichaByKey(ctx, state, state.currentStudentKey);
+      }
 
       if (el.btnTop2025) el.btnTop2025.textContent = '🗂️ 2025';
       if (el.btn2025) el.btn2025.textContent = '2025';
@@ -205,15 +208,15 @@
         el.btnTop2025.textContent = 'Cargando 2025…';
         el.btnTop2025.disabled = true;
       }
-      if (el.btn2025) el.btn2025.disabled = true;
+      if (el.btn2025) {
+        el.btn2025.disabled = true;
+      }
 
       try {
         const pack = await loadStudent2025(studentName);
         state.__viewYear = '2025';
 
-        // cambia el subtítulo para que se entienda el modo
-        if (el.fichaSub) el.fichaSub.textContent = 'Registro 2025 (solo lectura)';
-
+        setText(el.fichaSub, 'Registro 2025 (solo lectura)');
         setTableHeader(pack.headersSlice);
         setTableBodySimple(pack.rowsSlice);
 
@@ -239,52 +242,47 @@
   }
 
   // =========================
-  // Core: open ficha por key
+  // View helpers
   // =========================
   function showFichaContainer(ctx) {
     const { el } = ctx;
-    if (el.fichaView) el.fichaView.style.display = '';
-    if (el.dashboardClasView) el.dashboardClasView.style.display = 'none';
-    if (el.dashboardSaldoView) el.dashboardSaldoView.style.display = 'none';
 
-    if (el.btnBackToDash) el.btnBackToDash.style.display = '';
+    show(el.fichaView);
+    hide(el.dashboardClasView);
+    hide(el.dashboardSaldoView);
+    hide(el.dashboardProgView);
+
+    show(el.btnBackToDash);
   }
 
-  function openFichaByKey(ctx, state, studentKey) {
+  function resetFichaVisualState(ctx, state) {
     const { el } = ctx;
-    if (!studentKey) return;
 
-    // estado actual
-    state.currentStudentKey = studentKey;
+    state.__viewYear = '2026';
 
-    const student = (state.allStudents || []).find((s) => s.key === studentKey);
-    state.currentStudentName = student ? student.name : '';
+    if (state.__thead2026HTML) {
+      const thead = document.querySelector('#tablaContainer thead');
+      if (thead) thead.innerHTML = state.__thead2026HTML;
+    }
 
-    // vista
-    showFichaContainer(ctx);
+    show(el.tablaContainer);
+    hide(el.programacionStudentView);
 
-    // botones
-    if (el.btnPDF) el.btnPDF.style.display = '';
-    if (el.btnVolverDash) el.btnVolverDash.style.display = '';
+    if (el.programacionEmbed) el.programacionEmbed.innerHTML = '';
+  }
 
-    // activa botones 2025 SOLO si hay estudiante
-    showYearButtons(ctx, true);
-
-    // construye ficha (core)
-    const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
+  function renderFichaSummary(ctx, student, ficha) {
+    const { el } = ctx;
     const rows = ficha.rows || [];
 
-    // header
-    if (el.fichaTitle) el.fichaTitle.textContent = 'Ficha · ' + (student ? student.name : 'Estudiante');
-    if (el.fichaSub) el.fichaSub.textContent = 'Registro 2026 (solo lectura)';
+    setText(el.fichaTitle, 'Ficha · ' + (student ? student.name : 'Estudiante'));
+    setText(el.fichaSub, 'Registro 2026 (solo lectura)');
 
-    // summary
-    if (el.fichaStudent) el.fichaStudent.textContent = student ? student.name : '—';
+    setText(el.fichaStudent, student ? student.name : '—');
 
     const last = rows[0];
-    if (el.fichaFecha) el.fichaFecha.textContent = last ? (last.fechaRaw || '—') : '—';
+    setText(el.fichaFecha, last ? (last.fechaRaw || '—') : '—');
 
-    // ultimo pago: primer row con pago no vacío
     let ultimoPago = null;
     for (const r of rows) {
       if (String(r.pago || '').trim()) {
@@ -292,31 +290,61 @@
         break;
       }
     }
-    if (el.fichaUltPago) el.fichaUltPago.textContent = ultimoPago ? (ultimoPago.pago || '—') : '—';
 
-    // prox pago (si lo usas en parámetros; si no, dejamos rayita)
-    if (el.fichaProxPago) el.fichaProxPago.textContent = '—';
+    setText(el.fichaUltPago, ultimoPago ? (ultimoPago.pago || '—') : '—');
+    setText(el.fichaProxPago, '—');
 
-    // mini saldos
     if (el.fichaSaldosMini) {
       const saldo = Number(ficha.saldo) || 0;
       el.fichaSaldosMini.innerHTML = `
         <span class="pill soft">Saldo: <b>${escapeHTML((saldo > 0 ? '+' : '') + fmtMoney(saldo))}</b></span>
       `;
     }
+  }
 
-    // si veníamos de 2025, volvemos a 2026 al abrir ficha
-    state.__viewYear = '2026';
+  function syncProgramacionIfAvailable(ctx, state, studentName) {
+    if (!studentName) return;
+    if (!window.RIPProgramacion?.attachStudent) return;
 
-    // render tabla (2026)
-    renderTable2026(ctx, rows);
-
-    // engancha toggle 2025
-    attachToggle(ctx, state);
+    try {
+      window.RIPProgramacion.attachStudent(ctx, state, studentName);
+    } catch (err) {
+      console.warn('No se pudo sincronizar bloque de Programación:', err);
+    }
   }
 
   // =========================
-  // Exports
+  // Core: open ficha por key
+  // =========================
+  function openFichaByKey(ctx, state, studentKey) {
+    const { el } = ctx;
+    if (!studentKey) return;
+
+    state.currentStudentKey = studentKey;
+
+    const student = (state.allStudents || []).find((s) => s.key === studentKey);
+    state.currentStudentName = student ? student.name : '';
+
+    showFichaContainer(ctx);
+    resetFichaVisualState(ctx, state);
+
+    show(el.btnPDF);
+    show(el.btnVolverDash);
+    showYearButtons(ctx, true);
+
+    const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
+    const rows = ficha.rows || [];
+
+    renderFichaSummary(ctx, student, ficha);
+    renderTable2026(ctx, rows);
+    attachToggle(ctx, state);
+
+    // sincroniza programación del estudiante
+    syncProgramacionIfAvailable(ctx, state, state.currentStudentName);
+  }
+
+  // =========================
+  // Export
   // =========================
   RIPUI.ficha = {
     openFichaByKey

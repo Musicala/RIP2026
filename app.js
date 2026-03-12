@@ -4,6 +4,8 @@
   - Render dashboards
   - Navegación: dashboard -> lista -> ficha
   - Tabla base + filtros
+  - Integración con módulo de Programación
+  - Sin caché local
 ============================================================================= */
 (function () {
   'use strict';
@@ -14,10 +16,10 @@
   }
 
   const RIPUI = window.RIPUI;
-  const { toast, buildContext } = RIPUI.shared;
+  const { toast, buildContext, hide, show, setText, setHTML } = RIPUI.shared;
 
   // =========================
-  // State global (simple)
+  // State global
   // =========================
   const state = {
     registro: [],
@@ -26,52 +28,236 @@
     filteredRows: [],
     selectedServicios: new Set(),
     currentStudentKey: '',
-    dashMode: 'clas' // 'clas' | 'saldo'
+    currentStudentName: '',
+    dashMode: 'clas', // 'clas' | 'saldo' | 'prog'
+
+    prog: {
+      data: null,
+      currentStudentName: '',
+      currentStudentRow: null,
+      groupFilter: '',
+      mode: 'dash' // dash | prog | reprog
+    }
   };
 
-  // ctx (refs DOM)
   const ctx = buildContext();
 
   // =========================
-  // Vistas
+  // Helpers internos
   // =========================
-  function showDashboard(mode) {
-    const { el } = ctx;
+  function clearAppCaches() {
+    try {
+      if (window.RIPCore?.clearCaches) {
+        window.RIPCore.clearCaches();
+      }
+    } catch (err) {
+      console.warn('No se pudo limpiar caché:', err);
+    }
+  }
 
-    state.dashMode = mode || 'clas';
+  function getStudentByKey(studentKey) {
+    return (state.allStudents || []).find(s => s.key === studentKey) || null;
+  }
 
-    // views
-    if (el.dashboardClasView) el.dashboardClasView.style.display = state.dashMode === 'clas' ? '' : 'none';
-    if (el.dashboardSaldoView) el.dashboardSaldoView.style.display = state.dashMode === 'saldo' ? '' : 'none';
-    if (el.fichaView) el.fichaView.style.display = 'none';
+  function getCurrentStudentName() {
+    const st = getStudentByKey(state.currentStudentKey);
+    return st?.name || state.currentStudentName || '';
+  }
 
-    // tabs arriba (header)
-    if (el.dashTabClas) el.dashTabClas.classList.toggle('active', state.dashMode === 'clas');
-    if (el.dashTabSaldo) el.dashTabSaldo.classList.toggle('active', state.dashMode === 'saldo');
+  function resetProgramacionEmbed() {
+    if (ctx.el.programacionEmbed) ctx.el.programacionEmbed.innerHTML = '';
+  }
 
-    // tabs middle
-    if (el.tabClas) el.tabClas.classList.toggle('active', state.dashMode === 'clas');
-    if (el.tabSaldos) el.tabSaldos.classList.toggle('active', state.dashMode === 'saldo');
+  function hideAllMainViews() {
+    hide(ctx.el.dashboardClasView);
+    hide(ctx.el.dashboardSaldoView);
+    hide(ctx.el.dashboardProgView);
+    hide(ctx.el.fichaView);
+  }
 
-    // textos header
-    if (el.dashTitle) el.dashTitle.textContent = state.dashMode === 'clas' ? 'Dashboard · Clasificación' : 'Dashboard · Saldos';
-    if (el.dashSub) {
-      el.dashSub.textContent =
-        state.dashMode === 'clas'
-          ? 'Agrupado por Activos / Por revisar / Inactivos. Click para ver lista de estudiantes.'
-          : 'Agrupado por saldo SUM(Movimiento). Click para ver lista de estudiantes.';
+  function setHeaderTextsByMode(mode) {
+    if (!ctx.el.dashTitle || !ctx.el.dashSub) return;
+
+    if (mode === 'clas') {
+      ctx.el.dashTitle.textContent = 'Dashboard · Clasificación';
+      ctx.el.dashSub.textContent = 'Agrupado por Activos / Por revisar / Inactivos. Click para ver lista de estudiantes.';
+      return;
     }
 
-    // botones
-    if (el.btnBackToDash) el.btnBackToDash.style.display = 'none';
+    if (mode === 'saldo') {
+      ctx.el.dashTitle.textContent = 'Dashboard · Saldos';
+      ctx.el.dashSub.textContent = 'Agrupado por saldo SUM(Movimiento). Click para ver lista de estudiantes.';
+      return;
+    }
+
+    ctx.el.dashTitle.textContent = 'Dashboard · Programación';
+    ctx.el.dashSub.textContent = 'KPIs de programación y lista de estudiantes. Click para abrir programación individual.';
+  }
+
+  function syncDashTabs() {
+    const mode = state.dashMode;
+
+    ctx.el.dashTabClas?.classList.toggle('active', mode === 'clas');
+    ctx.el.dashTabSaldo?.classList.toggle('active', mode === 'saldo');
+    ctx.el.dashTabProg?.classList.toggle('active', mode === 'prog');
+
+    ctx.el.tabClas?.classList.toggle('active', mode === 'clas');
+    ctx.el.tabSaldos?.classList.toggle('active', mode === 'saldo');
+    ctx.el.tabProg?.classList.toggle('active', mode === 'prog');
+  }
+
+  function ensureFichaProgramacionHidden() {
+    hide(ctx.el.programacionStudentView);
+    resetProgramacionEmbed();
+  }
+
+  function resetStateForFreshLoad() {
+    state.registro = [];
+    state.paramsMap = new Map();
+    state.allStudents = [];
+    state.filteredRows = [];
+    state.selectedServicios = new Set();
+    state.currentStudentKey = '';
+    state.currentStudentName = '';
+    state.prog = {
+      data: null,
+      currentStudentName: '',
+      currentStudentRow: null,
+      groupFilter: '',
+      mode: 'dash'
+    };
+  }
+
+  // =========================
+  // Navegación de vistas
+  // =========================
+  function showDashboard(mode) {
+    state.dashMode = mode || 'clas';
+
+    hideAllMainViews();
+
+    if (state.dashMode === 'clas') show(ctx.el.dashboardClasView);
+    if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
+    if (state.dashMode === 'prog') show(ctx.el.dashboardProgView);
+
+    syncDashTabs();
+    setHeaderTextsByMode(state.dashMode);
+
+    hide(ctx.el.btnBackToDash);
   }
 
   function showFichaContainer() {
-    const { el } = ctx;
-    if (el.dashboardClasView) el.dashboardClasView.style.display = 'none';
-    if (el.dashboardSaldoView) el.dashboardSaldoView.style.display = 'none';
-    if (el.fichaView) el.fichaView.style.display = '';
-    if (el.btnBackToDash) el.btnBackToDash.style.display = '';
+    hideAllMainViews();
+    show(ctx.el.fichaView);
+    show(ctx.el.btnBackToDash);
+  }
+
+  // =========================
+  // Programación helpers
+  // =========================
+  async function loadProgramacionSummary() {
+    if (!window.RIPProgramacion?.loadResumen) return;
+
+    try {
+      state.prog.data = await window.RIPProgramacion.loadResumen();
+
+      if (window.RIPProgramacion.renderKpis) {
+        window.RIPProgramacion.renderKpis(
+          ctx,
+          state,
+          onProgramacionListRequested,
+          onProgramacionStudentRequested
+        );
+      }
+    } catch (err) {
+      console.warn('No se pudo cargar resumen de Programación:', err);
+
+      if (ctx.el.progTableBody) {
+        ctx.el.progTableBody.innerHTML = `
+          <tr>
+            <td colspan="6" class="muted">No se pudo cargar la programación.</td>
+          </tr>
+        `;
+      }
+    }
+  }
+
+  function onProgramacionListRequested(groupKey) {
+    state.dashMode = 'prog';
+    state.prog.groupFilter = groupKey || '';
+    showDashboard('prog');
+
+    if (window.RIPProgramacion?.renderKpis) {
+      window.RIPProgramacion.renderKpis(
+        ctx,
+        state,
+        onProgramacionListRequested,
+        onProgramacionStudentRequested
+      );
+    }
+  }
+
+  function onProgramacionStudentRequested(studentName) {
+    if (!studentName) return;
+
+    const normalized = RIPUI.shared.norm(studentName);
+    const match = (state.allStudents || []).find(
+      s => RIPUI.shared.norm(s.name) === normalized
+    );
+
+    if (match?.key) {
+      openStudentFicha(match.key, { focusProgramacion: true });
+      return;
+    }
+
+    // fallback por si existe en programación pero no en RIP
+    showFichaContainer();
+
+    setText(ctx.el.fichaTitle, `Ficha · ${studentName}`);
+    setText(ctx.el.fichaSub, 'Resumen + programación');
+    setText(ctx.el.fichaStudent, studentName);
+    setText(ctx.el.fichaFecha, '—');
+    setText(ctx.el.fichaUltPago, '—');
+    setText(ctx.el.fichaProxPago, '—');
+    setHTML(ctx.el.fichaSaldosMini, '');
+
+    hide(ctx.el.tablaContainer);
+
+    if (window.RIPProgramacion?.attachStudent) {
+      window.RIPProgramacion.attachStudent(ctx, state, studentName);
+    }
+  }
+
+  function openStudentFicha(studentKey, opts = {}) {
+    const { focusProgramacion = false } = opts;
+
+    if (!studentKey || !RIPUI.ficha?.openFichaByKey) return;
+
+    RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
+    showFichaContainer();
+
+    const studentName = getCurrentStudentName();
+    state.prog.currentStudentName = studentName;
+
+    if (window.RIPProgramacion?.attachStudent && studentName) {
+      window.RIPProgramacion.attachStudent(ctx, state, studentName);
+    }
+
+    if (focusProgramacion) {
+      show(ctx.el.programacionStudentView);
+    }
+  }
+
+  function openProgramacionMode(mode) {
+    const studentName = state.prog.currentStudentName || getCurrentStudentName();
+
+    if (!studentName || !window.RIPProgramacion?.openMode) {
+      toast(ctx.el.toastWrap, 'No pude abrir la vista de programación.', 'warn');
+      return;
+    }
+
+    show(ctx.el.programacionStudentView);
+    window.RIPProgramacion.openMode(ctx, state, mode, studentName);
   }
 
   // =========================
@@ -98,53 +284,62 @@
   // Render dashboards
   // =========================
   function renderDashboards() {
-    const { el } = ctx;
-
     // Clasificación
     RIPUI.dashboard.renderDashClas(ctx, state.allStudents, (title, list) => {
       showFichaContainer();
+      ensureFichaProgramacionHidden();
+
       RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
-        RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
+        openStudentFicha(studentKey, { focusProgramacion: false });
       });
     });
 
     // Saldos
     RIPUI.dashboard.renderDashSaldo(ctx, state.allStudents, state.registro, (title, list) => {
       showFichaContainer();
+      ensureFichaProgramacionHidden();
+
       RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
-        RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
+        openStudentFicha(studentKey, { focusProgramacion: false });
       });
     });
 
-    // Mostrar el modo actual
+    // Programación
+    if (window.RIPProgramacion?.renderKpis) {
+      window.RIPProgramacion.renderKpis(
+        ctx,
+        state,
+        onProgramacionListRequested,
+        onProgramacionStudentRequested
+      );
+    }
+
     showDashboard(state.dashMode);
   }
 
   // =========================
-  // Botón "Ver base de datos"
+  // Ver base de datos
   // =========================
   function openBaseView() {
-    const { el } = ctx;
     showFichaContainer();
 
-    // título
-    if (el.fichaTitle) el.fichaTitle.textContent = 'Base de datos';
-    if (el.fichaSub) el.fichaSub.textContent = 'Tabla filtrada (solo lectura)';
+    setText(ctx.el.fichaTitle, 'Base de datos');
+    setText(ctx.el.fichaSub, 'Tabla filtrada (solo lectura)');
 
-    // limpia resumen (no aplica)
-    if (el.fichaStudent) el.fichaStudent.textContent = '—';
-    if (el.fichaFecha) el.fichaFecha.textContent = '—';
-    if (el.fichaUltPago) el.fichaUltPago.textContent = '—';
-    if (el.fichaProxPago) el.fichaProxPago.textContent = '—';
-    if (el.fichaSaldosMini) el.fichaSaldosMini.innerHTML = '';
+    setText(ctx.el.fichaStudent, '—');
+    setText(ctx.el.fichaFecha, '—');
+    setText(ctx.el.fichaUltPago, '—');
+    setText(ctx.el.fichaProxPago, '—');
+    setHTML(ctx.el.fichaSaldosMini, '');
 
-    // botones de ficha: PDF sí, volver sí
-    if (el.btnPDF) el.btnPDF.style.display = '';
-    if (el.btnVolverDash) el.btnVolverDash.style.display = '';
+    hide(ctx.el.programacionStudentView);
+    resetProgramacionEmbed();
+    show(ctx.el.tablaContainer);
 
-    // asegura que el contenedor sea la tabla real (tu HTML ya trae la tabla)
-    // y renderiza lo que esté filtrado ahora mismo:
-    if (RIPUI.table) {
+    show(ctx.el.btnPDF);
+    show(ctx.el.btnVolverDash);
+
+    if (RIPUI.table?.applyAndRender) {
       RIPUI.table.applyAndRender(ctx, state);
     }
   }
@@ -153,176 +348,182 @@
   // Wiring UI general
   // =========================
   function wireTopUI() {
-    const { el } = ctx;
-
     // Tabs arriba
-    if (el.dashTabClas) el.dashTabClas.addEventListener('click', () => showDashboard('clas'));
-    if (el.dashTabSaldo) el.dashTabSaldo.addEventListener('click', () => showDashboard('saldo'));
+    ctx.el.dashTabClas?.addEventListener('click', () => showDashboard('clas'));
+    ctx.el.dashTabSaldo?.addEventListener('click', () => showDashboard('saldo'));
+    ctx.el.dashTabProg?.addEventListener('click', () => showDashboard('prog'));
 
-    // Tabs middle
-    if (el.tabClas) el.tabClas.addEventListener('click', () => showDashboard('clas'));
-    if (el.tabSaldos) el.tabSaldos.addEventListener('click', () => showDashboard('saldo'));
+    // Tabs intermedios
+    ctx.el.tabClas?.addEventListener('click', () => showDashboard('clas'));
+    ctx.el.tabSaldos?.addEventListener('click', () => showDashboard('saldo'));
+    ctx.el.tabProg?.addEventListener('click', () => showDashboard('prog'));
 
-    // Back to dash (cuando estás en lista/ficha)
-    if (el.btnBackToDash) el.btnBackToDash.addEventListener('click', () => showDashboard(state.dashMode));
+    // Volver al dashboard desde lista/ficha
+    ctx.el.btnBackToDash?.addEventListener('click', () => showDashboard(state.dashMode));
+    ctx.el.btnVolverDash?.addEventListener('click', () => showDashboard(state.dashMode));
+// =========================
+// Actualizar SOLO programación
+// =========================
+if (ctx.el.btnRefreshProg) {
+  ctx.el.btnRefreshProg.addEventListener('click', async () => {
+    try {
+      toast(ctx.el.toastWrap, 'Actualizando programación...', 'info');
 
+      await loadProgramacionSummary();
+
+      toast(ctx.el.toastWrap, 'Programación actualizada.', 'success');
+    } catch (err) {
+      console.error(err);
+      toast(ctx.el.toastWrap, 'No se pudo actualizar la programación.', 'warn');
+    }
+  });
+}
     // Ver base
-    if (el.btnVerBase) el.btnVerBase.addEventListener('click', () => openBaseView());
+    ctx.el.btnVerBase?.addEventListener('click', () => openBaseView());
 
-    // Volver del view ficha
-    if (el.btnVolverDash) el.btnVolverDash.addEventListener('click', () => showDashboard(state.dashMode));
+    // Refresh sin caché
+    ctx.el.btnRefresh?.addEventListener('click', async () => {
+      clearAppCaches();
+      toast(ctx.el.toastWrap, 'Actualizando datos sin caché…', 'info');
+      await boot({ force: true });
+    });
 
-    // Refresh (force reload TSV)
-    if (el.btnRefresh) {
-      el.btnRefresh.addEventListener('click', async () => {
-        toast(el.toastWrap, 'Actualizando datos…', 'info');
-        await boot({ force: true });
-      });
-    }
+    // Registrar pago
+    ctx.el.btnPago?.addEventListener('click', () => {
+      const url = window.PAYMENT_WEBAPP_URL || '';
+      if (!url) {
+        toast(ctx.el.toastWrap, 'PAYMENT_WEBAPP_URL no está configurada en esta versión.', 'warn');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
 
-    // Registrar pago (si tú defines la URL global, lo abre)
-    if (el.btnPago) {
-      el.btnPago.addEventListener('click', () => {
-        const url = window.PAYMENT_WEBAPP_URL || '';
-        if (!url) {
-          toast(el.toastWrap, 'PAYMENT_WEBAPP_URL no está configurada en esta versión.', 'warn');
-          return;
-        }
-        window.open(url, '_blank', 'noopener,noreferrer');
-      });
-    }
+    // Registrar clases
+    ctx.el.btnClases?.addEventListener('click', () => {
+      const url = window.REGISTRAR_CLASES_URL || '';
+      if (!url) {
+        toast(ctx.el.toastWrap, 'REGISTRAR_CLASES_URL no está configurada en esta versión.', 'warn');
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
 
-    // PDF Top (descarga PDF del contenido principal visible)
-    if (el.btnPDFTop) {
-      el.btnPDFTop.addEventListener('click', () => {
-        // si está visible fichaView, exporta esa, sino exporta el dashboard actual
-        const target =
-          (el.fichaView && el.fichaView.style.display !== 'none') ? el.fichaView :
-          (state.dashMode === 'saldo' ? el.dashboardSaldoView : el.dashboardClasView);
+    // PDF superior
+    ctx.el.btnPDFTop?.addEventListener('click', () => {
+      const target =
+        (ctx.el.fichaView && ctx.el.fichaView.style.display !== 'none')
+          ? ctx.el.fichaView
+          : (state.dashMode === 'saldo'
+              ? ctx.el.dashboardSaldoView
+              : state.dashMode === 'prog'
+                ? ctx.el.dashboardProgView
+                : ctx.el.dashboardClasView);
 
-        exportPDF(target, state.dashMode === 'saldo' ? 'RIP_2026_Dashboard_Saldos.pdf' : 'RIP_2026_Dashboard_Clasificacion.pdf');
-      });
-    }
+      const fileName =
+        state.dashMode === 'saldo'
+          ? 'RIP_2026_Dashboard_Saldos.pdf'
+          : state.dashMode === 'prog'
+            ? 'RIP_2026_Dashboard_Programacion.pdf'
+            : 'RIP_2026_Dashboard_Clasificacion.pdf';
+
+      exportPDF(target, fileName);
+    });
 
     // PDF ficha/base
-    if (el.btnPDF) {
-      el.btnPDF.addEventListener('click', () => {
-        const name = (state.currentStudentKey && state.allStudents.find(s => s.key === state.currentStudentKey)?.name) || 'Base';
-        exportPDF(el.fichaView, `RIP_2026_${name}.pdf`);
-      });
-    }
+    ctx.el.btnPDF?.addEventListener('click', () => {
+      const name = getCurrentStudentName() || 'Base';
+      exportPDF(ctx.el.fichaView, `RIP_2026_${name}.pdf`);
+    });
 
-    // Registrar clases (abre el registro Wix 2026 en otra pestaña)
-    if (el.btnClases) {
-      el.btnClases.addEventListener('click', () => {
-        const url = window.REGISTRAR_CLASES_URL || '';
-        if (!url) {
-          toast(el.toastWrap, 'REGISTRAR_CLASES_URL no está configurada en esta versión.', 'warn');
-          return;
-        }
-        window.open(url, '_blank', 'noopener,noreferrer');
-      });
-    }
+    // Botones bloque programación
+    ctx.el.btnOpenProg?.addEventListener('click', () => openProgramacionMode('prog'));
+    ctx.el.btnOpenReprog?.addEventListener('click', () => openProgramacionMode('reprog'));
 
-
-
+    ctx.el.btnBackToRipTable?.addEventListener('click', () => {
+      hide(ctx.el.programacionStudentView);
+      resetProgramacionEmbed();
+      show(ctx.el.tablaContainer);
+    });
   }
-  // =========================
-  // Boot
-  // =========================
-  
-  async function boot({ force = false } = {}) {
-    const { el } = ctx;
 
+  // =========================
+  // Boot sin caché
+  // =========================
+  async function boot({ force = true } = {}) {
     try {
-      if (el.status) el.status.textContent = 'Cargando registro 2026…';
+      clearAppCaches();
+      resetStateForFreshLoad();
 
-      const metaKey = RIPCore.CONFIG?.CACHE_KEYS?.meta;
-      const fastKey = RIPCore.CONFIG?.CACHE_KEYS?.registroFast;
-      const ttl = RIPCore.CONFIG?.CACHE_TTL_MS || (1000 * 60 * 8);
-      const isFresh = (stamp) => !!stamp && (Date.now() - stamp < ttl);
+      setText(ctx.el.status, 'Cargando registro 2026…');
 
-      let tableReady = false;
-
-      // 0) Cache-first
-      if (!force && metaKey && fastKey) {
-        try {
-          const meta = JSON.parse(localStorage.getItem(metaKey) || '{}');
-          if (isFresh(meta.registroFastStamp)) {
-            const fastPack = JSON.parse(localStorage.getItem(fastKey) || 'null');
-            if (fastPack && Array.isArray(fastPack.rows)) {
-              state.registro = fastPack.rows;
-              state.allStudents = fastPack.allStudents || [];
-              state.paramsMap = new Map();
-              state.currentStudentKey = '';
-              if (!state.selectedServicios) state.selectedServicios = new Set();
-
-              if (RIPUI.table) RIPUI.table.init(ctx, state);
-              tableReady = true;
-
-              if (el.badgeMode) el.badgeMode.textContent = 'TSV';
-              if (el.badgeCount) el.badgeCount.textContent = `${state.registro.length} registros`;
-              if (el.status) el.status.textContent = 'Listo ✅ (cache)';
-            }
-          }
-        } catch (e) {
-          console.warn('Cache fast inválido:', e);
-        }
-      }
-
-      // 1) Fast load (registro + estudiantes)
-      const fast = await RIPCore.loadRegistroFast({ force });
+      // 1) Fast load LIVE
+      const fast = await RIPCore.loadRegistroFast({ force: true });
 
       state.registro = fast.rows || [];
       state.allStudents = fast.allStudents || [];
       state.paramsMap = new Map();
-      state.currentStudentKey = '';
-      if (!state.selectedServicios) state.selectedServicios = new Set();
 
       if (RIPUI.table) {
-        if (!tableReady) RIPUI.table.init(ctx, state);
-        else if (RIPUI.table.applyAndRender) RIPUI.table.applyAndRender(ctx, state);
+        RIPUI.table.init(ctx, state);
+        if (RIPUI.table.applyAndRender) {
+          RIPUI.table.applyAndRender(ctx, state);
+        }
       }
 
-      if (el.badgeMode) el.badgeMode.textContent = 'TSV';
-      if (el.badgeCount) el.badgeCount.textContent = `${state.registro.length} registros`;
-      if (el.status) el.status.textContent = 'Listo ✅';
+      setText(ctx.el.badgeMode, 'LIVE');
+      setText(ctx.el.badgeCount, `${state.registro.length} registros`);
+      setText(ctx.el.status, 'Cargando programación…');
 
-      // 2) Lazy load (lo pesado)
-      const lazy = async () => {
-        try {
-          if (el.status) el.status.textContent = 'Cargando análisis…';
-          const pack = await RIPCore.loadAll({ force: false });
+      // 2) Programación LIVE
+      await loadProgramacionSummary();
 
-          state.registro = (pack.registro || []);
-          state.paramsMap = pack.paramsMap || new Map();
-          state.allStudents = pack.allStudents || state.allStudents || [];
+      // 3) Load completo LIVE
+      setText(ctx.el.status, 'Cargando análisis…');
 
-          if (RIPUI.table?.applyAndRender) RIPUI.table.applyAndRender(ctx, state);
-          renderDashboards();
+      const pack = await RIPCore.loadAll({ force: true });
 
-          if (el.badgeCount) el.badgeCount.textContent = `${state.registro.length} registros`;
-          if (el.status) el.status.textContent = 'Listo ✅';
-        } catch (e) {
-          console.warn('Lazy load falló:', e);
-          if (el.status) el.status.textContent = 'Listo ✅';
-        }
-      };
+      state.registro = pack.registro || [];
+      state.paramsMap = pack.paramsMap || new Map();
+      state.allStudents = pack.allStudents || state.allStudents || [];
 
-      if ('requestIdleCallback' in window) window.requestIdleCallback(() => lazy(), { timeout: 1200 });
-      else setTimeout(lazy, 0);
+      if (RIPUI.table?.applyAndRender) {
+        RIPUI.table.applyAndRender(ctx, state);
+      }
 
-      toast(el.toastWrap, force ? 'Datos actualizados.' : 'Datos cargados.', 'ok');
+      renderDashboards();
+
+      setText(ctx.el.badgeMode, 'LIVE');
+      setText(ctx.el.badgeCount, `${state.registro.length} registros`);
+      setText(ctx.el.status, 'Listo ✅');
+
+      toast(ctx.el.toastWrap, 'Datos cargados sin caché.', 'ok');
     } catch (err) {
       console.error(err);
-      if (el.status) el.status.textContent = 'Error cargando datos.';
-      toast(el.toastWrap, String(err?.message || err), 'warn');
+      setText(ctx.el.status, 'Error cargando datos.');
+      toast(ctx.el.toastWrap, String(err?.message || err), 'warn');
     }
   }
+
+  // =========================
+  // Expose
+  // =========================
+  window.RIPApp = {
+    state,
+    ctx,
+    showDashboard,
+    showFichaContainer,
+    openBaseView,
+    openStudentFicha,
+    loadProgramacionSummary,
+    renderDashboards,
+    boot,
+    clearAppCaches
+  };
 
   // =========================
   // Init
   // =========================
   wireTopUI();
-  boot({ force: false });
+  clearAppCaches();
+  boot({ force: true });
 })();

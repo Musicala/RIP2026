@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#0C41C4" />
   <title>RIP 2026</title>
 
   <!-- Tipografía -->
@@ -11,29 +12,34 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-  <!-- OJO: es style.css -->
-  <link rel="stylesheet" href="./style.css" />
+  <!-- CSS -->
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 
 <body>
   <header class="topbar">
     <div class="brand">
       <div class="brand-title">RIP 2026</div>
-      <div class="brand-sub">Base de datos + ficha por estudiante (solo lectura)</div>
+      <div class="brand-sub">Base de datos + ficha por estudiante + programación</div>
     </div>
 
     <div class="top-actions">
-      <button class="btn ghost" id="btnPago">💳 Registrar pago</button>
-      <button class="btn ghost" id="btnClases">📝 Registrar clases</button>
-      <button class="btn primary" id="btnRefresh">Actualizar datos</button>
-      <button class="btn" id="btnVerBase">Ver base de datos</button>
+      <button class="btn ghost" id="btnPago" type="button">💳 Registrar pago</button>
+      <button class="btn ghost" id="btnClases" type="button">📝 Registrar clases</button>
+      <button class="btn primary" id="btnRefresh" type="button">Actualizar datos</button>
+      <button class="btn ghost" id="btnRefreshProg" type="button">
+📅 Actualizar programación
+</button>
+      <button class="btn" id="btnVerBase" type="button">Ver base de datos</button>
       <span class="pill" id="badgeMode">TSV</span>
       <span class="pill soft" id="badgeCount">0 registros</span>
     </div>
 
+    <!-- TABS DASHBOARD PRINCIPAL -->
     <div class="dashTabs">
-      <button id="dashTabClas" class="tab active">Clasificación</button>
-      <button id="dashTabSaldo" class="tab">Saldos</button>
+      <button id="dashTabClas" class="tab active" type="button">Clasificación</button>
+      <button id="dashTabSaldo" class="tab" type="button">Saldos</button>
+      <button id="dashTabProg" class="tab" type="button">Programación</button>
     </div>
 
     <h2 id="dashTitle">Dashboard · Clasificación</h2>
@@ -42,21 +48,18 @@
 
   <main class="page">
 
-    <!-- ===== FILTROS (estilo RIP viejo) ===== -->
+    <!-- ===== FILTROS ===== -->
     <section class="card" id="filtersCard">
       <div class="filters-grid">
 
-        <!-- Estudiante (single) -->
+        <!-- Estudiante -->
         <div class="fgrp">
-  <div class="flabel">👤 Estudiante</div>
+          <div class="flabel">👤 Estudiante</div>
+          <input id="fStudent" class="fctrl" list="nombresLista" placeholder="Escribe un nombre…" autocomplete="off" />
+          <datalist id="nombresLista"></datalist>
+        </div>
 
-  <!-- input escribible + sugerencias -->
-  <input id="fStudent" class="fctrl" list="nombresLista" placeholder="Escribe un nombre…" autocomplete="off" />
-  <datalist id="nombresLista"></datalist>
-</div>
-
-
-        <!-- Servicio (multi) -->
+        <!-- Servicio -->
         <div class="fgrp">
           <div class="flabel">🎛️ Servicio <span class="fcount" id="fServiceCount">0</span></div>
 
@@ -83,7 +86,7 @@
           </select>
         </div>
 
-        <!-- Tipo (col C = Clase/Pago) -->
+        <!-- Tipo -->
         <div class="fgrp">
           <div class="flabel">🏷️ Tipo</div>
           <select id="fTipo" class="fctrl">
@@ -108,23 +111,26 @@
       </div>
 
       <div class="filters-actions">
-        <button class="btn primary" id="btnPDFTop">📄 Descargar PDF</button>
-        <button class="btn ghost" id="btnTop2025" style="display:none">🗂️ 2025</button>
-        <button class="btn" id="btnApply">♻️ Aplicar filtros</button>
-        <button class="btn ghost" id="btnReset">🧼 Limpiar</button>
+        <button class="btn primary" id="btnPDFTop" type="button">📄 Descargar PDF</button>
+        <button class="btn ghost" id="btnTop2025" type="button" style="display:none">🗂️ 2025</button>
+        <button class="btn" id="btnApply" type="button">♻️ Aplicar filtros</button>
+        <button class="btn ghost" id="btnReset" type="button">🧼 Limpiar</button>
         <span class="status" id="status">Cargando…</span>
       </div>
     </section>
 
-    <!-- Tabs del dashboard (2 botones) -->
+    <!-- Tabs de navegación interna -->
     <section class="tabs">
-      <button class="tab active" id="tabClas">Estudiantes (Clasificación)</button>
-      <button class="tab" id="tabSaldos">Saldos (Deben / Se acabó / Les debemos)</button>
+      <button class="tab active" id="tabClas" type="button">Estudiantes (Clasificación)</button>
+      <button class="tab" id="tabSaldos" type="button">Saldos (Deben / Se acabó / Les debemos)</button>
+      <button class="tab" id="tabProg" type="button">Programación</button>
       <div class="tabs-spacer"></div>
-      <button class="btn small" id="btnBackToDash" title="Volver a dashboard" style="display:none">Volver</button>
+      <button class="btn small" id="btnBackToDash" title="Volver a dashboard" type="button" style="display:none">Volver</button>
     </section>
 
-    <!-- Vista: Dashboard Clasificación -->
+    <!-- =========================
+         DASHBOARD CLASIFICACIÓN
+    ========================== -->
     <section class="card" id="dashboardClasView">
       <div class="card-title">
         <h3 id="dashClasTitle">Dashboard de estudiantes</h3>
@@ -133,7 +139,9 @@
       <div class="grid" id="dashGridClas"></div>
     </section>
 
-    <!-- Vista: Dashboard Saldos -->
+    <!-- =========================
+         DASHBOARD SALDOS
+    ========================== -->
     <section class="card" id="dashboardSaldoView" style="display:none">
       <div class="card-title">
         <h3>Dashboard de saldos</h3>
@@ -144,14 +152,69 @@
       <div class="grid" id="dashGridSaldo"></div>
     </section>
 
-    <!-- Vista: Ficha / Base -->
+    <!-- =========================
+         DASHBOARD PROGRAMACIÓN
+    ========================== -->
+    <section class="card" id="dashboardProgView" style="display:none">
+      <div class="card-title">
+        <h3>Dashboard de programación</h3>
+        <p class="muted" id="dashSubProg">KPIs de programación. Click para ver lista o abrir un estudiante.</p>
+      </div>
+
+      <!-- KPIs -->
+      <div class="kpis kpis-3" id="progKpiGrid">
+        <button class="kpi kpi-btn" id="progCardNoSchedule" data-group="none" type="button">
+          <div class="n" id="progKpiNone">0</div>
+          <div class="t">Sin programación</div>
+        </button>
+
+        <button class="kpi kpi-btn" id="progCardPartial" data-group="partial" type="button">
+          <div class="n" id="progKpiPartial">0</div>
+          <div class="t">Por completar</div>
+        </button>
+
+        <button class="kpi kpi-btn" id="progCardComplete" data-group="complete" type="button">
+          <div class="n" id="progKpiComplete">0</div>
+          <div class="t">Completos</div>
+        </button>
+      </div>
+
+      <div class="muted" id="progDashHint" style="margin-top:10px;">
+        Toca una categoría para ver la lista de estudiantes.
+      </div>
+
+      <!-- Tabla/lista de programación -->
+      <div class="table-wrap" id="progTableWrap" style="margin-top:14px;">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>Estudiante</th>
+              <th>Estado</th>
+              <th>Próxima</th>
+              <th>Futuras</th>
+              <th>Alertas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="progTableBody">
+            <tr>
+              <td colspan="6" class="muted">Cargando programación…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- =========================
+         FICHA / BASE
+    ========================== -->
     <section class="card" id="fichaView" style="display:none">
       <div class="card-title">
         <h3 id="fichaTitle">Ficha</h3>
         <p class="muted" id="fichaSub">Resumen + registro</p>
       </div>
 
-      <!-- Resumen -->
+      <!-- Resumen RIP -->
       <div class="sheet-like">
         <div class="sheet-row sheet-head">
           <div class="cell strong">Estudiante</div>
@@ -173,7 +236,51 @@
         </div>
       </div>
 
-      <!-- Tabla / contenedor -->
+      <!-- BLOQUE DE PROGRAMACIÓN DEL ESTUDIANTE -->
+      <section id="programacionStudentView" style="display:none; margin-top:16px;">
+        <div class="card-title" style="margin-bottom:10px;">
+          <h3 style="margin:0;">Programación del estudiante</h3>
+          <p class="muted" style="margin:4px 0 0;">Resumen individual + acciones rápidas.</p>
+        </div>
+
+        <div class="sheet-like">
+          <div class="sheet-row sheet-head">
+            <div class="cell strong">Estudiante</div>
+            <div class="cell" id="progStudentName">—</div>
+            <div class="cell strong">Próxima</div>
+            <div class="cell" id="progStudentNext">—</div>
+          </div>
+
+          <div class="sheet-row">
+            <div class="cell strong">Futuras</div>
+            <div class="cell" id="progStudentFuture">—</div>
+            <div class="cell strong">Estado</div>
+            <div class="cell" id="progStudentAlert">—</div>
+          </div>
+        </div>
+
+        <div class="ficha-actions" style="margin-top:12px;">
+          <button class="btn primary" id="btnOpenProg" type="button">Programar</button>
+          <button class="btn ghost" id="btnOpenReprog" type="button">Reprogramar</button>
+          <button class="btn" id="btnBackToRipTable" type="button">Ver tabla RIP</button>
+        </div>
+
+        <!-- Detalle de fechas -->
+        <div class="card" style="margin-top:14px;">
+          <div class="card-title">
+            <h3 style="margin:0;">Fechas programadas</h3>
+            <p class="muted" style="margin:4px 0 0;">Visualización rápida de las 24 clases.</p>
+          </div>
+          <div id="progStudentDates" class="detailDates">
+            <div class="muted">Sin datos aún.</div>
+          </div>
+        </div>
+
+        <!-- Contenedor embebido para programar / reprogramar -->
+        <div id="programacionEmbed" style="margin-top:14px;"></div>
+      </section>
+
+      <!-- Tabla base RIP -->
       <div class="table-wrap" id="tablaContainer">
         <table class="tbl">
           <thead>
@@ -197,9 +304,9 @@
       </div>
 
       <div class="ficha-actions">
-        <button class="btn ghost" id="btn2025" style="display:none">2025</button>
-        <button class="btn" id="btnPDF">Descargar PDF</button>
-        <button class="btn ghost" id="btnVolverDash">Volver al dashboard</button>
+        <button class="btn ghost" id="btn2025" type="button" style="display:none">2025</button>
+        <button class="btn" id="btnPDF" type="button">Descargar PDF</button>
+        <button class="btn ghost" id="btnVolverDash" type="button">Volver al dashboard</button>
       </div>
     </section>
 
@@ -211,22 +318,24 @@
   <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 
   <!-- Core -->
-  <script src="./rip.core.js?v=2026.3"></script>
+  <script src="./rip.core.js?v=2026.4"></script>
 
   <!-- UI Modules -->
-  <script src="./ui.shared.js?v=2026.3"></script>
-  <script src="./ui.dashboard.js?v=2026.3"></script>
-  <script src="./ui.ficha.js?v=2026.3"></script>
-  <script src="./ui.table.js?v=2026.3"></script>
+  <script src="./ui.shared.js?v=2026.4"></script>
+  <script src="./ui.dashboard.js?v=2026.4"></script>
+  <script src="./ui.ficha.js?v=2026.4"></script>
+  <script src="./ui.table.js?v=2026.4"></script>
+
+  <!-- Nuevo módulo Programación -->
+  <script src="./rip.programacion.js?v=2026.4"></script>
 
   <!-- Links externos -->
   <script>
-    // Links fijos (GitHub Pages)
     window.PAYMENT_WEBAPP_URL = "https://musicala.github.io/registrodepagos2026/";
     window.REGISTRAR_CLASES_URL = "https://musicala.github.io/RegistroWix2026/";
   </script>
 
   <!-- App wiring -->
-  <script src="./app.js?v=2026.3"></script>
+  <script src="./app.js?v=2026.4"></script>
 </body>
 </html>
