@@ -274,7 +274,65 @@
       || null;
   }
 
-  function renderDatesGrid(container, fechas = [], today = '') {
+  /* ─── Mini modal inline para editar una sola fecha ─── */
+  function openDateCellModal(container, index, currentISO, onSave) {
+    // quita modal anterior si existe
+    const prev = document.getElementById('ripDateModal');
+    if (prev) prev.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'ripDateModal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Editar clase #${index + 1}</span>
+          <button class="rip-modal-close" type="button" aria-label="Cerrar">✕</button>
+        </div>
+        <div class="rip-modal-body">
+          <label class="field">
+            <span>Fecha</span>
+            <input type="date" id="ripDateInput" class="control" value="${escapeHTML(currentISO || '')}" style="width:100%;margin-top:6px;">
+          </label>
+          <p class="rip-modal-hint">Deja vacío para eliminar esta fecha.</p>
+        </div>
+        <div class="rip-modal-foot">
+          <button class="btn ghost rip-modal-cancel" type="button">Cancelar</button>
+          <button class="btn primary rip-modal-save" type="button">Guardar</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('rip-modal-in'));
+
+    const input = modal.querySelector('#ripDateInput');
+    input?.focus();
+
+    function close() {
+      modal.classList.remove('rip-modal-in');
+      setTimeout(() => modal.remove(), 200);
+    }
+
+    modal.querySelector('.rip-modal-overlay').addEventListener('click', close);
+    modal.querySelector('.rip-modal-close').addEventListener('click', close);
+    modal.querySelector('.rip-modal-cancel').addEventListener('click', close);
+
+    modal.querySelector('.rip-modal-save').addEventListener('click', () => {
+      const newVal = input?.value?.trim() || '';
+      onSave(newVal);
+      close();
+    });
+
+    // ESC para cerrar
+    modal._keyHandler = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', modal._keyHandler);
+    modal.addEventListener('remove', () => document.removeEventListener('keydown', modal._keyHandler));
+  }
+
+  function renderDatesGrid(container, fechas = [], today = '', { editable = false, state = null, ctx = null, studentName = '' } = {}) {
     if (!container) return;
 
     const arr = Array.isArray(fechas) ? fechas.slice(0, MAX_CLASSES) : [];
@@ -286,12 +344,82 @@
       const future = iso && today && iso >= today;
 
       return `
-        <div class="dateCell ${miss ? 'miss' : ''} ${future ? 'future' : ''}">
+        <div class="dateCell ${miss ? 'miss' : ''} ${future ? 'future' : ''} ${editable ? 'dateCell-editable' : ''}"
+             data-cell-index="${i}"
+             tabindex="${editable ? '0' : '-1'}"
+             role="${editable ? 'button' : 'presentation'}"
+             title="${editable ? `Editar clase #${i + 1}` : ''}">
           <div class="idx">#${i + 1}</div>
           <div class="val">${escapeHTML(iso || '—')}</div>
+          ${editable ? `<div class="dateCell-hint">✏️</div>` : ''}
         </div>
       `;
     }).join('');
+
+    if (!editable || !state || !ctx || !studentName) return;
+
+    // Wiring click/teclado en cada celda
+    container.querySelectorAll('.dateCell-editable').forEach(cell => {
+      const handleActivate = () => {
+        const idx = Number(cell.dataset.cellIndex);
+        const currentISO = arr[idx] || '';
+
+        openDateCellModal(container, idx, currentISO, async (newVal) => {
+          // Actualizar array local
+          arr[idx] = newVal;
+
+          // Guardar en API
+          await saveSingleDate(ctx, state, studentName, idx, newVal, arr);
+        });
+      };
+
+      cell.addEventListener('click', handleActivate);
+      cell.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleActivate(); }
+      });
+    });
+  }
+
+  async function saveSingleDate(ctx, state, studentName, index, newVal, currentArr) {
+    const toastWrap = ctx?.el?.toastWrap;
+    const toast = window.RIPUI?.shared?.toast;
+
+    const showToast = (msg, tone) => {
+      if (toast && toastWrap) toast(toastWrap, msg, tone);
+    };
+
+    showToast('Guardando fecha…', 'info');
+
+    try {
+      // Construir el array completo con el cambio
+      const merged = fillToMax(currentArr);
+      merged[index] = newVal || '';
+
+      const cleanDates = merged.map(v => v || '');
+
+      const res = await apiCall({
+        action: 'saveSchedule',
+        token: API_TOKEN,
+        student: studentName,
+        dates: JSON.stringify(cleanDates)
+      });
+
+      if (!res?.ok) {
+        showToast(res?.message || res?.error || 'Error guardando.', 'warn');
+        return;
+      }
+
+      // Actualizar cache
+      cacheSchedule(state, studentName, cleanDates);
+      showToast(`Clase #${index + 1} actualizada ✓`, 'ok');
+
+      // Re-pintar la grilla con los datos nuevos
+      await RIPProgramacion.attachStudent(ctx, state, studentName, { forceFresh: true });
+
+    } catch (err) {
+      console.error(err);
+      showToast('No se pudo guardar. Revisa la conexión.', 'warn');
+    }
   }
 
   function paintStudentScheduleGrid(ctx, state) {
@@ -300,12 +428,14 @@
       : [];
 
     const today = state?.prog?.data?.today || todayISO();
+    const studentName = state?.prog?.currentStudentName || '';
 
     debugLog('Pintando grilla con fechas:', fechas);
-    renderDatesGrid(ctx?.el?.progStudentDates, fechas, today);
+    const editOpts = { editable: true, state, ctx, studentName };
+    renderDatesGrid(ctx?.el?.progStudentDates, fechas, today, editOpts);
 
     requestAnimationFrame(() => {
-      renderDatesGrid(ctx?.el?.progStudentDates, fechas, today);
+      renderDatesGrid(ctx?.el?.progStudentDates, fechas, today, editOpts);
     });
   }
 

@@ -1,8 +1,11 @@
 /* =============================================================================
-  ui.table.js — RIP 2026 UI Table + Filters (READ-ONLY) — v2 (Input + Datalist)
-  - Estudiante: input escribible + datalist filtrado al escribir
-  - Exact match => abre ficha
-  - Si queda vacío => vuelve a tabla base
+  ui.table.js — RIP 2026 UI Table + Filters — v4 FILTROS ACUMULATIVOS
+  CAMBIOS:
+    - Al seleccionar estudiante: servicios y profesores se restringen a los suyos
+    - Al limpiar estudiante: servicios y profesores vuelven al universo completo
+    - Filtros siempre acumulativos entre sí (AND)
+    - Servicios y profesores también funcionan solos sin estudiante seleccionado
+    - Exact match por nombre sigue abriendo la ficha completa igual que antes
 ============================================================================= */
 (function () {
   'use strict';
@@ -16,8 +19,9 @@
   const RIPUI = (window.RIPUI = window.RIPUI || {});
 
   // =========================
-  // Helpers
+  // Helpers de lista
   // =========================
+
   function setStatus(ctx, msg) {
     if (ctx.el.status) ctx.el.status.textContent = msg || '';
   }
@@ -29,9 +33,14 @@
     el.servicePop.setAttribute('aria-hidden', open ? 'false' : 'true');
   }
 
-  function getServiciosUnique(registro) {
+  /**
+   * Devuelve los servicios únicos presentes en un subconjunto del registro.
+   * Si se pasa un estudianteKey, filtra solo sus filas.
+   */
+  function getServiciosUnique(registro, estudianteKey) {
     const m = new Map();
     for (const r of registro) {
+      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
       if (!r.servicioKey) continue;
       if (!m.has(r.servicioKey)) m.set(r.servicioKey, r.servicio || '');
     }
@@ -40,9 +49,14 @@
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   }
 
-  function getProfesoresUnique(registro) {
+  /**
+   * Devuelve los profesores únicos presentes en un subconjunto del registro.
+   * Si se pasa un estudianteKey, filtra solo sus filas.
+   */
+  function getProfesoresUnique(registro, estudianteKey) {
     const m = new Map();
     for (const r of registro) {
+      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
       const k = norm(r.profesor);
       if (!k) continue;
       if (!m.has(k)) m.set(k, r.profesor || '');
@@ -53,10 +67,47 @@
   }
 
   // =========================
-  // Estudiante input + datalist
+  // Datalist de estudiantes
   // =========================
+
   function ensureDatalist() {
     return document.getElementById('nombresLista');
+  }
+
+  function getSearchStudents(state) {
+    const pool =
+      state.searchStudents ||
+      state.studentSearchIndex ||
+      state.globalStudentIndex ||
+      state.allStudents ||
+      [];
+    return Array.isArray(pool) ? pool : [];
+  }
+
+  function getCurrentYearStudents(state) {
+    return Array.isArray(state.allStudents) ? state.allStudents : [];
+  }
+
+  function dedupeStudentsByName(students) {
+    const seen = new Set();
+    const out = [];
+    for (const s of students || []) {
+      const name = String(s?.name || '').trim();
+      const k = norm(name);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(s);
+    }
+    return out;
+  }
+
+  function getStudentDisplayName(s) {
+    return String(s?.name || '').trim();
+  }
+
+  function getStudentYearsLabel(s) {
+    const years = Array.isArray(s?.years) ? s.years.filter(Boolean) : [];
+    return years.length ? ` · ${years.join(', ')}` : '';
   }
 
   function renderStudentDatalist(ctx, students, query) {
@@ -64,32 +115,82 @@
     if (!dl) return;
 
     const q = norm(query || '');
-    const list = q
-      ? students.filter(s => norm(s.name).includes(q)).slice(0, 80)
-      : students.slice(0, 120);
+    const pool = dedupeStudentsByName(students);
 
-    dl.innerHTML = list.map(s => `<option value="${escapeHTML(s.name)}"></option>`).join('');
+    const list = q
+      ? pool.filter((s) => norm(getStudentDisplayName(s)).includes(q)).slice(0, 80)
+      : pool.slice(0, 120);
+
+    dl.innerHTML = list
+      .map((s) => {
+        const label = `${getStudentDisplayName(s)}${getStudentYearsLabel(s)}`;
+        return `<option value="${escapeHTML(getStudentDisplayName(s))}" label="${escapeHTML(label)}"></option>`;
+      })
+      .join('');
+  }
+
+  function findStudentEntryByName(students, name) {
+    const target = norm(name);
+    if (!target) return null;
+    return (students || []).find((s) => norm(s?.name) === target) || null;
   }
 
   function findStudentKeyByName(students, name) {
-    const target = norm(name);
-    if (!target) return '';
-    const hit = students.find(s => norm(s.name) === target);
-    return hit ? hit.key : '';
+    const hit = findStudentEntryByName(students, name);
+    if (!hit) return '';
+    return String(hit.currentKey || hit.key || '').trim();
+  }
+
+  function openStudentFromInput(ctx, state, typedName) {
+    const pool = getSearchStudents(state);
+    const entry = findStudentEntryByName(pool, typedName);
+    if (!entry) return false;
+
+    if (window.RIPUI?.ficha?.openStudentFromSearch) {
+      window.RIPUI.ficha.openStudentFromSearch(ctx, state, entry);
+      return true;
+    }
+
+    const key = String(entry.currentKey || entry.key || '').trim();
+    if (key && window.RIPUI?.ficha?.openFichaByKey) {
+      window.RIPUI.ficha.openFichaByKey(ctx, state, key);
+      return true;
+    }
+
+    const years = Array.isArray(entry.years) ? entry.years.join(', ') : '';
+    setStatus(
+      ctx,
+      years
+        ? `Encontré a ${entry.name} en histórico (${years}), pero aún falta conectar la ficha histórica.`
+        : `Encontré a ${entry.name}, pero aún falta conectar la ficha histórica.`
+    );
+    return true;
   }
 
   // =========================
-  // Servicios multi
+  // Servicios multi — CON contexto de estudiante
   // =========================
+
   function updateServiceCount(ctx, state) {
-    if (ctx.el.fServiceCount) ctx.el.fServiceCount.textContent = String(state.selectedServicios?.size || 0);
+    if (ctx.el.fServiceCount)
+      ctx.el.fServiceCount.textContent = String(state.selectedServicios?.size || 0);
   }
 
-  function renderServiceList(ctx, state, registro, { keepSearch = true } = {}) {
+  /**
+   * Renderiza la lista de servicios filtrada opcionalmente por estudianteKey.
+   * Si el estudiante tiene servicios, solo muestra los suyos.
+   * Si no hay estudiante, muestra todos.
+   */
+  function renderServiceList(ctx, state, registro, { keepSearch = true, estudianteKey = '' } = {}) {
     const { el } = ctx;
     if (!el.serviceList) return;
 
-    const servicios = getServiciosUnique(registro);
+    // Resolver la clave del estudiante actualmente escrito (si no se pasó explícito)
+    const eKey = estudianteKey ||
+      findStudentKeyByName(getCurrentYearStudents(state), el.fStudent?.value || '') ||
+      '';
+
+    const servicios = getServiciosUnique(registro, eKey);
     const q = keepSearch && el.serviceSearch ? norm(el.serviceSearch.value) : '';
     const filtered = q ? servicios.filter((s) => norm(s.name).includes(q)) : servicios;
 
@@ -112,6 +213,8 @@
         if (cb.checked) state.selectedServicios.add(k);
         else state.selectedServicios.delete(k);
         updateServiceCount(ctx, state);
+        // Al cambiar servicio, re-aplica filtros inmediatamente
+        applyAndRender(ctx, state);
       });
     });
 
@@ -125,14 +228,46 @@
   }
 
   // =========================
-  // Filtros -> apply
+  // Profesores — CON contexto de estudiante
   // =========================
+
+  /**
+   * Renderiza el select de profesores filtrado por estudianteKey.
+   * Preserva la selección si el profesor elegido sigue disponible.
+   */
+  function renderProfesorOptions(ctx, registro, estudianteKey) {
+    const { el } = ctx;
+    if (!el.fProfesor) return;
+
+    const current = el.fProfesor.value || '';
+    const eKey = estudianteKey ||
+      findStudentKeyByName(getCurrentYearStudents(
+        window.RIPApp?.state || {}
+      ), el.fStudent?.value || '') || '';
+
+    const list = getProfesoresUnique(registro, eKey);
+
+    el.fProfesor.innerHTML =
+      `<option value="">Todos</option>` +
+      list.map((p) =>
+        `<option value="${escapeHTML(p.name)}">${escapeHTML(p.name)}</option>`
+      ).join('');
+
+    // Mantener selección si sigue siendo válida
+    if (current && list.some((p) => p.name === current)) {
+      el.fProfesor.value = current;
+    }
+  }
+
+  // =========================
+  // Leer filtros actuales
+  // =========================
+
   function readFilters(ctx, state) {
     const { el } = ctx;
 
-    // Estudiante: viene por nombre. Lo convertimos a key si es exact match.
     const typedName = el.fStudent ? (el.fStudent.value || '') : '';
-    const estudianteKey = findStudentKeyByName(state.allStudents, typedName);
+    const estudianteKey = findStudentKeyByName(getCurrentYearStudents(state), typedName);
 
     const profesor = el.fProfesor ? (el.fProfesor.value || '') : '';
     const uiTipo = el.fTipo ? (el.fTipo.value || '') : '';
@@ -141,11 +276,10 @@
       uiTipo === 'Pago'  ? 'pago'  :
       'all';
 
-    const fromD = el.fDesde ? RIPCore.util.parseDate(el.fDesde.value) : null;
-    const toD   = el.fHasta ? RIPCore.util.parseDate(el.fHasta.value) : null;
-
-    const fromTs = fromD ? fromD.setHours(0, 0, 0, 0) : 0;
-    const toTs   = toD ? toD.setHours(23, 59, 59, 999) : 0;
+    const fromD  = el.fDesde ? RIPCore.util.parseDate(el.fDesde.value) : null;
+    const toD    = el.fHasta ? RIPCore.util.parseDate(el.fHasta.value) : null;
+    const fromTs = fromD ? fromD.setHours(0,  0,  0,   0) : 0;
+    const toTs   = toD   ? toD.setHours(23, 59, 59, 999) : 0;
 
     return {
       estudianteKey,
@@ -156,6 +290,10 @@
       toTs
     };
   }
+
+  // =========================
+  // Render tabla
+  // =========================
 
   function inferTipoLabel(r) {
     const t = String(r.tipo || '').trim();
@@ -205,6 +343,10 @@
     setBadge(el.badgeCount, rows.length);
   }
 
+  // =========================
+  // Aplicar filtros
+  // =========================
+
   function applyAndRender(ctx, state) {
     const filters = readFilters(ctx, state);
     const rows = RIPCore.applyFilters(state.registro, filters);
@@ -216,24 +358,30 @@
 
   function resetFilters(ctx, state) {
     const { el } = ctx;
-    if (el.fStudent) el.fStudent.value = '';
+    if (el.fStudent)  el.fStudent.value  = '';
     if (el.fProfesor) el.fProfesor.value = '';
-    if (el.fTipo) el.fTipo.value = '';
-    if (el.fDesde) el.fDesde.value = '';
-    if (el.fHasta) el.fHasta.value = '';
+    if (el.fTipo)     el.fTipo.value     = '';
+    if (el.fDesde)    el.fDesde.value    = '';
+    if (el.fHasta)    el.fHasta.value    = '';
+
+    // Restaurar listas completas (sin filtro de estudiante)
     clearServicios(ctx, state);
+    renderProfesorOptions(ctx, state.registro, '');
+    renderServiceList(ctx, state, state.registro, { keepSearch: false, estudianteKey: '' });
+
     applyAndRender(ctx, state);
     setStatus(ctx, 'Filtros limpiados.');
-    renderStudentDatalist(ctx, state.allStudents, '');
+    renderStudentDatalist(ctx, getSearchStudents(state), '');
   }
 
   // =========================
-  // Wiring
+  // Wiring de eventos
   // =========================
+
   function wire(ctx, state) {
     const { el } = ctx;
 
-    // servicios pop
+    // Pop de servicios
     if (el.serviceBtn && el.servicePop) {
       el.serviceBtn.addEventListener('click', (e) => {
         e.preventDefault();
@@ -248,83 +396,86 @@
       });
     }
 
-    if (el.serviceSearch) el.serviceSearch.addEventListener('input', () => renderServiceList(ctx, state, state.registro, { keepSearch: true }));
-    if (el.serviceClear) el.serviceClear.addEventListener('click', () => {
-      if (el.serviceSearch) el.serviceSearch.value = '';
-      clearServicios(ctx, state);
-      renderServiceList(ctx, state, state.registro, { keepSearch: true });
-    });
+    if (el.serviceSearch) {
+      el.serviceSearch.addEventListener('input', () => {
+        renderServiceList(ctx, state, state.registro, { keepSearch: true });
+      });
+    }
+
+    if (el.serviceClear) {
+      el.serviceClear.addEventListener('click', () => {
+        if (el.serviceSearch) el.serviceSearch.value = '';
+        clearServicios(ctx, state);
+        renderServiceList(ctx, state, state.registro, { keepSearch: true });
+        applyAndRender(ctx, state);
+      });
+    }
 
     if (el.btnApply) el.btnApply.addEventListener('click', () => applyAndRender(ctx, state));
     if (el.btnReset) el.btnReset.addEventListener('click', () => resetFilters(ctx, state));
 
-    // ✅ Estudiante escribible:
-    // - mientras escribe: filtra datalist
-    // - si hace exact match: abre ficha
-    // - si borra: vuelve a tabla base
+    // ── Estudiante: al escribir/cambiar, restringe servicios + profes ──────────
     if (el.fStudent) {
       el.fStudent.addEventListener('input', () => {
         const v = el.fStudent.value || '';
-        renderStudentDatalist(ctx, state.allStudents, v);
+        renderStudentDatalist(ctx, getSearchStudents(state), v);
 
-        const key = findStudentKeyByName(state.allStudents, v);
-        if (key && window.RIPUI?.ficha?.openFichaByKey) {
-          window.RIPUI.ficha.openFichaByKey(ctx, state, key);
-          return;
+        // Actualizar contexto de servicios y profes según el estudiante escrito
+        const eKey = findStudentKeyByName(getCurrentYearStudents(state), v);
+        renderProfesorOptions(ctx, state.registro, eKey);
+        renderServiceList(ctx, state, state.registro, { keepSearch: true, estudianteKey: eKey });
+
+        // Exact match → abre ficha (y detiene el filtrado normal)
+        if (v && openStudentFromInput(ctx, state, v)) return;
+
+        if (!v) {
+          // Sin nombre: restaura listas completas
+          renderProfesorOptions(ctx, state.registro, '');
+          renderServiceList(ctx, state, state.registro, { keepSearch: true, estudianteKey: '' });
+          applyAndRender(ctx, state);
         }
-
-        if (!v) applyAndRender(ctx, state);
       });
 
       el.fStudent.addEventListener('change', () => {
         const v = el.fStudent.value || '';
-        const key = findStudentKeyByName(state.allStudents, v);
-        if (key && window.RIPUI?.ficha?.openFichaByKey) {
-          window.RIPUI.ficha.openFichaByKey(ctx, state, key);
-          return;
+
+        const eKey = findStudentKeyByName(getCurrentYearStudents(state), v);
+        renderProfesorOptions(ctx, state.registro, eKey);
+        renderServiceList(ctx, state, state.registro, { keepSearch: true, estudianteKey: eKey });
+
+        if (v && openStudentFromInput(ctx, state, v)) return;
+
+        if (!v) {
+          renderProfesorOptions(ctx, state.registro, '');
+          renderServiceList(ctx, state, state.registro, { keepSearch: true, estudianteKey: '' });
+          applyAndRender(ctx, state);
         }
-        if (!v) applyAndRender(ctx, state);
       });
     }
 
     if (el.fProfesor) el.fProfesor.addEventListener('change', () => applyAndRender(ctx, state));
-    if (el.fTipo) el.fTipo.addEventListener('change', () => applyAndRender(ctx, state));
-    if (el.fDesde) el.fDesde.addEventListener('change', () => applyAndRender(ctx, state));
-    if (el.fHasta) el.fHasta.addEventListener('change', () => applyAndRender(ctx, state));
+    if (el.fTipo)     el.fTipo.addEventListener('change',     () => applyAndRender(ctx, state));
+    if (el.fDesde)    el.fDesde.addEventListener('change',    () => applyAndRender(ctx, state));
+    if (el.fHasta)    el.fHasta.addEventListener('change',    () => applyAndRender(ctx, state));
   }
 
   // =========================
   // Init
   // =========================
-  function renderProfesorOptions(ctx, registro) {
-    const { el } = ctx;
-    if (!el.fProfesor) return;
-
-    const current = el.fProfesor.value || '';
-    const list = getProfesoresUnique(registro);
-
-    el.fProfesor.innerHTML =
-      `<option value="">Todos</option>` +
-      list.map((p) => `<option value="${escapeHTML(p.name)}">${escapeHTML(p.name)}</option>`).join('');
-
-    el.fProfesor.value = current;
-  }
 
   function init(ctx, state) {
     if (!state.selectedServicios) state.selectedServicios = new Set();
 
-    renderProfesorOptions(ctx, state.registro);
-    renderServiceList(ctx, state, state.registro, { keepSearch: true });
+    // Inicializar listas completas (sin filtro de estudiante)
+    renderProfesorOptions(ctx, state.registro, '');
+    renderServiceList(ctx, state, state.registro, { keepSearch: true, estudianteKey: '' });
     updateServiceCount(ctx, state);
 
-    // datalist inicial
-    renderStudentDatalist(ctx, state.allStudents, '');
+    renderStudentDatalist(ctx, getSearchStudents(state), '');
 
     wire(ctx, state);
-
-    // primer render tabla
     applyAndRender(ctx, state);
   }
 
-  RIPUI.table = { init, applyAndRender, resetFilters, readFilters };
+  RIPUI.table = { init, applyAndRender, resetFilters, readFilters, renderProfesorOptions, renderServiceList };
 })();
