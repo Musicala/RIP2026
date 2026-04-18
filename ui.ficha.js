@@ -327,8 +327,9 @@
       if (thead) thead.innerHTML = state.__thead2026HTML;
     }
 
+    show(el.fichaSummaryBlock);
     show(el.tablaContainer);
-    hide(el.programacionStudentView);
+    show(el.programacionStudentView);
 
     if (el.programacionEmbed) el.programacionEmbed.innerHTML = '';
   }
@@ -365,12 +366,12 @@
   }
 
   function getCategoryKey(r) {
-    return String(
-      r?.clasifPago ||
-      r?.clasif ||
-      r?.servicio ||
-      'Sin categoría'
-    ).trim() || 'Sin categoría';
+    const fromPago = String(r?.clasifPago || '').trim();
+    const fromClase = String(r?.clasif || '').trim();
+    const fallback = String(r?.servicio || '').trim();
+
+    if (isPagoRow(r) && fromPago) return fromPago;
+    return fromClase || fromPago || fallback || 'Sin categor�a';
   }
 
   function buildSaldoBreakdown(rows) {
@@ -387,7 +388,6 @@
 
     const items = Array.from(totals.entries())
       .map(([label, value]) => ({ label, value }))
-      .filter((item) => item.value !== 0)
       .sort((a, b) => {
         const absDiff = Math.abs(b.value) - Math.abs(a.value);
         if (absDiff !== 0) return absDiff;
@@ -407,6 +407,29 @@
     return `${value > 0 ? '+' : ''}${fmtMoney(value)}`;
   }
 
+    function parsePagoValue(raw) {
+    const s = String(raw || '').trim();
+    if (!s) return 0;
+    const cleaned = s
+      .replace(/\s/g, '')
+      .replace(/\./g, '')
+      .replace(/,/g, '.')
+      .replace(/[^\d.-]/g, '');
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function getPagosStats(rows) {
+    const pagos = (rows || []).filter(isPagoRow);
+    const lastPago = pagos[0] || null;
+    let totalPagos = 0;
+    for (const p of pagos) totalPagos += parsePagoValue(p?.pago);
+    return {
+      lastPagoValor: parsePagoValue(lastPago?.pago),
+      totalPagos
+    };
+  }
+
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
     const rows = ficha?.rows || [];
@@ -419,6 +442,7 @@
     const lastPago = getLastPagoRow(rows);
     const lastClase = getLastClaseRow(rows);
     const { saldoTotal, items } = buildSaldoBreakdown(rows);
+    const pagosStats = getPagosStats(rows);
 
     setText(el.fichaFecha, lastRow ? (lastRow.fechaRaw || '—') : '—');
 
@@ -435,22 +459,16 @@
         ? `${lastClase.fechaRaw || '—'}${lastClase.servicio ? ' · ' + lastClase.servicio : ''}`
         : '—'
     );
+    setText(el.fichaUltPagoValor, pagosStats.lastPagoValor ? fmtMoney(pagosStats.lastPagoValor) : '—');
+    setText(el.fichaTotalPagos, pagosStats.totalPagos ? fmtMoney(pagosStats.totalPagos) : '—');
 
     if (el.fichaSaldosMini) {
-      const breakdownHTML = items.length
-        ? items.map((item) => `
-            <span class="saldo-chip ${saldoClass(item.value)}">
-              ${escapeHTML(item.label)} <b>${escapeHTML(saldoText(item.value))}</b>
-            </span>
-          `).join('')
-        : `<span class="saldo-chip zero">Sin saldo pendiente</span>`;
+      const compact = [`Saldo final ${saldoText(saldoTotal)}`].concat((items || []).map((item) => `${String(item.label || '').trim()} ${saldoText(item.value)}`))
+        .join(' · ');
 
       el.fichaSaldosMini.innerHTML = `
         <div class="saldo-mini">
-          <span class="saldo-chip ${saldoClass(saldoTotal)}">
-            Saldo total <b>${escapeHTML(saldoText(saldoTotal))}</b>
-          </span>
-          ${breakdownHTML}
+          <span class="saldo-chip soft">${escapeHTML(compact)}</span>
         </div>
       `;
     }
@@ -467,6 +485,8 @@
     const firstDate = rowsSlice?.[0]?.[2] || rowsSlice?.[0]?.[1] || '—';
     setText(el.fichaFecha, firstDate || '—');
     setText(el.fichaUltPago, '—');
+    setText(el.fichaUltPagoValor, '—');
+    setText(el.fichaTotalPagos, '—');
     setText(el.fichaProxPago, '—');
 
     if (el.fichaSaldosMini) {
@@ -476,13 +496,18 @@
     }
   }
 
-  function syncProgramacionIfAvailable(ctx, state, studentName, year) {
+  async function syncProgramacionIfAvailable(ctx, state, studentName, year) {
     if (!studentName) return;
     if (String(year) !== '2026') return;
     if (!window.RIPProgramacion?.attachStudent) return;
 
     try {
-      window.RIPProgramacion.attachStudent(ctx, state, studentName);
+      show(ctx?.el?.programacionStudentView);
+      if (!state?.prog?.data && window.RIPProgramacion?.loadResumen) {
+        state.prog = state.prog || {};
+        state.prog.data = await window.RIPProgramacion.loadResumen();
+      }
+      await window.RIPProgramacion.attachStudent(ctx, state, studentName);
     } catch (err) {
       console.warn('No se pudo sincronizar bloque de Programación:', err);
     }
@@ -591,6 +616,7 @@
       renderSimpleSummary(ctx, studentName, y, pack.rowsSlice);
       setTableHeader(pack.headersSlice);
       setTableBodySimple(pack.rowsSlice, y);
+      hide(el.programacionStudentView);
 
       renderYearButtons(ctx, state);
     } catch (e) {

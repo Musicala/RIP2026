@@ -14,6 +14,7 @@
   const API_URL = 'https://script.google.com/macros/s/AKfycbyJaPrhQ-Ve09EQM6DjYMjaVDsugHIBVPqvKecxH_eepSoO0O5rHG3FkyyJyKRSVVhjjQ/exec';
   const API_TOKEN = 'MUSICALA-PROGRAMACION-2026';
   const MAX_CLASSES = 24;
+  const DEFAULT_CLASS_LIMIT = 24;
   const SESSION_PREFIX = 'rip_prog_schedule_';
 
   function $(id) {
@@ -36,6 +37,33 @@
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/\s+/g, ' ');
+  }
+
+  function isPagoRow(r) {
+    const tipo = String(r?.tipo || '').trim().toLowerCase();
+    if (tipo === 'pago') return true;
+    if (tipo === 'clase') return false;
+    return !!String(r?.pago || '').trim();
+  }
+
+  function getStudentClassLimit(state, studentName) {
+    const all = Array.isArray(state?.registro) ? state.registro : [];
+    const key = norm(studentName);
+    if (!key || !all.length) return DEFAULT_CLASS_LIMIT;
+
+    const rows = all
+      .filter(r => norm(r?.estudiante) === key || norm(r?.estudianteKey) === key)
+      .sort((a, b) => (Number(b?.fechaTs) || 0) - (Number(a?.fechaTs) || 0));
+
+    const lastPago = rows.find(isPagoRow);
+    if (!lastPago) return DEFAULT_CLASS_LIMIT;
+
+    const mov = Math.abs(Number(lastPago?.movimiento) || 0);
+    if (mov > 0) return Math.min(MAX_CLASSES, mov);
+
+    const pagoText = String(lastPago?.pago || '');
+    const n = Number((pagoText.match(/\d+/) || [])[0] || 0);
+    return n > 0 ? Math.min(MAX_CLASSES, n) : DEFAULT_CLASS_LIMIT;
   }
 
   function setText(el, value) {
@@ -81,21 +109,21 @@
     } catch (_) {}
   }
 
-  function normalizeFechas(arr) {
+  function normalizeFechas(arr, limit = MAX_CLASSES) {
     if (!Array.isArray(arr)) return [];
     return arr
       .map(v => String(v || '').trim())
       .filter(Boolean)
-      .slice(0, MAX_CLASSES);
+      .slice(0, limit);
   }
 
-  function fillToMax(arr) {
+  function fillToMax(arr, limit = MAX_CLASSES) {
     const out = Array.isArray(arr)
-      ? arr.map(v => String(v || '').trim()).slice(0, MAX_CLASSES)
+      ? arr.map(v => String(v || '').trim()).slice(0, limit)
       : [];
 
-    while (out.length < MAX_CLASSES) out.push('');
-    return out.slice(0, MAX_CLASSES);
+    while (out.length < limit) out.push('');
+    return out.slice(0, limit);
   }
 
   function getFutureStats(fechas, today) {
@@ -133,11 +161,11 @@
     return 'OK';
   }
 
-  function getGroupedRows(rows = []) {
+  function getGroupedRows(rows = [], limit = MAX_CLASSES) {
     return {
       none: rows.filter(r => (r.filled || 0) === 0),
-      partial: rows.filter(r => (r.filled || 0) > 0 && (r.filled || 0) < MAX_CLASSES),
-      complete: rows.filter(r => (r.filled || 0) >= MAX_CLASSES)
+      partial: rows.filter(r => (r.filled || 0) > 0 && (r.filled || 0) < limit),
+      complete: rows.filter(r => (r.filled || 0) >= limit)
     };
   }
 
@@ -332,11 +360,11 @@
     modal.addEventListener('remove', () => document.removeEventListener('keydown', modal._keyHandler));
   }
 
-  function renderDatesGrid(container, fechas = [], today = '', { editable = false, state = null, ctx = null, studentName = '' } = {}) {
+  function renderDatesGrid(container, fechas = [], today = '', { editable = false, state = null, ctx = null, studentName = '', limit = MAX_CLASSES } = {}) {
     if (!container) return;
 
-    const arr = Array.isArray(fechas) ? fechas.slice(0, MAX_CLASSES) : [];
-    while (arr.length < MAX_CLASSES) arr.push('');
+    const arr = Array.isArray(fechas) ? fechas.slice(0, limit) : [];
+    while (arr.length < limit) arr.push('');
 
     container.innerHTML = arr.map((raw, i) => {
       const iso = String(raw || '').trim();
@@ -429,9 +457,10 @@
 
     const today = state?.prog?.data?.today || todayISO();
     const studentName = state?.prog?.currentStudentName || '';
+    const limit = state?.prog?.currentStudentLimit || getStudentClassLimit(state, studentName);
 
     debugLog('Pintando grilla con fechas:', fechas);
-    const editOpts = { editable: true, state, ctx, studentName };
+    const editOpts = { editable: true, state, ctx, studentName, limit };
     renderDatesGrid(ctx?.el?.progStudentDates, fechas, today, editOpts);
 
     requestAnimationFrame(() => {
@@ -440,12 +469,14 @@
   }
 
   function applyScheduleToStudentUI(ctx, state, studentName, row, fechas, today) {
-    const normalized = fillToMax(fechas);
+    const limit = getStudentClassLimit(state, studentName);
+    const normalized = fillToMax(fechas, limit);
     const clean = normalized.filter(Boolean);
     const stats = getFutureStats(clean, today);
 
     state.prog.currentStudentName = studentName || '';
     state.prog.currentStudentRow = row || null;
+    state.prog.currentStudentLimit = limit;
     state.prog.currentStudentSchedule = normalized;
 
     setText(ctx.el.progStudentName, row?.name || studentName || '—');
@@ -503,7 +534,7 @@
   RIPProgramacion.renderKpis = function (ctx, state, onOpenList, onOpenStudent) {
     const data = state?.prog?.data;
     const rows = data?.dashboard || [];
-    const grouped = getGroupedRows(rows);
+    const grouped = getGroupedRows(rows, MAX_CLASSES);
 
     state.prog.onOpenList = onOpenList || null;
     state.prog.onOpenStudent = onOpenStudent || null;
@@ -614,7 +645,7 @@
       debugLog('Usando cache inmediato para', studentName, cached);
       applyScheduleToStudentUI(ctx, state, studentName, row, cached, today);
     } else {
-      state.prog.currentStudentSchedule = new Array(MAX_CLASSES).fill('');
+      state.prog.currentStudentSchedule = new Array(getStudentClassLimit(state, studentName)).fill('');
       paintStudentScheduleGrid(ctx, state);
     }
 
@@ -631,7 +662,7 @@
       console.error('Error cargando programación real del estudiante:', err);
 
       if (!cached) {
-        const fallback = fillToMax(row?.fechas || []);
+        const fallback = fillToMax(row?.fechas || [], getStudentClassLimit(state, studentName));
         state.prog.currentStudentSchedule = fallback;
         setText(ctx.el.progStudentAlert, row ? getAlertText(row) : 'Sin datos');
         paintStudentScheduleGrid(ctx, state);
@@ -668,6 +699,11 @@
 
   function renderProgramar(ctx, state, studentName) {
     const today = todayISO();
+    const classLimit = getStudentClassLimit(state, studentName);
+    const packageOptions = [4, 8, 12, 24]
+      .filter(v => v <= classLimit)
+      .map(v => `<option value="${v}">${v} clases</option>`)
+      .join('') || `<option value="${classLimit}">${classLimit} clases</option>`;
 
     renderModeShell(
       ctx,
@@ -678,10 +714,7 @@
           <label class="field">
             <span>Paquete</span>
             <select id="ripProgPkg" class="control">
-              <option value="4">4 clases</option>
-              <option value="8">8 clases</option>
-              <option value="12">12 clases</option>
-              <option value="24">24 clases</option>
+              ${packageOptions}
             </select>
           </label>
 
@@ -697,7 +730,7 @@
 
           <label class="field">
             <span>Clases por día</span>
-            <input type="number" id="ripProgPerDay" class="control" min="1" max="24" value="1">
+            <input type="number" id="ripProgPerDay" class="control" min="1" max="${classLimit}" value="1">
           </label>
         </div>
 
@@ -777,10 +810,10 @@
     }
 
     $('ripProgGen')?.addEventListener('click', () => {
-      const pkg = Number($('ripProgPkg')?.value || 0);
+      const pkg = Math.min(Number($('ripProgPkg')?.value || 0), classLimit);
       const start = $('ripProgStart')?.value;
       const step = Number($('ripProgFreq')?.value || 7);
-      const perDay = Math.max(1, Number($('ripProgPerDay')?.value || 1));
+      const perDay = Math.min(classLimit, Math.max(1, Number($('ripProgPerDay')?.value || 1)));
       const avoid = !!$('ripProgAvoidSun')?.checked;
 
       if (!pkg || !start) {
@@ -809,14 +842,14 @@
       try {
         const cached = getCachedSchedule(state, studentName);
         if (cached) {
-          dates = normalizeFechas(cached);
+          dates = normalizeFechas(cached, classLimit);
           renderList();
           setStatus('Programación cargada desde cache.', 'ok');
         }
 
         const res = await loadStudentSchedule(studentName);
         const fechas = cacheSchedule(state, studentName, res.fechas || []);
-        dates = normalizeFechas(fechas);
+        dates = normalizeFechas(fechas, classLimit);
         renderList();
         setStatus('Programación actual cargada.', 'ok');
       } catch (err) {
@@ -866,6 +899,7 @@
   }
 
   function renderReprogramar(ctx, state, studentName) {
+    const classLimit = getStudentClassLimit(state, studentName);
     renderModeShell(
       ctx,
       `Reprogramar · ${studentName}`,
@@ -879,12 +913,12 @@
 
           <label class="field">
             <span>Cantidad a reprogramar</span>
-            <input type="number" id="ripRepCount" class="control" min="1" max="24" value="4">
+            <input type="number" id="ripRepCount" class="control" min="1" max="${classLimit}" value="${Math.min(4, classLimit)}">
           </label>
 
           <label class="field">
             <span>Clases por día</span>
-            <input type="number" id="ripRepPerDay" class="control" min="1" max="24" value="1">
+            <input type="number" id="ripRepPerDay" class="control" min="1" max="${classLimit}" value="1">
           </label>
 
           <label class="field">
@@ -936,7 +970,7 @@
       `
     );
 
-    let schedule = new Array(MAX_CLASSES).fill('');
+    let schedule = new Array(classLimit).fill('');
     let startIndex = null;
     let preview = [];
 
@@ -1011,8 +1045,8 @@
       }
 
       const freq = Number($('ripRepFreq')?.value || 7);
-      const cnt = Number($('ripRepCount')?.value || 4);
-      const perDay = Math.max(1, Number($('ripRepPerDay')?.value || 1));
+      const cnt = Math.min(classLimit, Number($('ripRepCount')?.value || 4));
+      const perDay = Math.min(classLimit, Math.max(1, Number($('ripRepPerDay')?.value || 1)));
       const avoid = !!$('ripRepAvoidSun')?.checked;
       const baseStr = $('ripRepBase')?.value;
 
@@ -1023,12 +1057,12 @@
       let currentDate = new Date(base);
       const out = [];
 
-      while (out.length < cnt && (startIndex + out.length) <= MAX_CLASSES) {
-        for (let i = 0; i < perDay && out.length < cnt && (startIndex + out.length) <= MAX_CLASSES; i++) {
+      while (out.length < cnt && (startIndex + out.length) <= classLimit) {
+        for (let i = 0; i < perDay && out.length < cnt && (startIndex + out.length) <= classLimit; i++) {
           out.push(toISO(currentDate));
         }
 
-        if (out.length < cnt && (startIndex + out.length) <= MAX_CLASSES) {
+        if (out.length < cnt && (startIndex + out.length) <= classLimit) {
           currentDate = nextDate(currentDate, freq, avoid);
         }
       }
@@ -1044,7 +1078,7 @@
       try {
         const cached = getCachedSchedule(state, studentName);
         if (cached) {
-          schedule = fillToMax(cached);
+          schedule = fillToMax(cached, classLimit);
           renderCurrent();
           setStatus('Programación cargada desde cache.', 'ok');
         }
@@ -1052,7 +1086,7 @@
         const res = await loadStudentSchedule(studentName);
         const fechas = cacheSchedule(state, studentName, res.fechas || []);
 
-        schedule = fillToMax(fechas);
+        schedule = fillToMax(fechas, classLimit);
         startIndex = null;
         preview = [];
         renderCurrent();
@@ -1065,7 +1099,7 @@
     });
 
     $('ripRepClear')?.addEventListener('click', () => {
-      schedule = new Array(MAX_CLASSES).fill('');
+      schedule = new Array(classLimit).fill('');
       startIndex = null;
       preview = [];
       renderCurrent();
@@ -1097,10 +1131,10 @@
           return;
         }
 
-        const merged = fillToMax(schedule);
+        const merged = fillToMax(schedule, classLimit);
         for (let k = 0; k < preview.length; k++) {
           const idx = (startIndex - 1) + k;
-          if (idx >= 0 && idx < MAX_CLASSES) merged[idx] = preview[k] || '';
+          if (idx >= 0 && idx < classLimit) merged[idx] = preview[k] || '';
         }
         cacheSchedule(state, studentName, merged);
 

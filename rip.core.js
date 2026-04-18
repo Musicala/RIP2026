@@ -66,6 +66,23 @@
   };
 
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const findHeaderByAliases = (headers, aliases = []) => {
+    if (!Array.isArray(headers) || !headers.length) return '';
+    const aliasSet = new Set((aliases || []).map((x) => norm(x)));
+    if (!aliasSet.size) return '';
+    return headers.find((h) => aliasSet.has(norm(h))) || '';
+  };
+
+  const getValueByHeaderOrIndex = (rowObj, headers, headerName, fallbackIndex = -1) => {
+    if (headerName && Object.prototype.hasOwnProperty.call(rowObj, headerName)) {
+      return rowObj[headerName] || '';
+    }
+    if (fallbackIndex >= 0 && fallbackIndex < (headers?.length || 0)) {
+      const h = headers[fallbackIndex];
+      return (h && Object.prototype.hasOwnProperty.call(rowObj, h)) ? (rowObj[h] || '') : '';
+    }
+    return '';
+  };
 
   // Fecha: soporta ISO, dd/mm/yyyy, yyyy-mm-dd, etc.
   const parseDate = (s) => {
@@ -239,14 +256,14 @@
       COLS.hora,
       COLS.profesor,
       COLS.pago,
-      COLS.comentario,      COLS.clasif
+      COLS.comentario
     ];
 
     const missing = need.filter((h) => !headers.includes(h));
     if (missing.length) {
       throw new Error(`TSV Registro no coincide. Faltan columnas: ${missing.join(', ')}`);
     }
-    // NOTA: movimiento y clasifPago son opcionales
+    // NOTA: clasif/movimiento/clasifPago pueden variar por nombre o posición
   };
 
   // =========================
@@ -279,8 +296,7 @@
       COLS.hora,
       COLS.profesor,
       COLS.pago,
-      COLS.comentario,
-      COLS.clasif
+      COLS.comentario
     ];
     const missing = need.filter((h) => !parsed.headers.includes(h));
     if (missing.length) {
@@ -288,8 +304,17 @@
     }
 
     const HAS_ID = parsed.headers.includes(COLS.id);
+    const clasifHeader =
+      findHeaderByAliases(parsed.headers, [COLS.clasif, 'Clasificacion', 'Clasificación final', 'Clasificacion final']) ||
+      parsed.headers[10] || '';
+    const movHeader =
+      findHeaderByAliases(parsed.headers, [COLS.movimiento, 'Movimientos', 'Saldo movimiento']) ||
+      parsed.headers[11] || '';
+
     const rows = parsed.rows.map((r) => {
       const estudiante = r[COLS.estudiante] || '';
+      const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
+      const movRaw = getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11);
       return {
         id: HAS_ID ? (r[COLS.id] || '') : '',
         estudiante,
@@ -302,9 +327,9 @@
         tipo: r[COLS.tipo] || '',
         pago: r[COLS.pago] || '',
         comentario: r[COLS.comentario] || '',
-        clasif: r[COLS.clasif] || '',
+        clasif: clasifRaw || '',
         clasifPago: '',
-        movimiento: 0
+        movimiento: safeNum(movRaw)
       };
     });
 
@@ -346,14 +371,28 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
 
       validateHeaders(parsed.headers);
 
-      const HAS_MOV = parsed.headers.includes(COLS.movimiento);
-      const HAS_CLASIF_PAGO = parsed.headers.includes(COLS.clasifPago);
+      const clasifHeader =
+        findHeaderByAliases(parsed.headers, [COLS.clasif, 'Clasificacion', 'Clasificación final', 'Clasificacion final']) ||
+        parsed.headers[10] || '';
+      const movHeader =
+        findHeaderByAliases(parsed.headers, [COLS.movimiento, 'Movimientos', 'Saldo movimiento']) ||
+        parsed.headers[11] || '';
+      const clasifPagoHeader = findHeaderByAliases(parsed.headers, [COLS.clasifPago, 'Clasificacion de pagos']);
+
+      const HAS_MOV = !!movHeader;
+      const HAS_CLASIF_PAGO = !!clasifPagoHeader;
 
       // Normaliza y añade computados
       const rows = parsed.rows.map((r) => {
         const estudiante = r[COLS.estudiante] || '';
         const d = parseDate(r[COLS.fecha]);
-        const movimiento = HAS_MOV ? safeNum(r[COLS.movimiento]) : 0;
+        const movimiento = HAS_MOV
+          ? safeNum(getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11))
+          : 0;
+        const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
+        const clasifPagoRaw = HAS_CLASIF_PAGO
+          ? getValueByHeaderOrIndex(r, parsed.headers, clasifPagoHeader, -1)
+          : '';
 
         return {
           raw: r,
@@ -374,8 +413,8 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
 
           pago: r[COLS.pago] || '',
           comentario: r[COLS.comentario] || '',
-          clasif: r[COLS.clasif] || '',
-          clasifPago: HAS_CLASIF_PAGO ? (r[COLS.clasifPago] || '') : '',
+          clasif: clasifRaw || '',
+          clasifPago: clasifPagoRaw || '',
           movimiento
         };
       });

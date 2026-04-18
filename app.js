@@ -490,8 +490,12 @@
     setText(ctx.el.fichaStudent, studentName);
     setText(ctx.el.fichaFecha, '—');
     setText(ctx.el.fichaUltPago, '—');
+    setText(ctx.el.fichaUltPagoValor, '—');
+    setText(ctx.el.fichaTotalPagos, '—');
     setText(ctx.el.fichaProxPago, '—');
     setHTML(ctx.el.fichaSaldosMini, '');
+    show(ctx.el.fichaSummaryBlock);
+    show(ctx.el.programacionStudentView);
 
     hide(ctx.el.tablaContainer);
 

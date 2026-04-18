@@ -182,9 +182,12 @@
       // Ficha summary
       fichaTitle: $('fichaTitle'),
       fichaSub: $('fichaSub'),
+      fichaSummaryBlock: $('fichaSummaryBlock'),
       fichaStudent: $('fichaStudent'),
       fichaFecha: $('fichaFecha'),
       fichaUltPago: $('fichaUltPago'),
+      fichaUltPagoValor: $('fichaUltPagoValor'),
+      fichaTotalPagos: $('fichaTotalPagos'),
       fichaProxPago: $('fichaProxPago'),
       fichaSaldosMini: $('fichaSaldosMini'),
 
