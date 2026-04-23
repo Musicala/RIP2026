@@ -613,6 +613,25 @@ tr:hover td { background: rgba(26,59,110,.03); }
   background: var(--panel);
   box-shadow: var(--sh-xs);
 }
+#fichaSummaryBlock.sheet-like {
+  border-radius: 16px;
+  border-color: rgba(26,59,110,.14);
+  box-shadow: 0 10px 24px rgba(15,23,42,.06);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+#fichaSummaryBlock .sheet-row {
+  grid-template-columns: 1.05fr 2fr 1.05fr 1.35fr;
+}
+#fichaSummaryBlock .sheet-row .cell {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+#fichaSummaryBlock .sheet-row.sheet-head .cell {
+  background: rgba(26,59,110,.04);
+}
+#fichaSummaryBlock .cell.strong {
+  color: #44526a;
+}
 .sheet-row { display: grid; grid-template-columns: 1.1fr 2fr 1fr 1fr; border-top: 1px solid var(--line); }
 .sheet-row:first-child { border-top: none; }
 .sheet-head { background: rgba(26,59,110,.04); }
@@ -736,6 +755,30 @@ tr:hover td { background: rgba(26,59,110,.03); }
 }
 
 #ripDateModal.rip-modal-in { opacity: 1; }
+#ripFichaEditModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+#ripFichaEditModal.rip-modal-in { opacity: 1; }
+#ripFichaEditModal .rip-modal-box {
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+#ripFichaEditModal .ripedit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+@media (max-width: 760px) {
+  #ripFichaEditModal .ripedit-grid { grid-template-columns: 1fr; }
+}
 
 .rip-modal-overlay {
   position: absolute;

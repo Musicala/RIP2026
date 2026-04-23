@@ -22,6 +22,8 @@
 
   const { escapeHTML, fmtMoney, toast, norm, show, hide, setText } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
+  const EDITOR_API_URL = window.RIP_EDITOR_API_URL || '';
+  const EDITOR_TOKEN = window.RIP_EDITOR_TOKEN || 'MUSICALA-EDITOR-2026';
 
   // =========================
   // Config años / TSV / columnas
@@ -235,8 +237,21 @@
     const { el } = ctx;
     if (!el.tableBody) return;
 
+    const editable = !!ctx.__fichaEditMode;
+    const theadRow = document.querySelector('#tablaContainer thead tr');
+    if (theadRow) {
+      const hasAction = !!theadRow.querySelector('.th-ficha-actions');
+      if (editable && !hasAction) {
+        const th = document.createElement('th');
+        th.className = 'th-ficha-actions';
+        th.textContent = 'Acciones';
+        theadRow.appendChild(th);
+      }
+      if (!editable && hasAction) theadRow.querySelector('.th-ficha-actions')?.remove();
+    }
+
     if (!rows || !rows.length) {
-      el.tableBody.innerHTML = `<tr><td colspan="12" class="empty-td">No hay registros para este estudiante.</td></tr>`;
+      el.tableBody.innerHTML = `<tr><td colspan="${editable ? 12 : 11}" class="empty-td">No hay registros para este estudiante.</td></tr>`;
       return;
     }
 
@@ -247,6 +262,9 @@
         const mov = Number(r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
         const movText = `${mov > 0 ? '+' : ''}${fmtMoney(mov)}`;
+        const actions = editable
+          ? `<td class="td-ficha-actions"><button class="btn small ghost" type="button" data-edit-row="${escapeHTML(r.id || '')}">Editar</button> <button class="btn small" type="button" data-dup-row="${escapeHTML(r.id || '')}">Duplicar</button> <button class="btn small ghost" type="button" data-del-row="${escapeHTML(r.id || '')}">Eliminar</button></td>`
+          : '';
 
         return `
           <tr>
@@ -258,16 +276,17 @@
             <td>${escapeHTML(r.profesor)}</td>
             <td>${escapeHTML(r.pago)}</td>
             <td>${escapeHTML(r.comentario)}</td>
-            <td class="mono">${escapeHTML(r.id)}</td>
             <td>${escapeHTML(r.clasif)}</td>
             <td>${escapeHTML(r.clasifPago)}</td>
             <td class="${movClass}">${movText}</td>
+            ${actions}
           </tr>
         `;
       })
       .join('');
 
     el.tableBody.innerHTML = html;
+    if (editable) bindEditRowActions(ctx);
   }
 
   // =========================
@@ -371,7 +390,7 @@
     const fallback = String(r?.servicio || '').trim();
 
     if (isPagoRow(r) && fromPago) return fromPago;
-    return fromClase || fromPago || fallback || 'Sin categor�a';
+    return fromClase || fromPago || fallback || 'Sin categor�a';
   }
 
   function buildSaldoBreakdown(rows) {
@@ -584,6 +603,7 @@
 
     if (y === '2026') {
       state.__viewYear = '2026';
+      toggleEditButtons(ctx, !!ctx.__fichaEditMode);
 
       if (state.currentStudentKey) {
         const student = (state.allStudents || []).find((s) => s.key === state.currentStudentKey);
@@ -617,6 +637,8 @@
       setTableHeader(pack.headersSlice);
       setTableBodySimple(pack.rowsSlice, y);
       hide(el.programacionStudentView);
+      ctx.__fichaEditMode = false;
+      toggleEditButtons(ctx, false);
 
       renderYearButtons(ctx, state);
     } catch (e) {
@@ -648,9 +670,15 @@
     state.currentStudentName = student ? student.name : '';
     state.currentSearchEntry = getSearchEntryByName(state, state.currentStudentName) || student || null;
     state.__viewYear = '2026';
+    ctx.__fichaState = state;
 
     showFichaContainer(ctx);
     resetFichaVisualState(ctx, state);
+    bindFichaEditButtons(ctx, state);
+    ctx.__fichaEditMode = false;
+    ctx.__fichaRowsWorking = null;
+    ctx.__fichaRowsBase = null;
+    toggleEditButtons(ctx, false);
 
     show(el.btnPDF);
     show(el.btnVolverDash);
@@ -674,6 +702,8 @@
     state.currentSearchEntry = entry;
     state.currentStudentName = entry.name || '';
     state.currentStudentKey = String(entry.currentKey || entry.key || '').trim() || '';
+    ctx.__fichaState = state;
+    bindFichaEditButtons(ctx, state);
 
     showFichaContainer(ctx);
     resetFichaVisualState(ctx, state);
@@ -699,7 +729,265 @@
     toast(el.toastWrap, 'No encontré años disponibles para este estudiante.', 'warn');
   }
 
-  // =========================
+
+  function toEditablePayload(row) {
+    return {
+      tipo: row.tipo || '',
+      estudiante: row.estudiante || '',
+      fechaRaw: row.fechaRaw || '',
+      hora: row.hora || '',
+      servicio: row.servicio || '',
+      profesor: row.profesor || '',
+      pago: row.pago || '',
+      comentario: row.comentario || '',
+      clasif: row.clasif || '',
+      clasifPago: row.clasifPago || '',
+      movimiento: Number(row.movimiento) || 0
+    };
+  }
+
+  function cloneRow(row) {
+    return { ...row, __isNew: !!row.__isNew, __deleted: !!row.__deleted };
+  }
+
+  function apiCallEditor(params = {}) {
+    if (!EDITOR_API_URL) return Promise.reject(new Error('RIP_EDITOR_API_URL no esta configurada'));
+    return new Promise((resolve, reject) => {
+      const cb = '__rip_editor_' + Math.random().toString(36).slice(2);
+      const script = document.createElement('script');
+      const url = new URL(EDITOR_API_URL);
+      let done = false;
+      Object.entries({ ...params, callback: cb }).forEach(([k, v]) => url.searchParams.set(k, String(v)));
+
+      const clean = () => {
+        if (script.parentNode) script.parentNode.removeChild(script);
+        try { delete window[cb]; } catch (_) { window[cb] = undefined; }
+      };
+
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        clean();
+        reject(new Error('Timeout API edicion'));
+      }, 25000);
+
+      window[cb] = (data) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        clean();
+        resolve(data);
+      };
+
+      script.onerror = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        clean();
+        reject(new Error('Error conectando API edicion'));
+      };
+
+      script.src = url.toString();
+      document.body.appendChild(script);
+    });
+  }
+
+  function toggleEditButtons(ctx, editing) {
+    if (ctx?.el?.btnFichaEditMode) ctx.el.btnFichaEditMode.style.display = editing ? 'none' : '';
+    if (ctx?.el?.btnFichaSaveEdits) ctx.el.btnFichaSaveEdits.style.display = editing ? '' : 'none';
+    if (ctx?.el?.btnFichaCancelEdits) ctx.el.btnFichaCancelEdits.style.display = editing ? '' : 'none';
+  }
+
+  function openRowEditModal(row, onSave) {
+    const prev = document.getElementById('ripFichaEditModal');
+    if (prev) prev.remove();
+
+    const d = toEditablePayload(row);
+    const modal = document.createElement('div');
+    modal.id = 'ripFichaEditModal';
+    modal.className = 'rip-modal-in';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-editor-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Editar ${escapeHTML(row.id || '')}</span>
+          <button class="rip-modal-close" type="button">x</button>
+        </div>
+        <div class="rip-modal-body">
+          <div class="ripedit-grid">
+            <label class="ripedit-field"><span class="ripedit-label">Tipo</span><input id="re_tipo" class="control" value="${escapeHTML(d.tipo)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Fecha</span><input id="re_fechaRaw" class="control" value="${escapeHTML(d.fechaRaw)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Hora</span><input id="re_hora" class="control" value="${escapeHTML(d.hora)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Servicio</span><input id="re_servicio" class="control" value="${escapeHTML(d.servicio)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Profesor</span><input id="re_profesor" class="control" value="${escapeHTML(d.profesor)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Pago</span><input id="re_pago" class="control" value="${escapeHTML(d.pago)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Clasificacion</span><input id="re_clasif" class="control" value="${escapeHTML(d.clasif)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Clasif pagos</span><input id="re_clasifPago" class="control" value="${escapeHTML(d.clasifPago)}"></label>
+            <label class="ripedit-field"><span class="ripedit-label">Movimiento</span><input id="re_movimiento" class="control" value="${escapeHTML(String(d.movimiento))}"></label>
+            <label class="ripedit-field" style="grid-column:1/-1"><span class="ripedit-label">Comentario</span><textarea id="re_comentario" class="control">${escapeHTML(d.comentario)}</textarea></label>
+          </div>
+        </div>
+        <div class="rip-modal-foot">
+          <button class="btn ghost" type="button" data-close>Cancelar</button>
+          <button class="btn primary" type="button" data-save>Guardar</button>
+        </div>
+      </div>`;
+
+    const close = () => modal.remove();
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('[data-close]')?.addEventListener('click', close);
+    modal.querySelector('[data-save]')?.addEventListener('click', () => {
+      onSave({
+        tipo: modal.querySelector('#re_tipo')?.value || '',
+        estudiante: row.estudiante || '',
+        fechaRaw: modal.querySelector('#re_fechaRaw')?.value || '',
+        hora: modal.querySelector('#re_hora')?.value || '',
+        servicio: modal.querySelector('#re_servicio')?.value || '',
+        profesor: modal.querySelector('#re_profesor')?.value || '',
+        pago: modal.querySelector('#re_pago')?.value || '',
+        comentario: modal.querySelector('#re_comentario')?.value || '',
+        clasif: modal.querySelector('#re_clasif')?.value || '',
+        clasifPago: modal.querySelector('#re_clasifPago')?.value || '',
+        movimiento: Number(modal.querySelector('#re_movimiento')?.value || 0) || 0
+      });
+      close();
+    });
+
+    document.body.appendChild(modal);
+  }
+
+  function refreshEditableFicha(ctx, state) {
+    const rows = (ctx.__fichaRowsWorking || []).filter((r) => !r.__deleted);
+    const student = (state.allStudents || []).find((s) => s.key === state.currentStudentKey) || null;
+    renderFichaSummary(ctx, student, { rows }, '2026');
+    renderTable2026(ctx, rows);
+  }
+
+  function bindEditRowActions(ctx) {
+    const tbody = ctx?.el?.tableBody;
+    if (!tbody || tbody.__fichaEditBound) return;
+    tbody.__fichaEditBound = true;
+
+    tbody.addEventListener('click', (ev) => {
+      const editBtn = ev.target.closest('[data-edit-row]');
+      const dupBtn = ev.target.closest('[data-dup-row]');
+      const delBtn = ev.target.closest('[data-del-row]');
+      const id = editBtn?.getAttribute('data-edit-row') || dupBtn?.getAttribute('data-dup-row') || delBtn?.getAttribute('data-del-row');
+      if (!id) return;
+
+      const rows = ctx.__fichaRowsWorking || [];
+      const row = rows.find((r) => String(r.id) === String(id));
+      if (!row) return;
+      const state = ctx.__fichaState;
+
+      if (editBtn) {
+        openRowEditModal(row, (data) => {
+          Object.assign(row, data);
+          refreshEditableFicha(ctx, state);
+        });
+        return;
+      }
+
+      if (dupBtn) {
+        const copy = cloneRow(row);
+        copy.id = 'LOCAL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+        copy.__isNew = true;
+        rows.unshift(copy);
+        refreshEditableFicha(ctx, state);
+        return;
+      }
+
+      if (delBtn) {
+        if (!confirm('¿Eliminar esta clase del registro?')) return;
+        row.__deleted = true;
+        refreshEditableFicha(ctx, state);
+      }
+    });
+  }
+
+  async function saveEditChanges(ctx, state) {
+    if (!EDITOR_API_URL) {
+      toast(ctx.el.toastWrap, 'Configura RIP_EDITOR_API_URL para guardar edicion.', 'warn');
+      return;
+    }
+
+    const rows = (ctx.__fichaRowsWorking || []).map(cloneRow);
+    const baseMap = new Map((ctx.__fichaRowsBase || []).map((r) => [String(r.id), r]));
+
+    const created = rows.filter((r) => r.__isNew && !r.__deleted);
+    const updated = rows.filter((r) => !r.__isNew && !r.__deleted).filter((r) => JSON.stringify(toEditablePayload(r)) !== JSON.stringify(toEditablePayload(baseMap.get(String(r.id)) || {})));
+    const deleted = (ctx.__fichaRowsBase || []).filter((r) => !rows.find((x) => String(x.id) === String(r.id) && !x.__deleted));
+
+    for (const r of updated) {
+      const res = await apiCallEditor({ action: 'editRow', token: EDITOR_TOKEN, rowId: r.id, data: JSON.stringify(toEditablePayload(r)) });
+      if (!res?.ok) throw new Error(res?.error || ('Error editando ' + r.id));
+    }
+
+    for (const r of created) {
+      const res = await apiCallEditor({ action: 'addRow', token: EDITOR_TOKEN, data: JSON.stringify(toEditablePayload(r)) });
+      if (!res?.ok) throw new Error(res?.error || 'Error duplicando fila');
+      if (res?.newId) r.id = res.newId;
+      r.__isNew = false;
+    }
+
+    for (const r of deleted) {
+      const res = await apiCallEditor({ action: 'deleteRow', token: EDITOR_TOKEN, rowId: r.id });
+      if (!res?.ok) throw new Error(res?.error || ('Error eliminando ' + r.id));
+    }
+
+    const cleaned = rows.filter((r) => !r.__deleted).map((r) => {
+      const x = cloneRow(r);
+      delete x.__isNew;
+      delete x.__deleted;
+      return x;
+    });
+
+    const others = (state.registro || []).filter((r) => r.estudianteKey !== state.currentStudentKey);
+    state.registro = others.concat(cleaned);
+
+    ctx.__fichaRowsBase = cleaned.map(cloneRow);
+    ctx.__fichaRowsWorking = cleaned.map(cloneRow);
+    ctx.__fichaEditMode = false;
+    toggleEditButtons(ctx, false);
+    refreshEditableFicha(ctx, state);
+    toast(ctx.el.toastWrap, 'Cambios guardados', 'ok');
+  }
+
+  function bindFichaEditButtons(ctx, state) {
+    if (ctx.__fichaEditButtonsBound) return;
+    ctx.__fichaEditButtonsBound = true;
+
+    ctx.el.btnFichaEditMode?.addEventListener('click', () => {
+      if (String(state.__viewYear || '2026') !== '2026') {
+        toast(ctx.el.toastWrap, 'Solo puedes editar 2026.', 'warn');
+        return;
+      }
+      const ficha = RIPCore.getStudentFicha(state.registro, state.currentStudentKey);
+      const rows = (ficha.rows || []).map(cloneRow);
+      ctx.__fichaRowsBase = rows.map(cloneRow);
+      ctx.__fichaRowsWorking = rows.map(cloneRow);
+      ctx.__fichaEditMode = true;
+      toggleEditButtons(ctx, true);
+      refreshEditableFicha(ctx, state);
+    });
+
+    ctx.el.btnFichaCancelEdits?.addEventListener('click', () => {
+      ctx.__fichaEditMode = false;
+      ctx.__fichaRowsWorking = (ctx.__fichaRowsBase || []).map(cloneRow);
+      toggleEditButtons(ctx, false);
+      refreshEditableFicha(ctx, state);
+    });
+
+    ctx.el.btnFichaSaveEdits?.addEventListener('click', async () => {
+      try {
+        await saveEditChanges(ctx, state);
+      } catch (err) {
+        console.error(err);
+        toast(ctx.el.toastWrap, 'No se pudo guardar: ' + (err.message || err), 'warn');
+      }
+    });
+  }  // =========================
   // Export
   // =========================
   RIPUI.ficha = {

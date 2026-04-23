@@ -456,7 +456,16 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
 
     // Derivados
     const registro = registroPack.rows || [];
-    const paramsMap = paramsPack.map || new Map();
+    let paramsMap = paramsPack.map || new Map();
+    if (!(paramsMap instanceof Map)) {
+      const rebuilt = new Map();
+      const srcRows = Array.isArray(paramsPack.rows) ? paramsPack.rows : [];
+      srcRows.forEach((p) => {
+        const k = norm(p?.student || '');
+        if (k) rebuilt.set(k, p?.clasif || '');
+      });
+      paramsMap = rebuilt;
+    }
 
     // Todos los estudiantes únicos del registro, ordenados
     const set = new Map(); // key -> display

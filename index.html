@@ -308,7 +308,6 @@
             <th>Profesor</th>
             <th>Pago</th>
             <th>Comentario</th>
-            <th>ID</th>
             <th>Clasificación</th>
             <th>Clasif. pagos</th>
             <th>Movimiento</th>
@@ -320,6 +319,11 @@
 
     <div class="ficha-actions">
       <button class="btn ghost" id="btn2025" style="display:none">🗂️ 2025</button>
+      <button class="btn" id="btnOpenMainFicha">🧾 Ficha principal</button>
+      <button class="btn ghost" id="btnOpenMoreInfo">🔗 Más info</button>
+      <button class="btn" id="btnFichaEditMode">✏️ Modo edición</button>
+      <button class="btn primary" id="btnFichaSaveEdits" style="display:none">💾 Guardar cambios</button>
+      <button class="btn ghost" id="btnFichaCancelEdits" style="display:none">Cancelar</button>
       <button class="btn" id="btnPDF" style="display:none">📄 Descargar PDF</button>
       <button class="btn ghost" id="btnVolverDash" style="display:none">← Dashboard</button>
     </div>
@@ -335,6 +339,10 @@
 
 <!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+<script>
+  window.RIP_EDITOR_API_URL = "https://script.google.com/macros/s/AKfycby2Pw3c4Q8Sr-mB4g5OT6wlC9ig73OkRwKh2Pqw8FHH6zqkAMyz5SC6wiOcUPLfD2-RuQ/exec";
+  window.RIP_EDITOR_TOKEN = "MUSICALA-EDITOR-2026";
+</script>
 <script src="./rip.core.js?v=2026.5"></script>
 <script src="./ui.shared.js?v=2026.5"></script>
 <script src="./ui.dashboard.js?v=2026.5"></script>

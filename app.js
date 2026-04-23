@@ -18,6 +18,14 @@
 
   const RIPUI = window.RIPUI;
   const { toast, buildContext, hide, show, setText, setHTML, norm } = RIPUI.shared;
+  const MORE_INFO_URL = 'https://musicala.github.io/estudiantesmusicala/';
+  const TSV_ESTUDIANTES_URL =
+    'https://docs.google.com/spreadsheets/d/e/2PACX-1vQQO-CBQoN1QZ4GFExJWmPz6YNLO6rhaIsWBv-Whlu9okpZRpcxfUtLYeAMKaiNOQJrrf3Vcwhk32kZ/pub?gid=2130299316&single=true&output=tsv';
+  const FICHA_COL = {
+    nombre: 0, estado: 1, edad: 4, tel: 9, cel: 10, curso: 11,
+    estiloM: 12, estiloN: 13, estiloO: 14, plan: 16, modalidad: 17, acudiente: 20
+  };
+  let __studentsInfoMap = null;
 
   // =========================
   // Config índice global
@@ -90,6 +98,91 @@
   function getCurrentStudentName() {
     const st = getStudentByKey(state.currentStudentKey);
     return st?.name || state.currentStudentName || state.currentSearchEntry?.name || '';
+  }
+
+  function normName(s) {
+    return String(s || '')
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ');
+  }
+
+  function parseTSVRows(text) {
+    return String(text || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .filter(Boolean)
+      .map((r) => r.split('\t'));
+  }
+
+  async function ensureStudentsInfoMap() {
+    if (__studentsInfoMap instanceof Map) return __studentsInfoMap;
+    const res = await fetch(TSV_ESTUDIANTES_URL + '&_ts=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('No pude cargar TSV_ESTUDIANTES');
+    const txt = await res.text();
+    const rows = parseTSVRows(txt).slice(1);
+    const map = new Map();
+    for (const r of rows) {
+      const name = String(r[FICHA_COL.nombre] || '').trim();
+      if (!name) continue;
+      const key = normName(name);
+      if (!map.has(key)) map.set(key, r);
+    }
+    __studentsInfoMap = map;
+    return map;
+  }
+
+  function buildEstilo(row) {
+    const vals = [row[FICHA_COL.estiloM], row[FICHA_COL.estiloN], row[FICHA_COL.estiloO]]
+      .map((x) => String(x || '').trim())
+      .filter(Boolean);
+    return vals.join(', ');
+  }
+
+  function openStudentInfoModal(studentName, row) {
+    const prev = document.getElementById('ripStudentInfoModal');
+    if (prev) prev.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'ripStudentInfoModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9200;display:flex;align-items:center;justify-content:center;';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box" style="width:min(760px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto;">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Ficha · ${studentName}</span>
+          <button class="rip-modal-close" type="button">×</button>
+        </div>
+        <div class="rip-modal-body">
+          <div class="formGrid">
+            <div class="field"><span>Estado</span><div class="control">${String(row[FICHA_COL.estado] || '—')}</div></div>
+            <div class="field"><span>Edad</span><div class="control">${String(row[FICHA_COL.edad] || '—')}</div></div>
+            <div class="field"><span>Curso</span><div class="control">${String(row[FICHA_COL.curso] || '—')}</div></div>
+            <div class="field"><span>Teléfono</span><div class="control">${String(row[FICHA_COL.tel] || '—')}</div></div>
+            <div class="field"><span>Celular</span><div class="control">${String(row[FICHA_COL.cel] || '—')}</div></div>
+            <div class="field"><span>Plan</span><div class="control">${String(row[FICHA_COL.plan] || '—')}</div></div>
+            <div class="field"><span>Modalidad</span><div class="control">${String(row[FICHA_COL.modalidad] || '—')}</div></div>
+            <div class="field" style="grid-column:1/-1;"><span>Estilo</span><div class="control">${buildEstilo(row) || '—'}</div></div>
+            <div class="field" style="grid-column:1/-1;"><span>Acudiente</span><div class="control">${String(row[FICHA_COL.acudiente] || '—')}</div></div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const close = () => modal.remove();
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    document.body.appendChild(modal);
+  }
+
+  function buildStudentUrl(baseUrl, studentName) {
+    const name = String(studentName || '').trim();
+    if (!name) return baseUrl;
+    const u = new URL(baseUrl);
+    u.searchParams.set('student', name);
+    return u.toString();
   }
 
   function resetProgramacionEmbed() {
@@ -684,7 +777,7 @@
 
     // Registrar pago
     ctx.el.btnPago?.addEventListener('click', () => {
-      const url = window.PAYMENT_WEBAPP_URL || '';
+      const url = window.PAYMENT_WEBAPP_URL || 'https://musicala.github.io/registrodepagos2026/';
       if (!url) {
         toast(ctx.el.toastWrap, 'PAYMENT_WEBAPP_URL no está configurada en esta versión.', 'warn');
         return;
@@ -694,7 +787,7 @@
 
     // Registrar clases
     ctx.el.btnClases?.addEventListener('click', () => {
-      const url = window.REGISTRAR_CLASES_URL || '';
+      const url = window.REGISTRAR_CLASES_URL || 'https://musicala.github.io/RegistroWix2026/';
       if (!url) {
         toast(ctx.el.toastWrap, 'REGISTRAR_CLASES_URL no está configurada en esta versión.', 'warn');
         return;
@@ -738,14 +831,41 @@
       resetProgramacionEmbed();
       show(ctx.el.tablaContainer);
     });
+
+    ctx.el.btnOpenMainFicha?.addEventListener('click', () => {
+      const name = getCurrentStudentName();
+      if (!name) {
+        toast(ctx.el.toastWrap, 'Primero selecciona un estudiante.', 'warn');
+        return;
+      }
+      ensureStudentsInfoMap()
+        .then((map) => {
+          const row = map.get(normName(name));
+          if (!row) {
+            toast(ctx.el.toastWrap, 'No encontré datos principales para ese estudiante.', 'warn');
+            return;
+          }
+          openStudentInfoModal(name, row);
+        })
+        .catch((err) => {
+          console.error(err);
+          toast(ctx.el.toastWrap, 'No se pudo abrir la ficha principal.', 'warn');
+        });
+    });
+
+    ctx.el.btnOpenMoreInfo?.addEventListener('click', () => {
+      const name = getCurrentStudentName();
+      const url = buildStudentUrl(MORE_INFO_URL, name);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
   }
 
   // =========================
   // Boot progresivo real
   // =========================
-  async function boot({ force = true } = {}) {
+  async function boot({ force = false } = {}) {
     try {
-      clearAppCaches();
+      if (force) clearAppCaches();
       resetStateForFreshLoad();
 
       setText(ctx.el.badgeMode, 'LIVE');
@@ -839,5 +959,5 @@
   // =========================
   wireTopUI();
   clearAppCaches();
-  boot({ force: true });
+  boot({ force: false });
 })();

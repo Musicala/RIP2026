@@ -28,6 +28,7 @@
 const SPREADSHEET_ID = ''; // Deja vacío para usar la hoja activa del script
 const SHEET_NAME     = 'Registro 2026';  // Nombre exacto de tu hoja de registro
 const TOKEN          = 'MUSICALA-EDITOR-2026'; // Debe coincidir con RIP_EDITOR_TOKEN en ui.editor.js
+const LOCKED_COL_LETTERS = new Set(['A', 'K']); // columnas con arrayformula (no tocar)
 
 // Columna donde está el ID de cada fila (header exacto)
 const COL_ID = 'ID';
@@ -112,6 +113,17 @@ function colIndex(headers, headerName) {
   return idx; // 0-based
 }
 
+function colLetterFrom1Based(colNum) {
+  let n = Number(colNum);
+  let s = '';
+  while (n > 0) {
+    const mod = (n - 1) % 26;
+    s = String.fromCharCode(65 + mod) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
 /**
  * Busca la fila cuyo valor en COL_ID coincide con rowId.
  * Devuelve el número de fila 1-based (1 = headers), o -1 si no existe.
@@ -163,6 +175,9 @@ function handleEditRow(params) {
     try { colIdx = colIndex(headers, header); }
     catch (_) { return; } // columna no existe en esta hoja → skip silencioso
 
+    const colLetter = colLetterFrom1Based(colIdx + 1);
+    if (LOCKED_COL_LETTERS.has(colLetter)) return; // A/K bloqueadas
+
     const cell = sheet.getRange(rowNum, colIdx + 1);
     cell.setValue(data[field] ?? '');
     updatedCount++;
@@ -188,7 +203,10 @@ function handleAddRow(params) {
   const headers = getHeaders(sheet);
 
   // Construir fila con los headers del sheet en orden
-  const newRow = headers.map(h => {
+  const newRow = headers.map((h, idx) => {
+    const colLetter = colLetterFrom1Based(idx + 1);
+    if (LOCKED_COL_LETTERS.has(colLetter)) return '';
+
     // Buscar el campo que mapea a este header
     const field = Object.entries(FIELD_TO_HEADER).find(([, v]) => v === h)?.[0];
     if (!field) return '';

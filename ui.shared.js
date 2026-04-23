@@ -211,6 +211,11 @@
       // Ficha actions
       btnPDF: $('btnPDF'),
       btn2025: $('btn2025'),
+      btnOpenMainFicha: $('btnOpenMainFicha'),
+      btnOpenMoreInfo: $('btnOpenMoreInfo'),
+      btnFichaEditMode: $('btnFichaEditMode'),
+      btnFichaSaveEdits: $('btnFichaSaveEdits'),
+      btnFichaCancelEdits: $('btnFichaCancelEdits'),
       btnVolverDash: $('btnVolverDash')
     };
 

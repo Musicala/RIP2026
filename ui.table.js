@@ -307,7 +307,7 @@
     if (!el.tableBody) return;
 
     if (!rows || !rows.length) {
-      el.tableBody.innerHTML = `<tr><td colspan="12" class="empty-td">No hay registros con estos filtros.</td></tr>`;
+      el.tableBody.innerHTML = `<tr><td colspan="11" class="empty-td">No hay registros con estos filtros.</td></tr>`;
       setBadge(el.badgeCount, 0);
       return;
     }
@@ -330,7 +330,6 @@
             <td>${escapeHTML(r.profesor)}</td>
             <td>${escapeHTML(r.pago)}</td>
             <td>${escapeHTML(r.comentario)}</td>
-            <td class="mono">${escapeHTML(r.id)}</td>
             <td>${escapeHTML(r.clasif)}</td>
             <td>${escapeHTML(r.clasifPago)}</td>
             <td class="${movClass}">${movText}</td>
