@@ -255,6 +255,159 @@
       return;
     }
 
+    const cycleById = new Map();
+    const cycleMetaById = new Map();
+    const getRowId = (r) => String(r.id || `${r.fechaRaw}|${r.hora}|${r.servicio}`);
+    const getOrderNumber = (r, fallback) => {
+      const raw = String(r?.id || '').trim();
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+      const m = raw.match(/\d+/);
+      return m ? Number(m[0]) : fallback;
+    };
+    const normalizePackageKey = (value) => {
+      const key = norm(value || 'sin-clasificacion');
+      if (key === 'pago') return '*';
+      if (key === 'ms sp') return 'ms g';
+      return key;
+    };
+    const getPackageKey = (r) => {
+      const value = isPagoRow(r) ? r?.clasifPago : r?.clasif;
+      return normalizePackageKey(value);
+    };
+    let cycle = -1;
+    const activeByKey = new Map();
+    const pendingPackagesByKey = new Map();
+    const pendingClassIdsByKey = new Map();
+    const getQueue = (map, key) => {
+      if (!map.has(key)) map.set(key, []);
+      return map.get(key);
+    };
+    const makePackage = (cycleIdx, mov) => ({
+      cycle: cycleIdx,
+      total: Math.max(0, Math.round(mov)),
+      remaining: Math.max(0, Math.round(mov)),
+      used: 0,
+      exhausted: false
+    });
+    const assignClassToPackage = (rid, pack) => {
+      pack.used += 1;
+      const overLimit = pack.exhausted || (pack.total > 0 && pack.used > pack.total);
+      pack.remaining = Math.max(0, pack.remaining - 1);
+      if (pack.remaining <= 0) pack.exhausted = true;
+      cycleById.set(rid, pack.cycle);
+      cycleMetaById.set(rid, {
+        kind: 'clase',
+        cycle: pack.cycle,
+        classNo: pack.used,
+        total: pack.total,
+        overLimit
+      });
+    };
+    const bottomToTop = rows
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => {
+        const ta = getOrderNumber(a.r, a.i);
+        const tb = getOrderNumber(b.r, b.i);
+        if (ta !== tb) return ta - tb;
+        const pa = isPagoRow(a.r) ? 0 : 1;
+        const pb = isPagoRow(b.r) ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+        return a.i - b.i;
+      })
+      .map((x) => x.r);
+
+    for (const r of bottomToTop) {
+      const matricula = isMatriculaPago(r);
+      const mov = Number(r.movimiento) || 0;
+      const rid = getRowId(r);
+      const packageKey = getPackageKey(r);
+
+      if (!matricula && mov > 0) {
+        cycle += 1;
+        const pack = makePackage(cycle, mov);
+        let activePackage = activeByKey.get(packageKey) || null;
+        if (activePackage && activePackage.remaining > 0) getQueue(pendingPackagesByKey, packageKey).push(pack);
+        else {
+          activePackage = pack;
+          activeByKey.set(packageKey, activePackage);
+        }
+        cycleById.set(rid, cycle);
+        cycleMetaById.set(rid, {
+          kind: 'pago',
+          cycle,
+          total: pack.total,
+          key: packageKey
+        });
+
+        const pendingClassIds = getQueue(pendingClassIdsByKey, packageKey);
+        while (activePackage && pendingClassIds.length && activePackage.remaining > 0) {
+          const pendingId = pendingClassIds.shift();
+          assignClassToPackage(pendingId, activePackage);
+        }
+        if (packageKey === '*') {
+          for (const [pendingKey, ids] of pendingClassIdsByKey.entries()) {
+            if (pendingKey === '*' || !ids.length) continue;
+            while (activePackage && ids.length && activePackage.remaining > 0) {
+              const pendingId = ids.shift();
+              assignClassToPackage(pendingId, activePackage);
+            }
+            if (!activePackage || activePackage.remaining <= 0) break;
+          }
+        }
+
+        if (activePackage && activePackage.remaining <= 0) {
+          activePackage = getQueue(pendingPackagesByKey, packageKey).shift() || null;
+          if (activePackage) activeByKey.set(packageKey, activePackage);
+          else activeByKey.delete(packageKey);
+        }
+
+        continue;
+      }
+
+      let activeKey = packageKey;
+      let activePackage = activeByKey.get(activeKey) || null;
+      if (!activePackage) {
+        activeKey = '*';
+        activePackage = activeByKey.get(activeKey) || null;
+      }
+      if (!activePackage && pendingPackagesByKey.has(packageKey)) {
+        activePackage = getQueue(pendingPackagesByKey, packageKey).shift() || null;
+        if (activePackage) {
+          activeKey = packageKey;
+          activeByKey.set(activeKey, activePackage);
+        }
+      }
+      if (!activePackage && pendingPackagesByKey.has('*')) {
+        activePackage = getQueue(pendingPackagesByKey, '*').shift() || null;
+        if (activePackage) {
+          activeKey = '*';
+          activeByKey.set(activeKey, activePackage);
+        }
+      }
+      const rowCycle = matricula ? -1 : (activePackage ? activePackage.cycle : Math.max(cycle, 0));
+      cycleById.set(rid, rowCycle);
+      if (matricula) cycleMetaById.set(rid, { kind: 'matricula' });
+
+      if (!matricula && isClaseRow(r) && mov < 0 && activePackage) {
+        assignClassToPackage(rid, activePackage);
+        if (activePackage.remaining <= 0) {
+          const nextPackage = getQueue(pendingPackagesByKey, activeKey).shift() || null;
+          if (nextPackage) activeByKey.set(activeKey, nextPackage);
+          else activeByKey.delete(activeKey);
+        }
+      } else if (!matricula && isClaseRow(r) && mov < 0) {
+        getQueue(pendingClassIdsByKey, packageKey).push(rid);
+      }
+    }
+
+    for (const ids of pendingClassIdsByKey.values()) {
+      for (const pendingId of ids) {
+        cycleById.set(pendingId, Math.max(cycle, 0));
+        cycleMetaById.set(pendingId, { kind: 'unpaid' });
+      }
+    }
+
     const html = rows
       .slice(0, 1800)
       .map((r) => {
@@ -262,14 +415,40 @@
         const mov = Number(r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
         const movText = `${mov > 0 ? '+' : ''}${fmtMoney(mov)}`;
+        const rid = getRowId(r);
+        const cycleIdxRaw = Number(cycleById.get(rid));
+        const cycleMeta = cycleMetaById.get(rid) || null;
+        const isMatricula = isMatriculaPago(r) || cycleIdxRaw < 0;
+        const cycleIdx = Number.isFinite(cycleIdxRaw) ? cycleIdxRaw : 0;
+        const cycleClass = isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`;
+        const cycleLabel = isMatricula
+          ? 'M'
+          : cycleMeta?.kind === 'unpaid'
+            ? '!'
+          : cycleMeta?.kind === 'clase'
+            ? (cycleMeta.overLimit ? '!' : `P${cycleIdx + 1} ${cycleMeta.classNo}/${cycleMeta.total || '?'}`)
+            : cycleMeta?.kind === 'pago'
+              ? `P${cycleIdx + 1} +${cycleMeta.total || mov}`
+              : `P${cycleIdx + 1}`;
+        const cycleTitle = isMatricula
+          ? 'Matrícula (sin conteo)'
+          : cycleMeta?.kind === 'unpaid'
+            ? 'Clase pendiente de pago'
+          : cycleMeta?.kind === 'clase'
+            ? (cycleMeta.overLimit ? `Plan #${cycleIdx + 1} · clases agotadas` : `Plan #${cycleIdx + 1} · clase ${cycleMeta.classNo} de ${cycleMeta.total || '?'}`)
+            : cycleMeta?.kind === 'pago'
+              ? `Plan #${cycleIdx + 1} · pago de ${cycleMeta.total || mov} clases`
+              : `Plan #${cycleIdx + 1}`;
+        const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}`;
+        const debtClass = isClaseRow(r) && mov < 0 ? 'row-debt' : '';
         const actions = editable
           ? `<td class="td-ficha-actions"><button class="btn small ghost" type="button" data-edit-row="${escapeHTML(r.id || '')}">Editar</button> <button class="btn small" type="button" data-dup-row="${escapeHTML(r.id || '')}">Duplicar</button> <button class="btn small ghost" type="button" data-del-row="${escapeHTML(r.id || '')}">Eliminar</button></td>`
           : '';
 
         return `
-          <tr>
+          <tr class="${debtClass}">
             <td>${escapeHTML(r.estudiante)}</td>
-            <td>${escapeHTML(tipo)}</td>
+            <td>${tipoWithDot}</td>
             <td>${escapeHTML(r.fechaRaw)}</td>
             <td>${escapeHTML(r.hora)}</td>
             <td>${escapeHTML(r.servicio)}</td>
@@ -361,6 +540,12 @@
     if (tipo === 'pago') return true;
     if (tipo === 'clase') return false;
     return !!String(r?.pago || '').trim();
+  }
+
+  function isMatriculaPago(r) {
+    if (!isPagoRow(r)) return false;
+    const txt = `${r?.servicio || ''} ${r?.pago || ''} ${r?.comentario || ''}`.toLowerCase();
+    return /matr[ií]cula/.test(txt);
   }
 
   function isClaseRow(r) {
@@ -746,6 +931,18 @@
     };
   }
 
+  function diffEditablePayload(currentRow, baseRow) {
+    const cur = toEditablePayload(currentRow);
+    const base = toEditablePayload(baseRow || {});
+    const out = {};
+    Object.keys(cur).forEach((k) => {
+      const a = String(cur[k] ?? '');
+      const b = String(base[k] ?? '');
+      if (a !== b) out[k] = cur[k];
+    });
+    return out;
+  }
+
   function cloneRow(row) {
     return { ...row, __isNew: !!row.__isNew, __deleted: !!row.__deleted };
   }
@@ -916,12 +1113,24 @@
     const baseMap = new Map((ctx.__fichaRowsBase || []).map((r) => [String(r.id), r]));
 
     const created = rows.filter((r) => r.__isNew && !r.__deleted);
-    const updated = rows.filter((r) => !r.__isNew && !r.__deleted).filter((r) => JSON.stringify(toEditablePayload(r)) !== JSON.stringify(toEditablePayload(baseMap.get(String(r.id)) || {})));
+    const updated = rows
+      .filter((r) => !r.__isNew && !r.__deleted)
+      .map((r) => {
+        const base = baseMap.get(String(r.id)) || {};
+        const changes = diffEditablePayload(r, base);
+        return { row: r, changes };
+      })
+      .filter((x) => Object.keys(x.changes).length > 0);
     const deleted = (ctx.__fichaRowsBase || []).filter((r) => !rows.find((x) => String(x.id) === String(r.id) && !x.__deleted));
 
-    for (const r of updated) {
-      const res = await apiCallEditor({ action: 'editRow', token: EDITOR_TOKEN, rowId: r.id, data: JSON.stringify(toEditablePayload(r)) });
-      if (!res?.ok) throw new Error(res?.error || ('Error editando ' + r.id));
+    for (const u of updated) {
+      const res = await apiCallEditor({
+        action: 'editRow',
+        token: EDITOR_TOKEN,
+        rowId: u.row.id,
+        data: JSON.stringify(u.changes)
+      });
+      if (!res?.ok) throw new Error(res?.error || ('Error editando ' + u.row.id));
     }
 
     for (const r of created) {

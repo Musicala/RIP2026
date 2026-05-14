@@ -17,7 +17,7 @@
   }
 
   const RIPUI = window.RIPUI;
-  const { toast, buildContext, hide, show, setText, setHTML, norm } = RIPUI.shared;
+  const { toast, buildContext, hide, show, setText, setHTML, norm, escapeHTML } = RIPUI.shared;
   const MORE_INFO_URL = 'https://musicala.github.io/estudiantesmusicala/';
   const TSV_ESTUDIANTES_URL =
     'https://docs.google.com/spreadsheets/d/e/2PACX-1vQQO-CBQoN1QZ4GFExJWmPz6YNLO6rhaIsWBv-Whlu9okpZRpcxfUtLYeAMKaiNOQJrrf3Vcwhk32kZ/pub?gid=2130299316&single=true&output=tsv';
@@ -632,21 +632,383 @@
   // =========================
   // PDF
   // =========================
-  function exportPDF(element, filename) {
-    if (!window.html2pdf || !element) {
-      toast(ctx.el.toastWrap, 'No pude exportar PDF (html2pdf no está listo).', 'warn');
+  function loadScriptOnce(src, id) {
+    return new Promise((resolve, reject) => {
+      const existing = id ? document.getElementById(id) : null;
+      if (existing?.dataset?.loaded === 'true') {
+        resolve();
+        return;
+      }
+
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('No cargó ' + src)), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      if (id) script.id = id;
+
+      const timer = setTimeout(() => {
+        script.remove();
+        reject(new Error('Tiempo agotado cargando ' + src));
+      }, 20000);
+
+      script.onload = () => {
+        clearTimeout(timer);
+        script.dataset.loaded = 'true';
+        resolve();
+      };
+      script.onerror = () => {
+        clearTimeout(timer);
+        script.remove();
+        reject(new Error('No cargó ' + src));
+      };
+
+      document.head.appendChild(script);
+    });
+  }
+
+  function getPDFLibraries() {
+    return {
+      html2canvasFn: window.html2canvas || null,
+      JsPDFCtor: window.jspdf?.jsPDF || window.jsPDF || null
+    };
+  }
+
+  async function ensurePDFLibraries() {
+    let libs = getPDFLibraries();
+    const jobs = [];
+
+    if (!libs.html2canvasFn) {
+      jobs.push(loadScriptOnce(
+        'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+        'rip-lib-html2canvas'
+      ));
+    }
+
+    if (!libs.JsPDFCtor) {
+      jobs.push(loadScriptOnce(
+        'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js',
+        'rip-lib-jspdf'
+      ));
+    }
+
+    if (jobs.length) await Promise.all(jobs);
+
+    libs = getPDFLibraries();
+    if (!libs.html2canvasFn || !libs.JsPDFCtor) {
+      throw new Error('html2canvas/jsPDF no quedaron disponibles en window.');
+    }
+
+    return libs;
+  }
+  async function exportPDF(element, filename, sections = {}) {
+    if (!element) {
+      toast(ctx.el.toastWrap, 'No hay contenido para exportar.', 'warn');
       return;
     }
 
-    const opt = {
-      margin: 8,
-      filename: filename || 'RIP_2026.pdf',
-      image: { type: 'jpeg', quality: 0.96 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
-    };
+    let pdfLibs;
+    try {
+      pdfLibs = await ensurePDFLibraries();
+    } catch (err) {
+      console.error(err);
+      toast(ctx.el.toastWrap, 'No pude cargar las librerías PDF. Revisa conexión o CDN.', 'warn');
+      return;
+    }
 
-    window.html2pdf().set(opt).from(element).save();
+    const { html2canvasFn, JsPDFCtor } = pdfLibs;
+
+    const rawTitle =
+      element.querySelector('#fichaStudent')?.textContent?.trim() ||
+      element.querySelector('#fichaTitle')?.textContent?.trim() ||
+      element.querySelector('h3')?.textContent?.trim() ||
+      'RIP 2026';
+    const title = rawTitle.replace(/^Ficha\s*[·.-]\s*/i, '').trim() || rawTitle;
+    const subtitle =
+      element.querySelector('#fichaSub')?.textContent?.trim() ||
+      'Registro integral de pagos';
+    const exportDate = new Date().toLocaleDateString('es-CO', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+
+    // Ancho real del lienzo de exportación. Más pequeño que 1200 para que la
+    // ficha y la tabla no nazcan desbordadas en móviles. Igual se escala completo
+    // dentro de la página PDF, sin recortar columnas.
+    const PDF_EXPORT_WIDTH = 1080;
+    const PDF_MARGIN_MM = 5;
+    const PDF_TARGET_SCALE = 3;
+    const PDF_MAX_RENDER_PIXELS = 90000000;
+
+    const stage = document.createElement('div');
+    stage.className = 'pdf-export-stage';
+    stage.setAttribute('aria-hidden', 'true');
+    Object.assign(stage.style, {
+      position: 'fixed',
+      left: '0',
+      top: '0',
+      width: `${PDF_EXPORT_WIDTH}px`,
+      maxWidth: 'none',
+      height: 'auto',
+      maxHeight: 'none',
+      overflow: 'visible',
+      background: '#ffffff',
+      zIndex: '2147483647',
+      pointerEvents: 'none'
+    });
+
+    const clone = element.cloneNode(true);
+    clone.classList.add('pdf-export-clone');
+    Object.assign(clone.style, {
+      display: 'block',
+      width: '100%',
+      minWidth: '0',
+      maxWidth: 'none',
+      boxSizing: 'border-box',
+      height: 'auto',
+      maxHeight: 'none',
+      overflow: 'visible',
+      background: '#ffffff',
+      transform: 'none'
+    });
+
+    // Quita scrolls heredados. Si una tabla quedó movida horizontalmente en pantalla,
+    // el clon no debe conservar ese scroll, porque ahí nace el “PDF cortado”.
+    clone.querySelectorAll('*').forEach((node) => {
+      try {
+        node.scrollLeft = 0;
+        node.scrollTop = 0;
+        if (node.style) {
+          node.style.transform = 'none';
+          node.style.translate = 'none';
+        }
+      } catch (_) {}
+    });
+
+    clone.querySelectorAll('.table-wrap, .tableWrap').forEach((node) => {
+      node.style.overflow = 'visible';
+      node.style.maxHeight = 'none';
+      node.style.height = 'auto';
+      node.style.width = '100%';
+      node.style.maxWidth = 'none';
+      node.scrollLeft = 0;
+      node.scrollTop = 0;
+    });
+
+    clone.querySelector('#tablaContainer')?.classList.add('pdf-registro-table');
+    clone.querySelectorAll('.ficha-actions, .tabs, button').forEach((node) => node.remove());
+
+    if (sections.saldos === false) {
+      clone.querySelector('#fichaSummaryBlock')?.remove();
+    }
+    if (sections.programacion === false) {
+      clone.querySelector('#programacionStudentView')?.remove();
+    }
+    if (sections.registro === false) {
+      clone.querySelector('#tablaContainer')?.remove();
+    }
+
+    stage.innerHTML = `
+      <div class="pdf-export-page">
+        <header class="pdf-export-head">
+          <div>
+            <div class="pdf-export-brand">Musicala · RIP 2026</div>
+            <h1>${escapeHTML(title)}</h1>
+            <p>${escapeHTML(subtitle)}</p>
+          </div>
+          <div class="pdf-export-meta">
+            <span>Exportado</span>
+            <strong>${escapeHTML(exportDate)}</strong>
+          </div>
+        </header>
+      </div>
+    `;
+
+    const page = stage.querySelector('.pdf-export-page');
+    Object.assign(page.style, {
+      width: `${PDF_EXPORT_WIDTH}px`,
+      minWidth: `${PDF_EXPORT_WIDTH}px`,
+      maxWidth: 'none',
+      overflow: 'visible'
+    });
+    page.appendChild(clone);
+
+    document.body.appendChild(stage);
+
+    try {
+      toast(ctx.el.toastWrap, 'Preparando PDF...', 'info');
+      if (document.fonts?.ready) await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const source = stage.querySelector('.pdf-export-page');
+      const captureWidth = Math.ceil(Math.max(PDF_EXPORT_WIDTH, source.scrollWidth, source.offsetWidth));
+      const captureHeight = Math.ceil(Math.max(source.scrollHeight, source.offsetHeight)) + 12;
+
+      const basePixels = Math.max(1, captureWidth * captureHeight);
+      const scaleByPixels = Math.sqrt(PDF_MAX_RENDER_PIXELS / basePixels);
+      const renderScale = Math.max(1.8, Math.min(PDF_TARGET_SCALE, scaleByPixels));
+
+      const canvas = await html2canvasFn(source, {
+        scale: renderScale,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0,
+        width: captureWidth,
+        height: captureHeight,
+        windowWidth: captureWidth,
+        windowHeight: captureHeight
+      });
+
+      const pdf = new JsPDFCtor({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'letter',
+        compress: false
+      });
+
+      pdf.setProperties({
+        title: filename || 'RIP 2026',
+        subject: 'Registro integral de pagos',
+        creator: 'Musicala RIP 2026'
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const innerWidth = pageWidth - PDF_MARGIN_MM * 2;
+      const innerHeight = pageHeight - PDF_MARGIN_MM * 2;
+      const sliceHeightPx = Math.max(1, Math.floor(canvas.width * (innerHeight / innerWidth)));
+
+      const pageCanvas = document.createElement('canvas');
+      const pageCtx = pageCanvas.getContext('2d');
+      let renderedHeight = 0;
+      let pageIndex = 0;
+
+      while (renderedHeight < canvas.height) {
+        const currentSliceHeight = Math.min(sliceHeightPx, canvas.height - renderedHeight);
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = currentSliceHeight;
+        pageCtx.fillStyle = '#ffffff';
+        pageCtx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        pageCtx.drawImage(
+          canvas,
+          0,
+          renderedHeight,
+          canvas.width,
+          currentSliceHeight,
+          0,
+          0,
+          canvas.width,
+          currentSliceHeight
+        );
+
+        if (pageIndex > 0) pdf.addPage('letter', 'landscape');
+
+        const imgData = pageCanvas.toDataURL('image/png');
+        const sliceHeightMm = currentSliceHeight * innerWidth / canvas.width;
+        pdf.addImage(
+          imgData,
+          'PNG',
+          PDF_MARGIN_MM,
+          PDF_MARGIN_MM,
+          innerWidth,
+          sliceHeightMm,
+          undefined,
+          'NONE'
+        );
+
+        renderedHeight += currentSliceHeight;
+        pageIndex += 1;
+      }
+
+      pdf.save(filename || 'RIP_2026.pdf');
+    } catch (err) {
+      console.error(err);
+      toast(ctx.el.toastWrap, 'No pude exportar PDF. Intenta actualizar y descargar otra vez.', 'warn');
+    } finally {
+      stage.remove();
+    }
+  }
+
+  function openPDFOptions(element, filename) {
+    if (!element) {
+      toast(ctx.el.toastWrap, 'No hay contenido para exportar.', 'warn');
+      return;
+    }
+
+    const isFicha = element === ctx.el.fichaView;
+    if (!isFicha) {
+      exportPDF(element, filename);
+      return;
+    }
+
+    const prev = document.getElementById('ripPDFOptionsModal');
+    if (prev) prev.remove();
+
+    const hasSaldos = !!element.querySelector('#fichaSummaryBlock');
+    const hasProgramacion = !!element.querySelector('#programacionStudentView');
+    const hasRegistro = !!element.querySelector('#tablaContainer');
+
+    const modal = document.createElement('div');
+    modal.id = 'ripPDFOptionsModal';
+    modal.className = 'rip-pdf-modal';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Contenido del PDF</span>
+          <button class="rip-modal-close" type="button">×</button>
+        </div>
+        <div class="rip-modal-body">
+          <label class="pdf-check ${hasSaldos ? '' : 'is-disabled'}">
+            <input type="checkbox" data-pdf-section="saldos" ${hasSaldos ? 'checked' : 'disabled'}>
+            <span>Saldos / resumen</span>
+          </label>
+          <label class="pdf-check ${hasProgramacion ? '' : 'is-disabled'}">
+            <input type="checkbox" data-pdf-section="programacion" ${hasProgramacion ? 'checked' : 'disabled'}>
+            <span>Programación</span>
+          </label>
+          <label class="pdf-check ${hasRegistro ? '' : 'is-disabled'}">
+            <input type="checkbox" data-pdf-section="registro" ${hasRegistro ? 'checked' : 'disabled'}>
+            <span>Registro</span>
+          </label>
+        </div>
+        <div class="rip-modal-actions">
+          <button class="btn ghost" type="button" data-pdf-cancel>Cancelar</button>
+          <button class="btn primary" type="button" data-pdf-export>Descargar PDF</button>
+        </div>
+      </div>
+    `;
+
+    const close = () => modal.remove();
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('[data-pdf-cancel]')?.addEventListener('click', close);
+    modal.querySelector('[data-pdf-export]')?.addEventListener('click', () => {
+      const sections = {
+        saldos: !!modal.querySelector('[data-pdf-section="saldos"]')?.checked,
+        programacion: !!modal.querySelector('[data-pdf-section="programacion"]')?.checked,
+        registro: !!modal.querySelector('[data-pdf-section="registro"]')?.checked
+      };
+
+      if (!sections.saldos && !sections.programacion && !sections.registro) {
+        toast(ctx.el.toastWrap, 'Elige al menos una sección para el PDF.', 'warn');
+        return;
+      }
+
+      close();
+      exportPDF(element, filename, sections);
+    });
+
+    document.body.appendChild(modal);
   }
 
   // =========================
@@ -813,13 +1175,13 @@
             ? 'RIP_2026_Dashboard_Programacion.pdf'
             : 'RIP_2026_Dashboard_Clasificacion.pdf';
 
-      exportPDF(target, fileName);
+      openPDFOptions(target, fileName);
     });
 
     // PDF ficha/base
     ctx.el.btnPDF?.addEventListener('click', () => {
       const name = getCurrentStudentName() || 'Base';
-      exportPDF(ctx.el.fichaView, `RIP_2026_${name}.pdf`);
+      openPDFOptions(ctx.el.fichaView, `RIP_2026_${name}.pdf`);
     });
 
     // Botones bloque programación
@@ -898,12 +1260,23 @@
 
       // ─── FASE 2: Programación + análisis completo en paralelo ──────────────
       const [pack] = await Promise.allSettled([
-        RIPCore.loadAll({ force: !!force }),
+        RIPCore.loadAll({ force: !!force, includeHistorical: false }),
         loadProgramacionSummary().catch(e => console.warn('Programación:', e))
       ]);
 
+      let fullPack = null;
       if (pack.status === 'fulfilled' && pack.value) {
-        const p = pack.value;
+        fullPack = pack.value;
+      } else {
+        try {
+          fullPack = await RIPCore.loadAll({ force: true, includeHistorical: false });
+        } catch (retryErr) {
+          console.warn('No se pudo completar loadAll tras reintento:', retryErr);
+        }
+      }
+
+      if (fullPack) {
+        const p = fullPack;
         state.registro   = p.registro  || state.registro;
         state.paramsMap  = p.paramsMap  || state.paramsMap;
         state.allStudents = p.allStudents || state.allStudents;
@@ -923,6 +1296,18 @@
       setText(ctx.el.badgeMode, 'LIVE');
       setText(ctx.el.badgeCount, `${state.registro.length} registros`);
       setText(ctx.el.status, 'Listo ✅');
+      setTimeout(async () => {
+        try {
+          const hp = await RIPCore.loadAll({ force: false, includeHistorical: true });
+          if (!hp) return;
+          state.registro = hp.registro || state.registro;
+          state.paramsMap = hp.paramsMap || state.paramsMap;
+          state.allStudents = hp.allStudents || state.allStudents;
+          renderDashboards();
+        } catch (e) {
+          console.warn('Historicos en segundo plano:', e);
+        }
+      }, 0);
 
       toast(ctx.el.toastWrap, 'Datos cargados ✓', 'ok');
 
@@ -958,6 +1343,5 @@
   // Init
   // =========================
   wireTopUI();
-  clearAppCaches();
   boot({ force: false });
 })();

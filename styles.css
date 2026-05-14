@@ -599,6 +599,207 @@ input, select, button, textarea { font: inherit; }
 .mov-neg  { color: var(--danger); font-weight: 700; }
 .mov-zero { color: var(--muted);  font-weight: 500; }
 
+.pdf-export-clone,
+.pdf-export-clone * {
+  animation: none !important;
+  transition: none !important;
+}
+.pdf-export-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 99999;
+  width: 1200px;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  pointer-events: none;
+  background: #ffffff;
+}
+.pdf-export-page {
+  width: 1200px;
+  max-width: none;
+  padding: 10px;
+  background: #ffffff;
+  color: #1f2937;
+  box-sizing: border-box;
+}
+.pdf-export-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 2px solid #1A3B6E;
+}
+.pdf-export-head > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pdf-export-brand {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #1A3B6E;
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.pdf-export-head h1 {
+  margin: 4px 0 1px;
+  font-size: 12px;
+  line-height: 1.15;
+  color: #10233f;
+  letter-spacing: 0;
+  white-space: normal;
+  overflow: visible;
+  word-break: normal;
+}
+.pdf-export-head p {
+  margin: 0;
+  color: #64748b;
+  font-size: 7px;
+  font-weight: 600;
+}
+.pdf-export-meta {
+  flex: 0 0 86px;
+  text-align: right;
+  color: #475569;
+  font-size: 12px;
+}
+.pdf-export-meta span {
+  display: block;
+  color: #94a3b8;
+  font-size: 7px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.pdf-export-meta strong {
+  display: block;
+  margin-top: 4px;
+  color: #10233f;
+}
+.pdf-export-clone {
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+.pdf-export-clone .card,
+.pdf-export-clone .sheet-like,
+.pdf-export-clone .table-wrap,
+.pdf-export-clone .tableWrap {
+  max-width: 100% !important;
+}
+.pdf-export-clone .sheet-row,
+.pdf-export-clone .tbl tr,
+.pdf-export-clone .pdf-avoid-break {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.pdf-export-clone .card-title {
+  margin-bottom: 7px;
+}
+.pdf-export-clone .card-title h3 {
+  font-size: 10px;
+}
+.pdf-export-clone .card-title p {
+  font-size: 7px;
+}
+.pdf-export-clone #programacionStudentView {
+  margin-top: 10px !important;
+  break-inside: auto;
+  page-break-inside: auto;
+}
+.pdf-export-clone #programacionStudentView > .card,
+.pdf-export-clone #programacionEmbed,
+.pdf-export-clone #progStudentDates {
+  display: none !important;
+}
+.pdf-export-clone #tablaContainer {
+  margin-top: 14px !important;
+  break-before: auto;
+  page-break-before: auto;
+}
+.pdf-export-clone .table-wrap,
+.pdf-export-clone .tableWrap {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+  border-color: #dbe4ef !important;
+}
+.pdf-export-clone .tbl thead th {
+  position: static !important;
+  background: #1A3B6E !important;
+  color: #ffffff !important;
+  padding: 3px 3px !important;
+  font-size: 5.8px !important;
+  line-height: 1.1 !important;
+}
+.pdf-export-clone .tbl {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed !important;
+}
+.pdf-export-clone #tablaContainer .tbl th:first-child,
+.pdf-export-clone #tablaContainer .tbl td:first-child {
+  display: none !important;
+}
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(6),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(6),
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(8),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(8) {
+  display: none !important;
+}
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(2),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(2) {
+  width: 12% !important;
+}
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(3),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(3) {
+  width: 10% !important;
+}
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(4),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(4) {
+  width: 24% !important;
+}
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(7),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(7),
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(9),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(9),
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(10),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(10),
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(11),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(11) {
+  width: 9% !important;
+}
+.pdf-export-clone .tbl tbody td {
+  padding: 3px 3px !important;
+  font-size: 6.2px !important;
+  line-height: 1.15 !important;
+  white-space: normal !important;
+  color: #1f2937 !important;
+}
+.pdf-export-clone .cycle-num {
+  font-size: 5.8px !important;
+}
+.pdf-export-clone .cycle-dot {
+  width: 5px !important;
+  height: 5px !important;
+  margin-right: 3px !important;
+}
+
 /* ─── Tabla genérica ─────────────────────────── */
 table { font-size: 13px; width: 100%; border-collapse: separate; border-spacing: 0; }
 th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -664,6 +865,43 @@ tr:hover td { background: rgba(26,59,110,.03); }
 .saldo-chip.neg  { background: var(--danger-bg); border-color: rgba(220,38,38,.2); color: var(--danger); }
 .saldo-chip.zero { background: rgba(107,114,128,.07); border-color: rgba(107,114,128,.18); color: var(--muted); }
 .saldo-chip.pos  { background: var(--ok-bg); border-color: rgba(5,150,105,.2); color: var(--ok); }
+
+/* ─── Pago/sesiones por plan (color) ─────────── */
+.cycle-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  margin-right: 7px;
+  vertical-align: middle;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+}
+.cycle-num {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  margin-right: 6px;
+  color: #475569;
+  vertical-align: middle;
+}
+.cycle-0 { background: #2563eb; }
+.cycle-1 { background: #16a34a; }
+.cycle-2 { background: #d97706; }
+.cycle-3 { background: #dc2626; }
+.cycle-4 { background: #7c3aed; }
+.cycle-5 { background: #0d9488; }
+.cycle-6 { background: #db2777; }
+.cycle-7 { background: #6b7280; }
+.cycle-matricula { background: #94a3b8; }
+
+/* Clases que se deben (movimiento negativo) */
+tr.row-debt td {
+  background: rgba(220, 38, 38, 0.05);
+}
+tr.row-debt td:nth-child(2) {
+  font-weight: 700;
+}
 
 /* ─── Tags ───────────────────────────────────── */
 .tag {
@@ -766,6 +1004,14 @@ tr:hover td { background: rgba(26,59,110,.03); }
   transition: opacity .18s ease;
 }
 #ripFichaEditModal.rip-modal-in { opacity: 1; }
+#ripPDFOptionsModal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 #ripFichaEditModal .rip-modal-box {
   width: min(860px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
@@ -797,6 +1043,46 @@ tr:hover td { background: rgba(26,59,110,.03); }
   transform: translateY(10px) scale(.97);
   transition: transform .18s ease;
   overflow: hidden;
+}
+
+#ripPDFOptionsModal .rip-modal-box {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.rip-modal-body {
+  padding: 14px 18px;
+}
+
+.rip-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.pdf-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 10px;
+  border: 1px solid var(--bd);
+  border-radius: var(--r-sm);
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+.pdf-check + .pdf-check {
+  margin-top: 8px;
+}
+.pdf-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--navy);
+}
+.pdf-check.is-disabled {
+  opacity: .45;
+  cursor: not-allowed;
 }
 
 #ripDateModal.rip-modal-in .rip-modal-box {
@@ -976,3 +1262,229 @@ button:focus:not(:focus-visible) { outline: none; }
 /* ─── Animación de entrada ───────────────────── */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 .card { animation: fadeUp .25s ease both; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   PDF EXPORT FIX v2 — evita recortes horizontales en ficha y tabla
+   Nota para la humanidad: si el PDF se ve cortado, casi siempre nació con scroll.
+══════════════════════════════════════════════════════════════════════════════ */
+.pdf-export-stage {
+  position: fixed !important;
+  left: 0 !important;
+  top: 0 !important;
+  width: 1080px !important;
+  min-width: 1080px !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  background: #ffffff !important;
+  transform: none !important;
+}
+
+.pdf-export-page {
+  width: 1080px !important;
+  min-width: 1080px !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  overflow: visible !important;
+  background: #ffffff !important;
+  box-sizing: border-box !important;
+  transform: none !important;
+}
+
+.pdf-export-clone,
+.pdf-export-clone.card {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+  transform: none !important;
+}
+
+.pdf-export-clone *,
+.pdf-export-clone *::before,
+.pdf-export-clone *::after {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+  max-width: none;
+}
+
+.pdf-export-clone .card-title {
+  margin: 0 0 8px !important;
+  padding: 0 0 6px !important;
+  border-bottom: 1px solid #e5e7eb !important;
+}
+
+.pdf-export-clone .card-title h3 {
+  font-size: 11px !important;
+  line-height: 1.15 !important;
+}
+
+.pdf-export-clone .card-title p,
+.pdf-export-clone .muted {
+  font-size: 7px !important;
+  line-height: 1.2 !important;
+}
+
+.pdf-export-clone .sheet-like {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  overflow: visible !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+.pdf-export-clone .sheet-row,
+.pdf-export-clone #fichaSummaryBlock .sheet-row,
+.pdf-export-clone #programacionStudentView .sheet-row {
+  display: grid !important;
+  grid-template-columns: .9fr 1.85fr .9fr 1.25fr !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+.pdf-export-clone #fichaSummaryBlock .sheet-row:last-child {
+  grid-template-columns: .9fr 1fr 1fr 1fr !important;
+}
+
+.pdf-export-clone #fichaSaldosMini {
+  grid-column: 2 / -1 !important;
+}
+
+.pdf-export-clone .cell {
+  min-width: 0 !important;
+  padding: 6px 7px !important;
+  font-size: 8px !important;
+  line-height: 1.18 !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  word-break: break-word !important;
+  color: #1f2937 !important;
+}
+
+.pdf-export-clone .cell.strong {
+  font-size: 7px !important;
+  line-height: 1.15 !important;
+  letter-spacing: .03em !important;
+  color: #475569 !important;
+}
+
+.pdf-export-clone .saldo-chip,
+.pdf-export-clone .tag,
+.pdf-export-clone .pill,
+.pdf-export-clone .pilltag {
+  font-size: 7px !important;
+  line-height: 1.1 !important;
+  padding: 4px 6px !important;
+  white-space: normal !important;
+}
+
+.pdf-export-clone #programacionStudentView {
+  display: block !important;
+  margin-top: 10px !important;
+  overflow: visible !important;
+}
+
+.pdf-export-clone #programacionStudentView > .card,
+.pdf-export-clone #programacionEmbed,
+.pdf-export-clone #progStudentDates {
+  display: none !important;
+}
+
+.pdf-export-clone #tablaContainer,
+.pdf-export-clone .table-wrap,
+.pdf-export-clone .tableWrap {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+  margin-top: 10px !important;
+  overflow: visible !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  border-color: #dbe4ef !important;
+}
+
+.pdf-export-clone .tbl,
+.pdf-export-clone table.tbl {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  table-layout: fixed !important;
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
+}
+
+.pdf-export-clone .tbl thead th,
+.pdf-export-clone .tbl tbody td {
+  overflow: visible !important;
+  white-space: normal !important;
+  word-break: break-word !important;
+  text-overflow: clip !important;
+}
+
+.pdf-export-clone .tbl thead th {
+  position: static !important;
+  padding: 3px 3px !important;
+  font-size: 5.6px !important;
+  line-height: 1.05 !important;
+  background: #1A3B6E !important;
+  color: #ffffff !important;
+}
+
+.pdf-export-clone .tbl tbody td {
+  padding: 3px 3px !important;
+  font-size: 6px !important;
+  line-height: 1.12 !important;
+  color: #1f2937 !important;
+}
+
+.pdf-export-clone .tbl tr,
+.pdf-export-clone .sheet-row,
+.pdf-export-clone .pdf-avoid-break {
+  break-inside: avoid !important;
+  page-break-inside: avoid !important;
+}
+
+.pdf-export-clone #tablaContainer .tbl th:first-child,
+.pdf-export-clone #tablaContainer .tbl td:first-child,
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(6),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(6),
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(8),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(8) {
+  display: none !important;
+}
+
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(2),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(2) { width: 8% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(3),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(3) { width: 10% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(4),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(4) { width: 11% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(5),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(5) { width: 30% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(7),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(7) { width: 11% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(9),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(9) { width: 16% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(10),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(10) { width: 16% !important; }
+.pdf-export-clone .pdf-registro-table .tbl th:nth-child(11),
+.pdf-export-clone .pdf-registro-table .tbl td:nth-child(11) { width: 8% !important; }

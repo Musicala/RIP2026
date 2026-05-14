@@ -37,6 +37,11 @@
       registro: 'rip2026_cache_registro_v2',
       params: 'rip2026_cache_params_v2',
       meta: 'rip2026_cache_meta_v2'
+    },
+    HIST_LAST_CLASS_TSV_URLS: {
+      "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
+      "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
+      "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
     }
   };
 
@@ -66,6 +71,8 @@
   };
 
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const MS_DAY = 24 * 60 * 60 * 1000;
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const findHeaderByAliases = (headers, aliases = []) => {
     if (!Array.isArray(headers) || !headers.length) return '';
     const aliasSet = new Set((aliases || []).map((x) => norm(x)));
@@ -144,6 +151,69 @@
     return v.toLocaleString('es-CO', { maximumFractionDigits: 0 });
   };
 
+  const hasText = (v) => String(v || '').trim().length > 0;
+  const test = (txt, re) => re.test(String(txt || ''));
+  const classifyMovimiento = (tipoRaw, servicioRaw, pagoRaw, clasifRaw, clasifPagoRaw) => {
+    const tipo = String(tipoRaw || '').trim();
+    const servicio = String(servicioRaw || '').trim();
+    const pago = String(pagoRaw || '').trim();
+    const clasif = String(clasifRaw || '').trim();
+    const clasifPago = String(clasifPagoRaw || '').trim();
+    if (clasif) return { clasifAuto: clasif, clasifPagoAuto: clasifPago || '' };
+    if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
+    const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
+    const s = servicio;
+    if (isPago) {
+      if (!s) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
+      if (test(s, /matr[íi]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
+      if (test(s, /virtual.*personalizado|personalizado.*virtual/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MV P' };
+      if (test(s, /hogar.*personalizado|personalizado.*hogar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MH P' };
+      if (test(s, /sede.*personalizado|personalizado.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS P' };
+      if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS SP' };
+      return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
+    }
+    if (test(s, /vacacional/i)) return { clasifAuto: 'TV', clasifPagoAuto: '' };
+    if (test(s, /spaces/i)) return { clasifAuto: 'Spaces', clasifPagoAuto: '' };
+    if (test(s, /musigym/i)) return { clasifAuto: 'MG', clasifPagoAuto: '' };
+    if (test(s, /\bcf\b/i)) return { clasifAuto: 'CF', clasifPagoAuto: '' };
+    if (test(s, /\bmv\b/i)) return { clasifAuto: 'MV P', clasifPagoAuto: '' };
+    if (test(s, /mh:\s*musifamiliar/i) && test(s, /\bmh\b/i)) return { clasifAuto: 'MH SP', clasifPagoAuto: '' };
+    if (test(s, /\bmh\b/i)) return { clasifAuto: 'MH P', clasifPagoAuto: '' };
+    if (test(s, /musi/i) && !test(s, /personalizada/i)) return { clasifAuto: 'MS G', clasifPagoAuto: '' };
+    if (test(s, /\bms\b/i)) return { clasifAuto: 'MS P', clasifPagoAuto: '' };
+    if (test(s, /fsa/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
+    return { clasifAuto: 'No clasificado', clasifPagoAuto: '' };
+  };
+  const computeMovimiento = (tipoRaw, servicioRaw, comentarioRaw, existingMovRaw) => {
+    const tipo = String(tipoRaw || '').trim();
+    const servicio = String(servicioRaw || '').trim();
+    const comentario = String(comentarioRaw || '').trim();
+    const existing = Number(existingMovRaw);
+    if (Number.isFinite(existing) && existing !== 0) return existing;
+    if (/^cortes[íi]a$/i.test(comentario)) return 0;
+    if (/^clase$/i.test(tipo)) return -1;
+    if (/^pago$/i.test(tipo)) {
+      if (/\b(prueba|individual)\b/i.test(servicio)) return 1;
+      if (/\bCP\b/i.test(servicio)) return 1;
+      const m = servicio.match(/(?:\bP\s*|Paquete\s*(?:de\s*)?)(\d+)/i);
+      return m ? (Number(m[1]) || 0) : 0;
+    }
+    return 0;
+  };
+
+  const classifyByDaysSinceLastClass = (days, forceActivo = false) => {
+    if (forceActivo) return 'Activo';
+    if (!Number.isFinite(days)) return 'Inactivo sin info';
+    if (days < 8) return 'Activo';
+    if (days < 15) return 'Activo no registro (8–15 días)';
+    if (days <= 30) return 'Activo En pausa (15–30 días)';
+    if (days <= 90) return 'Inactivo en pausa (1–3 meses)';
+    if (days <= 180) return 'Inactivo lejano (3–6 meses)';
+    if (days <= 365) return 'Inactivo extendido (6–12 meses)';
+    if (days <= 730) return 'Inactivo histórico (12–24 meses)';
+    return 'Exestudiante (+24 meses)';
+  };
+
   // TSV parser robusto (publicado suele venir plano)
   const parseTSV = (text) => {
     const lines = String(text ?? '')
@@ -166,6 +236,12 @@
     }
     return { headers, rows };
   };
+  const HIST_COLMAP = {
+    "2023": { fecha: 1, nombre: 2 },
+    "2024": { fecha: 4, nombre: 3 },
+    "2025": { fecha: 4, nombre: 3 }
+  };
+  const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
 
   // =========================
   // Cache local TTL
@@ -218,6 +294,59 @@
     });
     if (!res.ok) throw new Error(`No pude cargar TSV (${res.status})`);
     return await res.text();
+  };
+
+  const parseLegacyDMYToTs = (s) => {
+    const raw = String(s || '').trim();
+    if (!raw) return 0;
+    let m = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+    if (m) {
+      let yy = Number(m[3]); if (yy < 100) yy += 2000;
+      const d = new Date(yy, Number(m[2]) - 1, Number(m[1]));
+      return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+    }
+    const d = parseDate(raw);
+    return d ? d.getTime() : 0;
+  };
+
+  const getHistoricLastClassMap = async (year) => {
+    const y = String(year || '');
+    if (histLastClassCache.has(y)) return histLastClassCache.get(y);
+    try {
+      const raw = sessionStorage.getItem(`rip2026_hist_lastclass_${y}`);
+      if (raw) {
+        const obj = JSON.parse(raw);
+        const m = new Map(Object.entries(obj || {}).map(([k, v]) => [k, Number(v) || 0]));
+        histLastClassCache.set(y, m);
+        return m;
+      }
+    } catch (_) {}
+    const url = RIPCore.CONFIG.HIST_LAST_CLASS_TSV_URLS[y];
+    const cm = HIST_COLMAP[y];
+    if (!url || !cm) return new Map();
+
+    const txt = await fetchText(url);
+    const lines = String(txt || '').replace(/\r/g, '').split('\n').filter(Boolean);
+    const rows = lines.map((l) => l.split('\t'));
+    rows.shift();
+
+    const out = new Map();
+    rows.forEach((r) => {
+      const name = String(r[cm.nombre] || '').trim();
+      if (!name) return;
+      const ts = parseLegacyDMYToTs(r[cm.fecha] || '');
+      if (!ts) return;
+      const k = norm(name);
+      const prev = Number(out.get(k)) || 0;
+      if (ts > prev) out.set(k, ts);
+    });
+    histLastClassCache.set(y, out);
+    try {
+      const obj = {};
+      out.forEach((v, k) => { obj[k] = v; });
+      sessionStorage.setItem(`rip2026_hist_lastclass_${y}`, JSON.stringify(obj));
+    } catch (_) {}
+    return out;
   };
 
   // =========================
@@ -315,6 +444,8 @@
       const estudiante = r[COLS.estudiante] || '';
       const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
       const movRaw = getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11);
+      const movimiento = computeMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.comentario], safeNum(movRaw));
+      const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, '');
       return {
         id: HAS_ID ? (r[COLS.id] || '') : '',
         estudiante,
@@ -327,9 +458,9 @@
         tipo: r[COLS.tipo] || '',
         pago: r[COLS.pago] || '',
         comentario: r[COLS.comentario] || '',
-        clasif: clasifRaw || '',
-        clasifPago: '',
-        movimiento: safeNum(movRaw)
+        clasif: auto.clasifAuto || '',
+        clasifPago: auto.clasifPagoAuto || '',
+        movimiento
       };
     });
 
@@ -348,7 +479,7 @@
     return fastPack;
   };
 
-RIPCore.loadAll = async ({ force = false } = {}) => {
+RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     const meta = readCacheMeta();
     const canUseCache = !force;
 
@@ -386,13 +517,15 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
       const rows = parsed.rows.map((r) => {
         const estudiante = r[COLS.estudiante] || '';
         const d = parseDate(r[COLS.fecha]);
-        const movimiento = HAS_MOV
+        const movRaw = HAS_MOV
           ? safeNum(getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11))
           : 0;
+        const movimiento = computeMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.comentario], movRaw);
         const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
         const clasifPagoRaw = HAS_CLASIF_PAGO
           ? getValueByHeaderOrIndex(r, parsed.headers, clasifPagoHeader, -1)
           : '';
+        const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, clasifPagoRaw);
 
         return {
           raw: r,
@@ -413,8 +546,8 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
 
           pago: r[COLS.pago] || '',
           comentario: r[COLS.comentario] || '',
-          clasif: clasifRaw || '',
-          clasifPago: clasifPagoRaw || '',
+          clasif: auto.clasifAuto || '',
+          clasifPago: auto.clasifPagoAuto || '',
           movimiento
         };
       });
@@ -472,8 +605,45 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
     for (const r of registro) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
     }
+    const lastClassTsByStudent = new Map();
+    for (const r of registro) {
+      if (!r?.estudianteKey) continue;
+      const tipo = norm(r?.tipo || '');
+      const isClase = (tipo === 'clase') || (tipo !== 'pago' && !String(r?.pago || '').trim());
+      if (!isClase) continue;
+      const ts = Number(r?.fechaTs) || 0;
+      if (!ts) continue;
+      const prev = Number(lastClassTsByStudent.get(r.estudianteKey)) || 0;
+      if (ts > prev) lastClassTsByStudent.set(r.estudianteKey, ts);
+    }
+
+    const today = startOfDay(new Date());
+    const no2026ClassKeys = includeHistorical
+      ? Array.from(set.keys()).filter((k) => !lastClassTsByStudent.get(k))
+      : [];
+    let histMerged = new Map();
+    if (no2026ClassKeys.length) {
+      const maps = await Promise.all([
+        getHistoricLastClassMap('2025').catch(() => new Map()),
+        getHistoricLastClassMap('2024').catch(() => new Map()),
+        getHistoricLastClassMap('2023').catch(() => new Map())
+      ]);
+      maps.forEach((m) => {
+        m.forEach((ts, k) => {
+          const prev = Number(histMerged.get(k)) || 0;
+          if (ts > prev) histMerged.set(k, ts);
+        });
+      });
+    }
     const allStudents = Array.from(set.entries())
-      .map(([k, name]) => ({ key: k, name, paramClasif: getParamLabel(paramsMap.get(k)) || '' }))
+      .map(([k, name]) => {
+        const paramClasif = getParamLabel(paramsMap.get(k)) || '';
+        const lastTs = Number(lastClassTsByStudent.get(k)) || Number(histMerged.get(k)) || 0;
+        const lastDate = lastTs ? startOfDay(new Date(lastTs)) : null;
+        const daysSince = lastDate ? Math.floor((today.getTime() - lastDate.getTime()) / MS_DAY) : NaN;
+        const finalClasif = classifyByDaysSinceLastClass(daysSince, norm(paramClasif) === 'activo');
+        return { key: k, name, paramClasif, finalClasif, lastClassTs: lastTs || 0, daysSinceLastClass: daysSince };
+      })
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
     return {
@@ -495,7 +665,7 @@ RIPCore.loadAll = async ({ force = false } = {}) => {
     };
 
     for (const s of students) {
-      const c = norm(s.paramClasif || '');
+      const c = norm(s.finalClasif || s.paramClasif || '');
 
       // ✅ Activos netos: SOLO "Activo"
       if (c === 'activo') {
