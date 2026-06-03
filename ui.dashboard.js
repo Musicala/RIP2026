@@ -17,6 +17,78 @@
   const RIPUI = (window.RIPUI = window.RIPUI || {});
   let __registroTableHeadHTML = '';
 
+  function isClassRow(row) {
+    const tipo = norm(row?.tipo || '');
+    return tipo === 'clase' || (tipo !== 'pago' && !String(row?.pago || '').trim());
+  }
+
+  function isPaymentRow(row) {
+    const tipo = norm(row?.tipo || '');
+    return tipo === 'pago' || Number(row?.valorPago || 0) > 0 || String(row?.pago || '').trim();
+  }
+
+  function inlineFichaHTML(ctx, s) {
+    const key = s.key || norm(s.name);
+    const ficha = window.RIPCore?.getStudentFicha?.(ctx?.state?.registro || [], key) || { saldo: 0, rows: [] };
+    const rows = ficha.rows || [];
+    const lastClass = rows.find(isClassRow);
+    const lastPayment = rows.find(isPaymentRow);
+    const totalClasses = rows.filter(isClassRow).length;
+    const totalPayments = rows.filter(isPaymentRow).length;
+    const recentRows = rows.slice(0, 4);
+    const saldo = Number(ficha.saldo) || 0;
+    const days = daysSinceValue(s);
+    return `
+      <div class="inline-ficha">
+        <div class="inline-ficha-head">
+          <div>
+            <h4>${escapeHTML(s.name || 'Estudiante')}</h4>
+            <p>${escapeHTML(saldoStatusText(s))}</p>
+          </div>
+          <button class="btn small ghost" type="button" data-inline-close>Cerrar</button>
+        </div>
+        <div class="inline-ficha-grid">
+          <div><span>Dias sin venir</span><strong>${days >= 0 ? escapeHTML(`${days} dias`) : '-'}</strong></div>
+          <div><span>Ultima clase</span><strong>${escapeHTML(lastClass?.fecha || lastClass?.fechaRaw || saldoLastClassDate(ctx, s) || '-')}</strong></div>
+          <div><span>Programacion</span><strong>${escapeHTML(saldoProgramacionText(ctx, s))}</strong></div>
+          <div><span>Saldo</span><strong>${escapeHTML(`${saldo > 0 ? '+' : ''}${fmtMoney(saldo)}`)}</strong></div>
+          <div><span>Ultimo pago</span><strong>${escapeHTML(lastPayment?.fecha || lastPayment?.fechaRaw || '-')}</strong></div>
+          <div><span>Clases / pagos</span><strong>${escapeHTML(`${totalClasses} / ${totalPayments}`)}</strong></div>
+        </div>
+        <div class="inline-ficha-recent">
+          ${recentRows.length ? recentRows.map(row => `
+            <div>
+              <strong>${escapeHTML(row.fecha || row.fechaRaw || '-')}</strong>
+              <span>${escapeHTML([row.tipo, row.servicio, row.profesor].filter(Boolean).join(' · ') || row.comentario || 'Registro')}</span>
+            </div>
+          `).join('') : '<div><span>Sin registros para mostrar.</span></div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function toggleInlineFicha(ctx, btn, s) {
+    const row = btn.closest('tr');
+    if (!row) return;
+    const next = row.nextElementSibling;
+    if (next?.classList?.contains('inline-ficha-row')) {
+      next.remove();
+      btn.textContent = 'Abrir';
+      return;
+    }
+    row.parentElement?.querySelectorAll('.inline-ficha-row').forEach(r => r.remove());
+    row.parentElement?.querySelectorAll('[data-inline-open]').forEach(b => { b.textContent = 'Abrir'; });
+    const detail = document.createElement('tr');
+    detail.className = 'inline-ficha-row';
+    detail.innerHTML = `<td colspan="7">${inlineFichaHTML(ctx, s)}</td>`;
+    row.insertAdjacentElement('afterend', detail);
+    btn.textContent = 'Cerrar';
+    detail.querySelector('[data-inline-close]')?.addEventListener('click', () => {
+      detail.remove();
+      btn.textContent = 'Abrir';
+    });
+  }
+
   // =========================
   // Base de datos externa
   // =========================
@@ -166,6 +238,21 @@
     });
   }
 
+  function sortByRecentAttendance(items) {
+    return [...(items || [])].sort((a, b) => {
+      const ai = norm(a?.finalClasif || a?.paramClasif || '').startsWith('inactivo') ? 1 : 0;
+      const bi = norm(b?.finalClasif || b?.paramClasif || '').startsWith('inactivo') ? 1 : 0;
+      if (ai !== bi) return ai - bi;
+      const at = Number(a?.lastClassTs) || 0;
+      const bt = Number(b?.lastClassTs) || 0;
+      if (at !== bt) return bt - at;
+      const da = daysSinceValue(a);
+      const db = daysSinceValue(b);
+      if (da !== db) return da - db;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'es');
+    });
+  }
+
   function saldoStatusText(s) {
     return s.finalClasif || s.paramClasif || s.statusText || 'Sin estado';
   }
@@ -175,7 +262,13 @@
     const rows = (ctx?.state?.registro || []).filter(r => r.estudianteKey === key);
     rows.sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
     const lastClass = rows.find(r => norm(r.tipo) === 'clase');
-    return lastClass?.fecha || lastClass?.fechaRaw || s.lastClassDate || '';
+    if (lastClass?.fecha || lastClass?.fechaRaw || s.lastClassDate) {
+      return lastClass?.fecha || lastClass?.fechaRaw || s.lastClassDate || '';
+    }
+    const ts = Number(s?.lastClassTs) || 0;
+    if (!ts) return '';
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
   }
 
   function saldoProgramacionText(ctx, s) {
@@ -239,6 +332,48 @@
     const isSaldoList = (items || []).some(s => typeof s.saldo === 'number');
     const tableHead = el.tablaContainer?.querySelector('thead');
 
+    if (bdEligible) {
+      if (tableHead && !__registroTableHeadHTML) __registroTableHeadHTML = tableHead.innerHTML;
+      if (tableHead) {
+        tableHead.innerHTML = `
+          <tr>
+            <th>Estado</th>
+            <th>Estudiante</th>
+            <th>Dias sin venir</th>
+            <th>Ultima clase</th>
+            <th>Programacion</th>
+            <th>BD</th>
+            <th></th>
+          </tr>
+        `;
+      }
+      el.tableBody.innerHTML = sortByRecentAttendance(items).map((s) => {
+        const days = daysSinceValue(s);
+        return `
+          <tr>
+            <td><span class="pill soft">${escapeHTML(saldoStatusText(s))}</span></td>
+            <td style="font-weight:800">${escapeHTML(s.name)}</td>
+            <td style="font-weight:800">${days >= 0 ? escapeHTML(`${days} dias`) : '—'}</td>
+            <td>${escapeHTML(saldoLastClassDate(ctx, s) || '—')}</td>
+            <td>${escapeHTML(saldoProgramacionText(ctx, s))}</td>
+            <td><span class="bd-badge" data-bd-name="${escapeHTML(s.name)}">BD</span></td>
+            <td><button class="btn small primary" type="button" data-inline-open data-skey="${escapeHTML(s.key || '')}" data-sname="${escapeHTML(s.name || '')}">Abrir</button></td>
+          </tr>
+        `;
+      }).join('') || `<tr><td colspan="7" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
+      const reviewByKey = new Map(sortByRecentAttendance(items).map(s => [s.key || norm(s.name), s]));
+      el.tableBody.querySelectorAll('[data-inline-open]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const skey = btn.getAttribute('data-skey') || '';
+          const sname = btn.getAttribute('data-sname') || '';
+          const item = reviewByKey.get(skey || norm(sname)) || { key: skey || norm(sname), name: sname };
+          toggleInlineFicha(ctx, btn, item);
+        });
+      });
+      wireBDLookup(el);
+      return;
+    }
+
     if (isSaldoList) {
       if (tableHead && !__registroTableHeadHTML) __registroTableHeadHTML = tableHead.innerHTML;
       if (tableHead) {
@@ -260,13 +395,14 @@
           <td style="font-weight:800">${escapeHTML(`${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`)}</td>
           <td>${escapeHTML(saldoLastClassDate(ctx, s) || '—')}</td>
           <td>${escapeHTML(saldoProgramacionText(ctx, s))}</td>
-          <td><button class="btn small primary" type="button" data-skey="${escapeHTML(s.key)}">Abrir</button></td>
+          <td><button class="btn small primary" type="button" data-skey="${escapeHTML(s.key || '')}" data-sname="${escapeHTML(s.name || '')}">Abrir</button></td>
         </tr>
       `).join('') || `<tr><td colspan="6" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
       el.tableBody.querySelectorAll('[data-skey]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const skey = btn.getAttribute('data-skey') || '';
-          if (skey) onPickStudent(skey);
+          const sname = btn.getAttribute('data-sname') || '';
+          onPickStudent(skey, sname);
         });
       });
       return;
@@ -323,6 +459,11 @@
 
     // Listener: cargar BD
     if (bdEligible) {
+      wireBDLookup(el);
+    }
+  }
+
+  function wireBDLookup(el) {
       const btnBD = document.getElementById('btnCargarBD');
       if (btnBD) {
         btnBD.addEventListener('click', async () => {
@@ -374,7 +515,6 @@
           });
         });
       }
-    }
   }
 
   // =========================

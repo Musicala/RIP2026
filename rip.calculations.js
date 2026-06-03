@@ -58,7 +58,8 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const comentario = norm(row?.comentario);
-    if (comentario === 'cortesia') return 0;
+    if (isTrialOrCourtesy(row) && tipo === 'clase') return 0;
+    if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
     if (tipo === 'pago') {
       if (/\bME\b/i.test(servicio)) return 0;
@@ -77,11 +78,11 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const s = norm(servicio);
-    if (s.includes('vacacional')) return { clasif: 'TV', clasifPago: '' };
-    if (s.includes('spaces')) return { clasif: 'Spaces', clasifPago: '' };
-    if (s.includes('musigym')) return { clasif: 'MG', clasifPago: '' };
-    if (s.includes('fsa')) return { clasif: 'FSA', clasifPago: '' };
+    if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
+    if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
+      if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
+      if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
       if (s.includes('matricula')) return { clasif: 'Pago', clasifPago: 'Pago' };
       if (s.includes('virtual') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MV P' };
       if (s.includes('hogar') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MH P' };
@@ -89,19 +90,39 @@
       if (s.includes('sede') && s.includes('grupal')) return { clasif: 'Pago', clasifPago: 'MS G' };
       return { clasif: 'Pago', clasifPago: 'Pago' };
     }
-    if (tipo === 'clase') {
-      if (s.includes('virtual') && s.includes('personalizado')) return { clasif: 'MV P', clasifPago: '' };
-      if (s.includes('hogar') && s.includes('personalizado')) return { clasif: 'MH P', clasifPago: '' };
-      if (s.includes('sede') && s.includes('personalizado')) return { clasif: 'MS P', clasifPago: '' };
-      if (s.includes('musi') && !s.includes('personalizada')) return { clasif: 'MS G', clasifPago: '' };
-      if (s.includes('sede')) return { clasif: 'MS G', clasifPago: '' };
-    }
+    if (tipo === 'multa') return { clasif: 'Multa', clasifPago: '' };
+    if (s.includes('musifamiliar')) return { clasif: 'MF', clasifPago: '' };
+    if (s.includes('ensamble')) return { clasif: 'Ensamble', clasifPago: '' };
+    if (s.includes('fsa')) return { clasif: 'FSA', clasifPago: '' };
+    if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
+    if (s.includes('vacacional')) return { clasif: 'TV', clasifPago: '' };
+    if (s.includes('spaces')) return { clasif: 'Spaces', clasifPago: '' };
+    if (s.includes('musigym')) return { clasif: 'MG', clasifPago: '' };
+    if (/\bcf\b/i.test(servicio)) return { clasif: 'CF', clasifPago: '' };
+    if (/\bmv\b/i.test(servicio)) return { clasif: 'MV P', clasifPago: '' };
+    if (/\bmh\b/i.test(servicio)) return { clasif: 'MH P', clasifPago: '' };
+    if (s.includes('musi') && !s.includes('personalizada')) return { clasif: 'MS G', clasifPago: '' };
+    if (/\bms\b/i.test(servicio)) return { clasif: 'MS P', clasifPago: '' };
     return { clasif: 'No clasificado', clasifPago: '' };
   }
 
   function buildClassUniqueId(row) {
     if (norm(row?.tipo) !== 'clase') return '';
     return [row?.fecha || row?.fechaRaw || '', norm(row?.servicio), norm(row?.hora), norm(row?.profesor)].join('|');
+  }
+
+  function isTrial(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''}`);
+    return /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
+  }
+
+  function isCourtesy(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''}`);
+    return /\b(cortesia|cortesía|gratis|obsequio)\b/.test(txt);
+  }
+
+  function isTrialOrCourtesy(row) {
+    return isTrial(row) || isCourtesy(row);
   }
 
   function buildRecordHash(row) {
@@ -279,6 +300,7 @@
 
   window.RIPCalculations = {
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
+    isTrial, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildRecordHash, markFirstOccurrence, countClassParticipants,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
     getStudentClassLimit, calculateProgramacionStatus, recalculateStudentFromRecords,

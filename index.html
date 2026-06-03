@@ -168,11 +168,13 @@
             <th>Estudiante</th>
             <th>Motivo</th>
             <th>Tiempo / saldo</th>
+            <th>Ultimo registro</th>
+            <th>Programacion</th>
             <th></th>
           </tr>
         </thead>
         <tbody id="reviewTodayBody">
-          <tr><td colspan="5" class="empty-td">Cargando pendientes...</td></tr>
+          <tr><td colspan="7" class="empty-td">Cargando pendientes...</td></tr>
         </tbody>
       </table>
     </div>
@@ -329,29 +331,39 @@
     </div>
 
     <!-- Resumen sheet (mostrado solo en modo ficha) -->
-    <div class="sheet-like" id="fichaSummaryBlock" style="display:none">
-      <div class="sheet-row sheet-head">
-        <div class="cell strong">Estudiante</div>
-        <div class="cell" id="fichaStudent">—</div>
-        <div class="cell strong">Última clase</div>
-        <div class="cell" id="fichaFecha">—</div>
+    <div id="fichaSummaryBlock" class="ficha-card" style="display:none">
+
+      <div class="ficha-card-header">
+        <div class="ficha-name-row">
+          <span id="fichaStudent" class="ficha-student-name">—</span>
+          <span id="fichaStatusBadge" class="ficha-status-badge">—</span>
+        </div>
+        <div id="fichaSaldosMini" class="ficha-saldos-row"></div>
       </div>
-      <div class="sheet-row">
-        <div class="cell strong">Último pago</div>
-        <div class="cell" id="fichaUltPago">—</div>
-        <div class="cell strong">Próx. clase</div>
-        <div class="cell" id="fichaProxPago">—</div>
+
+      <div class="ficha-stats-grid">
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Última clase</span>
+          <span id="fichaFecha" class="ficha-stat-value">—</span>
+        </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Próxima clase</span>
+          <span id="fichaProxPago" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Último pago</span>
+          <span id="fichaUltPago" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
+        <div class="ficha-stat ficha-stat--money">
+          <span class="ficha-stat-label">Valor pago</span>
+          <span id="fichaUltPagoValor" class="ficha-stat-value">—</span>
+        </div>
+        <div class="ficha-stat ficha-stat--money">
+          <span class="ficha-stat-label">Total pagos</span>
+          <span id="fichaTotalPagos" class="ficha-stat-value">—</span>
+        </div>
       </div>
-      <div class="sheet-row">
-        <div class="cell strong">Valor último pago</div>
-        <div class="cell" id="fichaUltPagoValor">—</div>
-        <div class="cell strong">Valor total pagos</div>
-        <div class="cell" id="fichaTotalPagos">—</div>
-      </div>
-      <div class="sheet-row">
-        <div class="cell strong">Saldo por clasificación</div>
-        <div id="fichaSaldosMini" class="cell" style="grid-column: 2 / -1"></div>
-      </div>
+
     </div>
 
     <!-- Programación individual -->

@@ -6,15 +6,312 @@
   <title>Registrar pagos - RIP 2026</title>
   <link rel="stylesheet" href="./styles.css">
   <style>
-    .pay-wrap{max-width:980px;margin:0 auto}
-    .pay-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    @media (max-width:760px){.pay-grid{grid-template-columns:1fr}}
-    .pay-user{border:1px solid var(--bd);border-radius:8px;padding:14px;background:#fff;margin-top:12px}
-    .pay-user h4{margin:0 0 12px}
-    .pay-total{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:14px;border:1px solid var(--bd);border-radius:8px;background:#f8fafc;font-weight:900}
-    .pay-total strong{font-size:24px;color:var(--brand)}
-    .pay-success{display:none;margin-top:12px;padding:12px;border:1px solid #16a34a;border-radius:8px;background:#f0fdf4;color:#166534;font-weight:800}
-    .pay-success.show{display:block}
+    /* ─── Layout ─────────────────────────────────── */
+    .pay-wrap { max-width: 860px; margin: 0 auto; }
+
+    /* ─── Section header ─────────────────────────── */
+    .pay-section-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: #8a96a8;
+      margin: 24px 0 10px;
+    }
+    .pay-section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(26,59,110,.1);
+    }
+
+    /* ─── Grid ───────────────────────────────────── */
+    .pay-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .pay-grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }
+    @media (max-width: 700px) {
+      .pay-grid-2, .pay-grid-4 { grid-template-columns: 1fr; }
+    }
+
+    /* ─── User card ──────────────────────────────── */
+    .pay-user {
+      border: 1.5px solid var(--bd);
+      border-left-width: 4px;
+      border-radius: 12px;
+      padding: 16px 18px 14px;
+      background: #fff;
+      margin-top: 10px;
+      position: relative;
+      transition: box-shadow .15s;
+    }
+    .pay-user:focus-within { box-shadow: 0 4px 18px rgba(15,23,42,.08); }
+    .pay-user[data-color="1"] { border-left-color: #3b82f6; }
+    .pay-user[data-color="2"] { border-left-color: #8b5cf6; }
+    .pay-user[data-color="3"] { border-left-color: #0d9488; }
+    .pay-user[data-color="4"] { border-left-color: #f59e0b; }
+    .pay-user[data-color="5"] { border-left-color: #ec4899; }
+
+    .pay-user-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .pay-user-badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 800;
+      flex-shrink: 0;
+      color: #fff;
+    }
+    .pay-user[data-color="1"] .pay-user-badge { background: #3b82f6; }
+    .pay-user[data-color="2"] .pay-user-badge { background: #8b5cf6; }
+    .pay-user[data-color="3"] .pay-user-badge { background: #0d9488; }
+    .pay-user[data-color="4"] .pay-user-badge { background: #f59e0b; }
+    .pay-user[data-color="5"] .pay-user-badge { background: #ec4899; }
+
+    .pay-user-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #374151;
+      flex: 1;
+    }
+    .pay-user-label small {
+      font-weight: 500;
+      color: #9ca3af;
+      margin-left: 5px;
+    }
+
+    .pay-user-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #d1d5db;
+      font-size: 18px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color .12s, background .12s;
+    }
+    .pay-user-remove:hover { color: #ef4444; background: rgba(239,68,68,.08); }
+
+    .pay-user-grid {
+      display: grid;
+      grid-template-columns: 2fr 2fr 1.2fr 1fr;
+      gap: 10px;
+      align-items: end;
+    }
+    @media (max-width: 700px) { .pay-user-grid { grid-template-columns: 1fr 1fr; } }
+
+    .pay-suggest-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 5px 9px;
+      margin-top: 4px;
+      border-radius: 6px;
+      border: 1px dashed var(--bd2);
+      background: transparent;
+      color: #6b7280;
+      cursor: pointer;
+      transition: all .12s;
+      width: 100%;
+      justify-content: center;
+    }
+    .pay-suggest-btn:hover { background: rgba(59,130,246,.06); color: #3b82f6; border-color: rgba(59,130,246,.3); }
+
+    /* ─── Add user button ────────────────────────── */
+    .pay-add-user-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      margin-top: 10px;
+      padding: 11px;
+      border: 1.5px dashed rgba(26,59,110,.2);
+      border-radius: 10px;
+      background: rgba(26,59,110,.02);
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .pay-add-user-btn:hover { border-color: #3b82f6; color: #3b82f6; background: rgba(59,130,246,.04); }
+    .pay-add-user-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ─── Totals bar ─────────────────────────────── */
+    .pay-totals-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 18px;
+      padding: 16px 20px;
+      border: 1px solid rgba(26,59,110,.12);
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f8faff 0%, #ffffff 100%);
+    }
+    @media (max-width: 700px) { .pay-totals-bar { grid-template-columns: 1fr 1fr; } }
+
+    .pay-total-item { display: flex; flex-direction: column; gap: 2px; }
+    .pay-total-item-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #9ca3af; }
+    .pay-total-item-value { font-size: 15px; font-weight: 700; color: #374151; }
+
+    .pay-grand-total {
+      text-align: right;
+      border-left: 1px solid rgba(26,59,110,.1);
+      padding-left: 18px;
+    }
+    .pay-grand-total .pay-total-item-label { color: #6b7280; }
+    .pay-grand-total #totalGeneral { font-size: 26px; font-weight: 900; color: var(--brand); display: block; }
+
+    /* ─── Preview / Validation panel ────────────── */
+    .pay-preview {
+      margin-top: 20px;
+      border: 1.5px solid rgba(26,59,110,.13);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .pay-preview-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 18px;
+      background: linear-gradient(135deg, #f0f5ff 0%, #fafbff 100%);
+      border-bottom: 1px solid rgba(26,59,110,.1);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #44526a;
+    }
+    .pay-preview-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+
+    .pay-preview-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .pay-preview-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 900;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .pay-preview-icon.ok  { background: rgba(5,150,105,.12); color: #059669; }
+    .pay-preview-icon.err { background: rgba(220,38,38,.1);  color: #dc2626; }
+    .pay-preview-icon.warn{ background: rgba(245,158,11,.12); color: #d97706; }
+
+    .pay-preview-content { flex: 1; }
+    .pay-preview-key {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: #9ca3af;
+      margin-bottom: 2px;
+    }
+    .pay-preview-val {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1e293b;
+    }
+    .pay-preview-val.missing { color: #dc2626; font-weight: 500; font-style: italic; }
+
+    .pay-preview-users { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+    .pay-preview-user-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 8px;
+      background: rgba(15,23,42,.03);
+      font-size: 12px;
+    }
+    .pay-preview-user-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .pay-preview-user-name { font-weight: 700; color: #1e293b; flex: 1; }
+    .pay-preview-user-service { color: #6b7280; }
+    .pay-preview-user-price { font-weight: 800; color: #1a3b6e; margin-left: auto; }
+    .pay-preview-user-err { color: #dc2626; font-style: italic; font-size: 11px; }
+
+    .pay-preview-divider { height: 1px; background: rgba(26,59,110,.07); margin: 2px 0; }
+
+    .pay-preview-total-block {
+      padding: 12px 14px;
+      background: rgba(26,59,110,.04);
+      border-radius: 9px;
+    }
+    .pay-preview-total-line {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 4px;
+    }
+    .pay-preview-total-line.final {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 0;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(26,59,110,.1);
+    }
+
+    .pay-preview-issues { display: flex; flex-direction: column; gap: 5px; }
+    .pay-preview-issue {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .pay-preview-issue.err  { background: rgba(220,38,38,.07); color: #dc2626; }
+    .pay-preview-issue.warn { background: rgba(245,158,11,.08); color: #b45309; }
+
+    /* ─── Actions ────────────────────────────────── */
+    .pay-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+    .pay-actions .btn.primary { min-width: 160px; }
+
+    .pay-success {
+      display: none;
+      margin-top: 12px;
+      padding: 14px 18px;
+      border: 1.5px solid #16a34a;
+      border-radius: 12px;
+      background: #f0fdf4;
+      color: #166534;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .pay-success.show { display: flex; align-items: center; gap: 10px; }
   </style>
 </head>
 <body>
@@ -22,11 +319,14 @@
     <section class="card">
       <div class="card-title">
         <h3>Registrar pago</h3>
-        <p class="muted">Guarda la transaccion en Clientes B2C y crea los pagos en el RIP Firebase.</p>
+        <p class="muted">Guarda la transacción en Clientes B2C y crea los pagos en el RIP Firebase.</p>
       </div>
 
       <form id="paymentForm">
-        <div class="pay-grid">
+
+        <!-- Datos generales -->
+        <div class="pay-section-title">Datos del pago</div>
+        <div class="pay-grid-2">
           <label class="field">
             <span>Fecha de pago</span>
             <input id="fechaPago" class="control" type="date" required>
@@ -37,16 +337,19 @@
           </label>
         </div>
 
+        <!-- Usuarios dinámicos -->
+        <div class="pay-section-title">Usuarios</div>
         <div id="usersWrap"></div>
+        <button class="pay-add-user-btn" type="button" id="btnAddUser">
+          + Agregar usuario
+        </button>
 
-        <div class="pay-grid" style="margin-top:14px">
+        <!-- Detalles del pago -->
+        <div class="pay-section-title">Detalles del pago</div>
+        <div class="pay-grid-4">
           <label class="field">
             <span>Medio de pago</span>
             <select id="medioPago" class="control" required></select>
-          </label>
-          <label class="field">
-            <span>Comentario</span>
-            <input id="comentario" class="control" type="text" placeholder="Comentario...">
           </label>
           <label class="field">
             <span>Recargo</span>
@@ -61,18 +364,52 @@
             <input id="FEVM" class="control" type="number" min="0" step="1" value="0">
           </label>
         </div>
+        <label class="field" style="margin-top:10px">
+          <span>Comentario</span>
+          <input id="comentario" class="control" type="text" placeholder="Comentario opcional...">
+        </label>
 
-        <div class="pay-total">
-          <span>Total general</span>
-          <strong id="totalGeneral">$0</strong>
+        <!-- Barra de totales -->
+        <div class="pay-totals-bar">
+          <div class="pay-total-item">
+            <span class="pay-total-item-label">Subtotal</span>
+            <span class="pay-total-item-value" id="subtotalDisplay">$0</span>
+          </div>
+          <div class="pay-total-item">
+            <span class="pay-total-item-label">Recargo / Descuento</span>
+            <span class="pay-total-item-value" id="ajustesDisplay">—</span>
+          </div>
+          <div class="pay-total-item">
+            <span class="pay-total-item-label">Usuarios</span>
+            <span class="pay-total-item-value" id="usuariosCount">0</span>
+          </div>
+          <div class="pay-total-item pay-grand-total">
+            <span class="pay-total-item-label">Total general</span>
+            <span id="totalGeneral">$0</span>
+          </div>
         </div>
 
-        <div class="filters-actions" style="margin-top:14px">
+        <!-- Panel de revisión -->
+        <div class="pay-preview" id="payPreview">
+          <div class="pay-preview-header">
+            <span>📋</span> Revisión antes de guardar
+          </div>
+          <div class="pay-preview-body" id="payPreviewBody">
+            <span style="color:#9ca3af;font-size:13px">Completa los datos para ver la revisión.</span>
+          </div>
+        </div>
+
+        <!-- Acciones -->
+        <div class="pay-actions">
           <button class="btn primary" id="btnSavePayment" type="submit">Guardar pago</button>
           <button class="btn ghost" id="btnReset" type="button">Limpiar</button>
           <span class="status" id="status">Cargando...</span>
         </div>
-        <div class="pay-success" id="paySuccess">Pago guardado en Clientes B2C y Registro.</div>
+        <div class="pay-success" id="paySuccess">
+          <span>✓</span>
+          <span id="paySuccessMsg">Pago guardado.</span>
+        </div>
+
       </form>
     </section>
   </main>
@@ -86,6 +423,6 @@
   <script src="./firebase.auth.js"></script>
   <script src="./rip.repository.js?v=2026.payments1"></script>
   <script src="./ui.shared.js?v=2026.views1"></script>
-  <script src="./registrar-pagos.js?v=2026.prices1"></script>
+  <script src="./registrar-pagos.js?v=2026.prices2"></script>
 </body>
 </html>

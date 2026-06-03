@@ -1083,6 +1083,74 @@
     });
   }
 
+  function getLastRegistroDate(studentKey) {
+    const rows = (state.registro || [])
+      .filter(r => r.estudianteKey === studentKey)
+      .map(r => ({
+        date: r.fecha || r.fechaRaw || '',
+        ts: Number(r.fechaTs) || Number(RIPCore.util?.parseDate?.(r.fecha || r.fechaRaw)?.getTime()) || 0
+      }))
+      .filter(r => r.date);
+    rows.sort((a, b) => b.ts - a.ts || String(b.date).localeCompare(String(a.date)));
+    return rows[0]?.date || '';
+  }
+
+  function getReviewProgramacionText(studentName) {
+    const prog = (state.prog?.data?.dashboard || []).find(row => norm(row.name) === norm(studentName));
+    if (!prog || prog.noSchedule) return 'Sin programacion';
+    const future = Number(prog.futureCount) || 0;
+    if (!future) return 'Sin futuras';
+    return `${future} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`;
+  }
+
+  function isTrialOrCourtesyRow(row) {
+    if (window.RIPCalculations?.isTrialOrCourtesy) return window.RIPCalculations.isTrialOrCourtesy(row);
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''}`);
+    return /\b(prueba|trial|diagnostico|diagnostica|cortesia|gratis|obsequio)\b/.test(txt);
+  }
+
+  function isClassLike(row) {
+    const tipo = norm(row?.tipo || '');
+    return tipo === 'clase' || (tipo !== 'pago' && !String(row?.pago || '').trim());
+  }
+
+  function buildTrialFollowupRows() {
+    const byStudent = new Map();
+    for (const row of state.registro || []) {
+      const key = row.estudianteKey || norm(row.estudiante);
+      if (!key) continue;
+      if (!byStudent.has(key)) byStudent.set(key, []);
+      byStudent.get(key).push(row);
+    }
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const out = [];
+    byStudent.forEach((rows, key) => {
+      const sorted = [...rows].sort((a, b) => (Number(a.fechaTs) || 0) - (Number(b.fechaTs) || 0));
+      const trialRows = sorted.filter(r => isClassLike(r) && isTrialOrCourtesyRow(r));
+      const lastTrial = trialRows[trialRows.length - 1];
+      if (!lastTrial) return;
+      const trialTs = Number(lastTrial.fechaTs) || Number(RIPCore.util?.parseDate?.(lastTrial.fecha || lastTrial.fechaRaw)?.getTime()) || 0;
+      if (sorted.some(r => (Number(r.fechaTs) || 0) > trialTs)) return;
+      const lastDateStart = trialTs ? new Date(trialTs).setHours(0, 0, 0, 0) : todayStart;
+      const days = Math.max(0, Math.floor((todayStart - lastDateStart) / 86400000));
+      const student = (state.allStudents || []).find(s => s.key === key);
+      const name = lastTrial.estudiante || student?.name || key;
+      out.push({
+        priority: 'Prueba sin continuidad',
+        filter: 'Prueba sin continuidad',
+        name,
+        key,
+        reason: norm(lastTrial.clasif).includes('cortesia') ? 'Cortesia sin continuidad' : 'Clase de prueba sin continuidad',
+        metric: `${days} dias`,
+        lastRegistro: lastTrial.fecha || lastTrial.fechaRaw || '',
+        programacion: getReviewProgramacionText(name),
+        days
+      });
+    });
+    return out.sort((a, b) => b.days - a.days || String(a.name).localeCompare(String(b.name), 'es'));
+  }
+
   function renderReviewToday() {
     if (!ctx.el.reviewTodayBody) return;
     const clas = RIPCore.buildClasificacionDashboard(state.allStudents || []);
@@ -1091,6 +1159,7 @@
     const noProg = progRows.filter(r => r.noSchedule);
     const lowProg = progRows.filter(r => r.lowFuture);
     const review = [...(clas.porRevisar || [])].sort((a, b) => (Number(b.daysSinceLastClass) || 0) - (Number(a.daysSinceLastClass) || 0));
+    const trialFollowup = buildTrialFollowupRows();
     const urgent = [];
 
     review.slice(0, 20).forEach(s => urgent.push({
@@ -1099,7 +1168,9 @@
       name: s.name,
       key: s.key,
       reason: s.finalClasif || s.paramClasif || '',
-      metric: `${Number(s.daysSinceLastClass) || 0} dias`
+      metric: `${Number(s.daysSinceLastClass) || 0} dias`,
+      lastRegistro: getLastRegistroDate(s.key),
+      programacion: getReviewProgramacionText(s.name)
     }));
     saldos.deben.slice(0, 15).forEach(s => urgent.push({
       priority: 'Saldo rojo',
@@ -1107,15 +1178,19 @@
       name: s.name,
       key: s.key,
       reason: 'Debe revisar saldo',
-      metric: fmtMoney(s.saldo)
+      metric: fmtMoney(s.saldo),
+      lastRegistro: getLastRegistroDate(s.key),
+      programacion: getReviewProgramacionText(s.name)
     }));
-    saldos.seAcabo.slice(0, 15).forEach(s => urgent.push({
+    saldos.seAcabo.forEach(s => urgent.push({
       priority: 'Saldo en 0',
       filter: 'En 0',
       name: s.name,
       key: s.key,
       reason: 'Paquete agotado',
-      metric: '0'
+      metric: '0',
+      lastRegistro: getLastRegistroDate(s.key),
+      programacion: getReviewProgramacionText(s.name)
     }));
     noProg.slice(0, 15).forEach(s => urgent.push({
       priority: 'Sin programacion',
@@ -1123,7 +1198,9 @@
       name: s.name,
       key: norm(s.name),
       reason: 'No tiene fechas futuras',
-      metric: `${s.futureCount || 0} futuras`
+      metric: `${s.futureCount || 0} futuras`,
+      lastRegistro: getLastRegistroDate(norm(s.name)),
+      programacion: getReviewProgramacionText(s.name)
     }));
     lowProg.slice(0, 15).forEach(s => urgent.push({
       priority: 'Pocas futuras',
@@ -1131,8 +1208,11 @@
       name: s.name,
       key: norm(s.name),
       reason: 'Programacion por completar',
-      metric: `${s.futureCount || 0} futuras`
+      metric: `${s.futureCount || 0} futuras`,
+      lastRegistro: getLastRegistroDate(norm(s.name)),
+      programacion: getReviewProgramacionText(s.name)
     }));
+    trialFollowup.forEach(s => urgent.push(s));
 
     if (ctx.el.reviewKpiGrid) {
       ctx.el.reviewKpiGrid.innerHTML = [
@@ -1140,7 +1220,8 @@
         ['Saldo rojo', saldos.deben.length],
         ['En 0', saldos.seAcabo.length],
         ['Sin programacion', noProg.length],
-        ['Pocas futuras', lowProg.length]
+        ['Pocas futuras', lowProg.length],
+        ['Prueba sin continuidad', trialFollowup.length]
       ].map(([label, value]) => `
         <button class="kpi kpi-btn" type="button" data-review-filter="${escapeHTML(label)}">
           <div class="n">${escapeHTML(value)}</div>
@@ -1174,10 +1255,12 @@
           <td style="font-weight:700">${escapeHTML(item.name)}</td>
           <td>${escapeHTML(item.reason)}</td>
           <td style="font-weight:700">${escapeHTML(item.metric)}</td>
+          <td>${escapeHTML(item.lastRegistro || '—')}</td>
+          <td>${escapeHTML(item.programacion || 'Sin programacion')}</td>
           <td><button class="btn small primary" type="button" data-review-open="${escapeHTML(item.name)}">Abrir</button></td>
         </tr>
       `).join('')
-      : `<tr><td colspan="5" class="empty-td">No hay urgentes por ahora. ✅</td></tr>`;
+      : `<tr><td colspan="7" class="empty-td">No hay urgentes por ahora. ✅</td></tr>`;
 
     ctx.el.reviewTodayBody.querySelectorAll('[data-review-open]').forEach(btn => {
       btn.addEventListener('click', () => openStudentFichaByName(btn.getAttribute('data-review-open') || ''));
@@ -1305,7 +1388,10 @@
   function openStudentFicha(studentKey, opts = {}) {
     const { focusProgramacion = false } = opts;
 
-    if (!studentKey || !RIPUI.ficha?.openFichaByKey) return;
+    if (!studentKey || !RIPUI.ficha?.openFichaByKey) {
+      if (opts.studentName) openStudentFichaByName(opts.studentName);
+      return;
+    }
 
     RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
     showFichaContainer();
@@ -1725,8 +1811,9 @@
       showFichaContainer();
       ensureFichaProgramacionHidden();
 
-      RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
-        openStudentFicha(studentKey, { focusProgramacion: false });
+      RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey, studentName) => {
+        if (studentKey) openStudentFicha(studentKey, { focusProgramacion: false, studentName });
+        else if (studentName) openStudentFichaByName(studentName);
       }, { bdEligible: !!opts.bdEligible });
     });
 
@@ -1735,8 +1822,9 @@
       showFichaContainer();
       ensureFichaProgramacionHidden();
 
-      RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
-        openStudentFicha(studentKey, { focusProgramacion: false });
+      RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey, studentName) => {
+        if (studentKey) openStudentFicha(studentKey, { focusProgramacion: false, studentName });
+        else if (studentName) openStudentFichaByName(studentName);
       }, { bdEligible: !!opts?.bdEligible });
     });
 

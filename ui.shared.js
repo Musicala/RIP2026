@@ -212,6 +212,7 @@
       fichaSub: $('fichaSub'),
       fichaSummaryBlock: $('fichaSummaryBlock'),
       fichaStudent: $('fichaStudent'),
+      fichaStatusBadge: $('fichaStatusBadge'),
       fichaFecha: $('fichaFecha'),
       fichaUltPago: $('fichaUltPago'),
       fichaUltPagoValor: $('fichaUltPagoValor'),

@@ -147,7 +147,10 @@
 
   const hasText = (v) => String(v || '').trim().length > 0;
   const test = (txt, re) => re.test(String(txt || ''));
-  const classifyMovimiento = (tipoRaw, servicioRaw, pagoRaw, clasifRaw, clasifPagoRaw) => {
+  const isTrialText = (servicioRaw, comentarioRaw = '') => /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/i.test(norm(`${servicioRaw || ''} ${comentarioRaw || ''}`));
+  const isCourtesyText = (servicioRaw, comentarioRaw = '') => /\b(cortesia|gratis|obsequio)\b/i.test(norm(`${servicioRaw || ''} ${comentarioRaw || ''}`));
+  const isTrialOrCourtesyText = (servicioRaw, comentarioRaw = '') => isTrialText(servicioRaw, comentarioRaw) || isCourtesyText(servicioRaw, comentarioRaw);
+  const classifyMovimiento = (tipoRaw, servicioRaw, pagoRaw, clasifRaw, clasifPagoRaw, comentarioRaw = '') => {
     const tipo = String(tipoRaw || '').trim();
     const servicio = String(servicioRaw || '').trim();
     const pago = String(pagoRaw || '').trim();
@@ -157,44 +160,49 @@
     if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
     const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
     const s = servicio;
+    if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
+    if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
+      if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
+      if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
       if (!s) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
-      if (test(s, /matr[íi]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
+      if (test(s, /matr[i�]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
       if (test(s, /virtual.*personalizado|personalizado.*virtual/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MV P' };
       if (test(s, /hogar.*personalizado|personalizado.*hogar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MH P' };
       if (test(s, /sede.*personalizado|personalizado.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS P' };
-      if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS SP' };
+      if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS G' };
       return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
     }
+    if (test(s, /Musifamiliar/i)) return { clasifAuto: 'MF', clasifPagoAuto: '' };
+    if (test(s, /Ensamble/i)) return { clasifAuto: 'Ensamble', clasifPagoAuto: '' };
+    if (test(s, /FSA/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
+    if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
     if (test(s, /vacacional/i)) return { clasifAuto: 'TV', clasifPagoAuto: '' };
     if (test(s, /spaces/i)) return { clasifAuto: 'Spaces', clasifPagoAuto: '' };
     if (test(s, /musigym/i)) return { clasifAuto: 'MG', clasifPagoAuto: '' };
     if (test(s, /\bcf\b/i)) return { clasifAuto: 'CF', clasifPagoAuto: '' };
     if (test(s, /\bmv\b/i)) return { clasifAuto: 'MV P', clasifPagoAuto: '' };
-    if (test(s, /mh:\s*musifamiliar/i) && test(s, /\bmh\b/i)) return { clasifAuto: 'MH SP', clasifPagoAuto: '' };
     if (test(s, /\bmh\b/i)) return { clasifAuto: 'MH P', clasifPagoAuto: '' };
     if (test(s, /musi/i) && !test(s, /personalizada/i)) return { clasifAuto: 'MS G', clasifPagoAuto: '' };
     if (test(s, /\bms\b/i)) return { clasifAuto: 'MS P', clasifPagoAuto: '' };
-    if (test(s, /fsa/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
     return { clasifAuto: 'No clasificado', clasifPagoAuto: '' };
-  };
-  const computeMovimiento = (tipoRaw, servicioRaw, comentarioRaw, existingMovRaw) => {
+  };  const computeMovimiento = (tipoRaw, servicioRaw, comentarioRaw, existingMovRaw) => {
     const tipo = String(tipoRaw || '').trim();
     const servicio = String(servicioRaw || '').trim();
     const comentario = String(comentarioRaw || '').trim();
     const existing = Number(existingMovRaw);
+    if (/^clase$/i.test(tipo) && isTrialOrCourtesyText(servicio, comentario)) return 0;
     if (Number.isFinite(existing) && existing !== 0) return existing;
-    if (/^cortes[íi]a$/i.test(comentario)) return 0;
+    if (isCourtesyText(servicio, comentario)) return 0;
     if (/^clase$/i.test(tipo)) return -1;
     if (/^pago$/i.test(tipo)) {
-      if (/\b(prueba|individual)\b/i.test(servicio)) return 1;
+      if (isTrialText(servicio, comentario) || /\bindividual\b/i.test(servicio)) return 1;
       if (/\bCP\b/i.test(servicio)) return 1;
       const m = servicio.match(/(?:\bP\s*|Paquete\s*(?:de\s*)?)(\d+)/i);
       return m ? (Number(m[1]) || 0) : 0;
     }
     return 0;
   };
-
   const classifyByDaysSinceLastClass = (days, forceActivo = false) => {
     if (forceActivo) return 'Activo';
     if (!Number.isFinite(days)) return 'Inactivo sin info';
@@ -535,7 +543,7 @@
       const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
       const movRaw = getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11);
       const movimiento = computeMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.comentario], safeNum(movRaw));
-      const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, '');
+      const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, '', r[COLS.comentario]);
       return {
         id: HAS_ID ? (r[COLS.id] || '') : '',
         rowNum: sheetRow,
@@ -627,7 +635,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
         const clasifPagoRaw = HAS_CLASIF_PAGO
           ? getValueByHeaderOrIndex(r, parsed.headers, clasifPagoHeader, -1)
           : '';
-        const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, clasifPagoRaw);
+        const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, clasifPagoRaw, r[COLS.comentario]);
 
         return {
           raw: r,
@@ -808,6 +816,21 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     return sums;
   };
 
+  function isInactiveStudent(student) {
+    const c = norm(student?.finalClasif || student?.paramClasif || '');
+    return c.startsWith('inactivo') || c.startsWith('exestudiante');
+  }
+
+  function sortByActiveRecent(a, b) {
+    const ai = isInactiveStudent(a) ? 1 : 0;
+    const bi = isInactiveStudent(b) ? 1 : 0;
+    if (ai !== bi) return ai - bi;
+    const at = Number(a?.lastClassTs) || 0;
+    const bt = Number(b?.lastClassTs) || 0;
+    if (at !== bt) return bt - at;
+    return String(a?.name || '').localeCompare(String(b?.name || ''), 'es');
+  }
+
   RIPCore.buildSaldosDashboard = (students, registro) => {
     const sums = RIPCore.sumMovimientoByStudent(registro);
     const cats = {
@@ -828,7 +851,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     // Orden: por magnitud (los más urgentes arriba)
     cats.deben.sort((a, b) => a.saldo - b.saldo);
     cats.lesDebemos.sort((a, b) => b.saldo - a.saldo);
-    cats.seAcabo.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    cats.seAcabo.sort(sortByActiveRecent);
 
     return cats;
   };

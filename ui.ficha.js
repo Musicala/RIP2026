@@ -673,15 +673,39 @@
     setText(el.fichaUltPagoValor, pagosStats.lastPagoValor ? fmtMoney(pagosStats.lastPagoValor) : '—');
     setText(el.fichaTotalPagos, pagosStats.totalPagos ? fmtMoney(pagosStats.totalPagos) : '—');
 
-    if (el.fichaSaldosMini) {
-      const compact = [`Saldo final ${saldoText(saldoTotal)}`].concat((items || []).map((item) => `${String(item.label || '').trim()} ${saldoText(item.value)}`))
-        .join(' · ');
+    // Status badge
+    if (el.fichaStatusBadge) {
+      const parseDate = (raw) => {
+        if (!raw) return null;
+        const m = String(raw).match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+        return null;
+      };
+      const lastDate = parseDate(lastRow?.fechaRaw);
+      const daysSinceLast = lastDate ? Math.floor((Date.now() - lastDate.getTime()) / 86400000) : null;
+      let statusLabel, statusClass;
+      if (daysSinceLast === null) {
+        statusLabel = 'Sin registro'; statusClass = 'inactivo';
+      } else if (daysSinceLast <= 45) {
+        statusLabel = 'Activo'; statusClass = 'activo';
+      } else if (saldoTotal > 0) {
+        statusLabel = 'Activo en pausa'; statusClass = 'pausa';
+      } else {
+        statusLabel = 'Inactivo'; statusClass = 'inactivo';
+      }
+      el.fichaStatusBadge.textContent = statusLabel;
+      el.fichaStatusBadge.className = `ficha-status-badge ${statusClass}`;
+    }
 
-      el.fichaSaldosMini.innerHTML = `
-        <div class="saldo-mini">
-          <span class="saldo-chip soft">${escapeHTML(compact)}</span>
-        </div>
-      `;
+    if (el.fichaSaldosMini) {
+      const allItems = [{ label: 'Saldo final', value: saldoTotal }].concat(items || []);
+      const chipsHTML = allItems.map((item) => {
+        const v = item.value;
+        const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero';
+        const sign = v > 0 ? '+' : '';
+        return `<span class="saldo-chip ${cls}">${escapeHTML(String(item.label || '').trim())} <b>${sign}${v}</b></span>`;
+      }).join('');
+      el.fichaSaldosMini.innerHTML = chipsHTML;
     }
   }
 

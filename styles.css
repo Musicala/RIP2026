@@ -846,6 +846,112 @@ tr:hover td { background: rgba(26,59,110,.03); }
   .sheet-row .cell:first-child { border-top: none; }
 }
 
+/* ─── Ficha card rediseñada ──────────────────── */
+.ficha-card {
+  background: #fff;
+  border: 1px solid rgba(26,59,110,.13);
+  border-radius: 18px;
+  box-shadow: 0 6px 28px rgba(15,23,42,.07);
+  overflow: hidden;
+}
+
+.ficha-card-header {
+  padding: 20px 24px 16px;
+  background: linear-gradient(135deg, #f0f5ff 0%, #fafbff 100%);
+  border-bottom: 1px solid rgba(26,59,110,.09);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ficha-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ficha-student-name {
+  font-size: 20px;
+  font-weight: 750;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+.ficha-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+.ficha-status-badge::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ficha-status-badge.activo    { background: rgba(5,150,105,.1);  color: #059669; border: 1px solid rgba(5,150,105,.25); }
+.ficha-status-badge.pausa     { background: rgba(217,119,6,.1);   color: #b45309; border: 1px solid rgba(217,119,6,.25); }
+.ficha-status-badge.inactivo  { background: rgba(107,114,128,.1); color: #6b7280; border: 1px solid rgba(107,114,128,.25); }
+
+.ficha-saldos-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ficha-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+}
+
+.ficha-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+  border-right: 1px solid rgba(26,59,110,.08);
+}
+.ficha-stat:last-child { border-right: none; }
+
+.ficha-stat--money .ficha-stat-value {
+  color: #1a3b6e;
+  font-variant-numeric: tabular-nums;
+}
+
+.ficha-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: #8a96a8;
+}
+
+.ficha-stat-value {
+  font-size: 15px;
+  font-weight: 650;
+  color: #1e293b;
+  line-height: 1.3;
+}
+.ficha-stat-value.ficha-stat-small {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 760px) {
+  .ficha-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .ficha-stat { border-right: 1px solid rgba(26,59,110,.08); border-bottom: 1px solid rgba(26,59,110,.08); }
+  .ficha-stat:nth-child(even) { border-right: none; }
+}
+
 /* ─── Saldo chips ────────────────────────────── */
 .saldo-mini { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 
@@ -1459,6 +1565,21 @@ button:focus:not(:focus-visible) { outline: none; }
 .registro-day-row span{color:var(--muted);font-size:12px}
 .kpi-btn.active{box-shadow:inset 0 0 0 2px var(--brand);background:#f7fbff}
 @media (max-width:900px){.registro-calendar-layout{grid-template-columns:1fr}.calendar-day{min-height:42px}}
+
+.inline-ficha-row td{background:#f8fafc;padding:0 16px 16px!important}
+.inline-ficha{border:1px solid var(--bd);border-radius:8px;background:#fff;padding:14px;box-shadow:0 10px 22px rgba(15,23,42,.08)}
+.inline-ficha-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.inline-ficha-head h4{margin:0;font-size:18px;color:var(--ink)}
+.inline-ficha-head p{margin:3px 0 0;color:var(--muted);font-size:13px}
+.inline-ficha-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.inline-ficha-grid div{border:1px solid rgba(15,23,42,.08);border-radius:8px;padding:10px;background:#fbfdff}
+.inline-ficha-grid span{display:block;color:var(--muted);font-size:12px;font-weight:700;margin-bottom:4px}
+.inline-ficha-grid strong{font-size:14px;color:var(--ink)}
+.inline-ficha-recent{display:grid;gap:6px}
+.inline-ficha-recent div{display:grid;grid-template-columns:120px 1fr;gap:10px;padding:7px 0;border-top:1px solid rgba(15,23,42,.07)}
+.inline-ficha-recent strong{color:var(--brand);font-size:13px}
+.inline-ficha-recent span{color:var(--muted);font-size:13px}
+@media (max-width:800px){.inline-ficha-grid{grid-template-columns:1fr}.inline-ficha-recent div{grid-template-columns:1fr}}
 
 .hero-card--clientes { border-color: rgba(236,72,153,.35); }
 .hero-card--clientes:hover { background: rgba(236,72,153,.18); border-color: rgba(236,72,153,.55); }
