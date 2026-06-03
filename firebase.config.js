@@ -6,7 +6,7 @@
     'catalina.medina.leal@gmail.com',
     'alekcaballeromusic@gmail.com',
     'imusicala@gmail.com',
-    'asesormusicala@gmail.com'
+    'musicalaasesor@gmail.com'
   ];
 
   window.RIP_FIREBASE_CONFIG = window.RIP_FIREBASE_CONFIG || {

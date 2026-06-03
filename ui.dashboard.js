@@ -15,6 +15,7 @@
 
   const { escapeHTML, fmtMoney, norm } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
+  let __registroTableHeadHTML = '';
 
   // =========================
   // Base de datos externa
@@ -165,6 +166,25 @@
     });
   }
 
+  function saldoStatusText(s) {
+    return s.finalClasif || s.paramClasif || s.statusText || 'Sin estado';
+  }
+
+  function saldoLastClassDate(ctx, s) {
+    const key = s.key || norm(s.name);
+    const rows = (ctx?.state?.registro || []).filter(r => r.estudianteKey === key);
+    rows.sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
+    const lastClass = rows.find(r => norm(r.tipo) === 'clase');
+    return lastClass?.fecha || lastClass?.fechaRaw || s.lastClassDate || '';
+  }
+
+  function saldoProgramacionText(ctx, s) {
+    const row = (ctx?.state?.prog?.data?.dashboard || []).find(p => norm(p.name) === norm(s.name));
+    if (!row) return 'Sin programacion';
+    if (row.noSchedule) return 'Sin programacion';
+    return `${row.futureCount || 0} futuras${row.nextClassDate ? ' · prox. ' + row.nextClassDate : ''}`;
+  }
+
   // =========================
   // Card HTML
   // =========================
@@ -215,6 +235,44 @@
         el.fichaSub.textContent = 'Selecciona un estudiante para abrir su ficha';
       }
     }
+
+    const isSaldoList = (items || []).some(s => typeof s.saldo === 'number');
+    const tableHead = el.tablaContainer?.querySelector('thead');
+
+    if (isSaldoList) {
+      if (tableHead && !__registroTableHeadHTML) __registroTableHeadHTML = tableHead.innerHTML;
+      if (tableHead) {
+        tableHead.innerHTML = `
+          <tr>
+            <th>Estado</th>
+            <th>Estudiante</th>
+            <th>Saldo pendiente</th>
+            <th>Ultima clase</th>
+            <th>Programacion</th>
+            <th></th>
+          </tr>
+        `;
+      }
+      el.tableBody.innerHTML = (items || []).map((s) => `
+        <tr>
+          <td><span class="pill soft">${escapeHTML(saldoStatusText(s))}</span></td>
+          <td style="font-weight:800">${escapeHTML(s.name)}</td>
+          <td style="font-weight:800">${escapeHTML(`${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`)}</td>
+          <td>${escapeHTML(saldoLastClassDate(ctx, s) || '—')}</td>
+          <td>${escapeHTML(saldoProgramacionText(ctx, s))}</td>
+          <td><button class="btn small primary" type="button" data-skey="${escapeHTML(s.key)}">Abrir</button></td>
+        </tr>
+      `).join('') || `<tr><td colspan="6" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
+      el.tableBody.querySelectorAll('[data-skey]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const skey = btn.getAttribute('data-skey') || '';
+          if (skey) onPickStudent(skey);
+        });
+      });
+      return;
+    }
+
+    if (tableHead && __registroTableHeadHTML) tableHead.innerHTML = __registroTableHeadHTML;
 
     // Renderizar filas (con data-name para BD)
     const rowsHTML = (items || [])
@@ -501,12 +559,18 @@
     });
   }
 
+  function restoreRegistroTableHead(ctx) {
+    const tableHead = ctx?.el?.tablaContainer?.querySelector('thead');
+    if (tableHead && __registroTableHeadHTML) tableHead.innerHTML = __registroTableHeadHTML;
+  }
+
   // =========================
   // Exports
   // =========================
   RIPUI.dashboard = {
     renderDashClas,
     renderDashSaldo,
-    renderStudentList
+    renderStudentList,
+    restoreRegistroTableHead
   };
 })();

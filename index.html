@@ -255,6 +255,30 @@
 
 
   <!-- ─── Dashboard Programación ─── -->
+  <section class="card" id="registroCalendarView" style="display:none">
+    <div class="card-title">
+      <h3>Calendario de registro</h3>
+      <p class="muted" id="registroCalendarSub">Dias pendientes por subir al RIP.</p>
+    </div>
+    <div class="calendar-controls registro-calendar-controls">
+      <button class="btn ghost calendar-nav-btn" id="registroCalPrev" type="button" aria-label="Mes anterior">&#8249;</button>
+      <div class="calendar-nav-title" id="registroCalTitle">Mes actual</div>
+      <button class="btn ghost calendar-nav-btn" id="registroCalNext" type="button" aria-label="Mes siguiente">&#8250;</button>
+    </div>
+    <div class="calendar-legend">
+      <span><i class="legend-dot ok"></i>Subido</span>
+      <span><i class="legend-dot missing"></i>Falta</span>
+      <span><i class="legend-dot skip"></i>No cuenta</span>
+    </div>
+    <div class="registro-calendar-layout">
+      <div id="registroCalendarGrid" class="calendar-year registro-calendar-grid"></div>
+      <div class="registro-day-panel">
+        <h4 id="registroDayTitle">Selecciona un dia</h4>
+        <div id="registroDayBody" class="muted">Veras las clases registradas o si falta subir ese dia.</div>
+      </div>
+    </div>
+  </section>
+
   <section class="card" id="dashboardProgView" style="display:none">
     <div class="card-title">
       <h3>Dashboard de programación</h3>

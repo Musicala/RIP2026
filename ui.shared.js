@@ -172,6 +172,7 @@
       dashboardClasView: $('dashboardClasView'),
       dashboardSaldoView: $('dashboardSaldoView'),
       dashboardProgView: $('dashboardProgView'),
+      registroCalendarView: $('registroCalendarView'),
       fichaView: $('fichaView'),
 
       // Dashboard clasificación
@@ -182,6 +183,13 @@
       // Dashboard saldos
       dashSubSaldo: $('dashSubSaldo'),
       dashGridSaldo: $('dashGridSaldo'),
+      registroCalendarSub: $('registroCalendarSub'),
+      registroCalPrev: $('registroCalPrev'),
+      registroCalNext: $('registroCalNext'),
+      registroCalTitle: $('registroCalTitle'),
+      registroCalendarGrid: $('registroCalendarGrid'),
+      registroDayTitle: $('registroDayTitle'),
+      registroDayBody: $('registroDayBody'),
       dashKpisSaldo: $('dashKpisSaldo'),
 
       // Dashboard programación

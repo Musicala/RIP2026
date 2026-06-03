@@ -61,6 +61,12 @@
     currentStudentName: '',
     currentSearchEntry: null,
     dashMode: 'review',
+    reviewFilter: '',
+    registroCalendar: {
+      year: new Date().getFullYear(),
+      month: new Date().getMonth(),
+      selected: ''
+    },
     historicalIndexReady: false,
 
     prog: {
@@ -74,6 +80,7 @@
   };
 
   const ctx = buildContext();
+  ctx.state = state;
   let syncTimer = null;
   let syncWriteTimer = null;
 
@@ -308,6 +315,7 @@
     hide(ctx.el.dashboardClasView);
     hide(ctx.el.dashboardSaldoView);
     hide(ctx.el.dashboardProgView);
+    hide(ctx.el.registroCalendarView);
     hide(ctx.el.fichaView);
   }
 
@@ -880,12 +888,15 @@
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
     if (state.dashMode === 'prog') show(ctx.el.dashboardProgView);
     if (state.dashMode === 'registro') {
+      RIPUI.dashboard?.restoreRegistroTableHead?.(ctx);
+      show(ctx.el.registroCalendarView);
       show(ctx.el.fichaView);
       hide(ctx.el.programacionStudentView);
       show(ctx.el.tablaContainer);
       hide(ctx.el.fichaSummaryBlock);
       setText(ctx.el.fichaTitle, 'Registro');
       setText(ctx.el.fichaSub, 'Filtra, revisa y edita el registro completo.');
+      renderRegistroCalendar();
     }
     if (state.dashMode === 'kpis') show(ctx.el.dashboardClasView);
 
@@ -893,6 +904,183 @@
     setHeaderTextsByMode(state.dashMode);
 
     hide(ctx.el.btnBackToDash);
+  }
+
+  function toISODate(date) {
+    const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function parseISODate(iso) {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+  }
+
+  function addDays(date, days) {
+    const copy = new Date(date);
+    copy.setDate(copy.getDate() + days);
+    return copy;
+  }
+
+  function isoFromParts(year, month, day) {
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  function nextMonday(year, month, day) {
+    const date = new Date(year, month - 1, day);
+    const offset = (8 - date.getDay()) % 7;
+    return toISODate(addDays(date, offset));
+  }
+
+  function easterDate(year) {
+    const a = year % 19;
+    const b = Math.floor(year / 100);
+    const c = year % 100;
+    const d = Math.floor(b / 4);
+    const e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4);
+    const k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31);
+    const day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(year, month - 1, day);
+  }
+
+  function getColombiaHolidays(year) {
+    const dates = new Set([
+      isoFromParts(year, 1, 1),
+      isoFromParts(year, 5, 1),
+      isoFromParts(year, 7, 20),
+      isoFromParts(year, 8, 7),
+      isoFromParts(year, 12, 8),
+      isoFromParts(year, 12, 25),
+      nextMonday(year, 1, 6),
+      nextMonday(year, 3, 19),
+      nextMonday(year, 6, 29),
+      nextMonday(year, 8, 15),
+      nextMonday(year, 10, 12),
+      nextMonday(year, 11, 1),
+      nextMonday(year, 11, 11)
+    ]);
+    const easter = easterDate(year);
+    [-3, -2, 43, 64, 71].forEach(offset => dates.add(toISODate(addDays(easter, offset))));
+    return dates;
+  }
+
+  function shouldCountRegistroDate(iso, holidays) {
+    const d = parseISODate(iso);
+    return !!d && d.getDay() !== 0 && !holidays.has(iso);
+  }
+
+  function registroClassRowsByDate(iso) {
+    return (state.registro || [])
+      .filter(r => norm(r.tipo) === 'clase' && (r.fecha || r.fechaRaw) === iso)
+      .sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || '')));
+  }
+
+  function renderRegistroDay(iso) {
+    if (!ctx.el.registroDayTitle || !ctx.el.registroDayBody) return;
+    const holidays = getColombiaHolidays(Number(iso.slice(0, 4)));
+    const rows = registroClassRowsByDate(iso);
+    const reason = !shouldCountRegistroDate(iso, holidays)
+      ? (parseISODate(iso)?.getDay() === 0 ? 'domingo no cuenta' : 'festivo no cuenta')
+      : '';
+    ctx.el.registroDayTitle.textContent = new Date(`${iso}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
+    if (rows.length) {
+      ctx.el.registroDayBody.innerHTML = rows.map(r => `
+        <div class="registro-day-row">
+          <strong>${escapeHTML(r.estudiante || '')}</strong>
+          <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' · '))}</span>
+        </div>
+      `).join('');
+      return;
+    }
+    ctx.el.registroDayBody.innerHTML = reason
+      ? `<span class="pill soft">${escapeHTML(reason)}</span>`
+      : `<span class="pill pill-urgency-review">Falta subir clases de este dia</span>`;
+  }
+
+  function renderRegistroCalendar() {
+    const grid = ctx.el.registroCalendarGrid;
+    if (!grid) return;
+    const cal = state.registroCalendar;
+    const year = cal.year;
+    const month = cal.month;
+    const holidays = getColombiaHolidays(year);
+    const todayISO = toISODate(new Date());
+    const monthKey = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const existingDates = new Set((state.registro || [])
+      .filter(r => norm(r.tipo) === 'clase')
+      .map(r => r.fecha || r.fechaRaw)
+      .filter(Boolean));
+    let uploaded = 0;
+    let missing = 0;
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    for (let day = 1; day <= last.getDate(); day++) {
+      const iso = `${monthKey}-${String(day).padStart(2, '0')}`;
+      if (!shouldCountRegistroDate(iso, holidays) || iso > todayISO) continue;
+      if (existingDates.has(iso)) uploaded++;
+      else missing++;
+    }
+    const title = first.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+    setText(ctx.el.registroCalTitle, title.charAt(0).toUpperCase() + title.slice(1));
+    setText(ctx.el.registroCalendarSub, `${uploaded} dias subidos, ${missing} faltan hasta hoy. Domingos y festivos no cuentan.`);
+
+    const firstDay = (first.getDay() + 6) % 7;
+    const total = Math.ceil((firstDay + last.getDate()) / 7) * 7;
+    const days = Array.from({ length: total }, (_, i) => {
+      const day = i - firstDay + 1;
+      const muted = day < 1 || day > last.getDate();
+      const iso = muted ? '' : `${monthKey}-${String(day).padStart(2, '0')}`;
+      const skip = iso && !shouldCountRegistroDate(iso, holidays);
+      const uploadedDay = iso && existingDates.has(iso);
+      const missingDay = iso && iso <= todayISO && !skip && !uploadedDay;
+      const future = iso && iso > todayISO;
+      return `<button type="button" class="calendar-day ${muted ? 'muted' : ''} ${uploadedDay ? 'has-data' : ''} ${missingDay ? 'missing' : ''} ${skip || future ? 'skip' : ''} ${iso === todayISO ? 'today' : ''} ${iso === cal.selected ? 'selected' : ''}" data-registro-day="${escapeHTML(iso)}" ${muted ? 'disabled' : ''}>
+        ${muted ? '' : `<strong>${day}</strong><div>${uploadedDay ? 'Subido' : (skip ? 'No cuenta' : (future ? 'Futuro' : 'Falta'))}</div>`}
+      </button>`;
+    }).join('');
+    grid.innerHTML = `<section class="calendar-month">
+      <div class="calendar-head"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+      <div class="calendar-mini">${days}</div>
+    </section>`;
+    grid.querySelectorAll('[data-registro-day]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const iso = btn.getAttribute('data-registro-day') || '';
+        if (!iso) return;
+        state.registroCalendar.selected = iso;
+        renderRegistroCalendar();
+        renderRegistroDay(iso);
+      });
+    });
+    if (!cal.selected || !cal.selected.startsWith(monthKey)) {
+      cal.selected = todayISO.startsWith(monthKey) ? todayISO : `${monthKey}-01`;
+    }
+    renderRegistroDay(cal.selected);
+  }
+
+  function enrichSaldoList(list) {
+    const progMap = new Map((state.prog?.data?.dashboard || []).map(row => [norm(row.name), row]));
+    return (list || []).map(item => {
+      const key = item.key || norm(item.name);
+      const ficha = RIPCore.getStudentFicha(state.registro || [], key);
+      const prog = progMap.get(norm(item.name)) || null;
+      const lastClass = ficha.rows.find(r => norm(r.tipo) === 'clase');
+      return {
+        ...item,
+        statusText: item.finalClasif || item.paramClasif || 'Sin estado',
+        saldoPendiente: item.saldo,
+        lastClassDate: lastClass?.fecha || lastClass?.fechaRaw || item.lastClass || '',
+        programacionText: prog
+          ? (prog.noSchedule ? 'Sin programacion' : `${prog.futureCount || 0} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`)
+          : 'Sin programacion'
+      };
+    });
   }
 
   function renderReviewToday() {
@@ -907,6 +1095,7 @@
 
     review.slice(0, 20).forEach(s => urgent.push({
       priority: 'Por revisar',
+      filter: 'Por revisar',
       name: s.name,
       key: s.key,
       reason: s.finalClasif || s.paramClasif || '',
@@ -914,6 +1103,7 @@
     }));
     saldos.deben.slice(0, 15).forEach(s => urgent.push({
       priority: 'Saldo rojo',
+      filter: 'Saldo rojo',
       name: s.name,
       key: s.key,
       reason: 'Debe revisar saldo',
@@ -921,6 +1111,7 @@
     }));
     saldos.seAcabo.slice(0, 15).forEach(s => urgent.push({
       priority: 'Saldo en 0',
+      filter: 'En 0',
       name: s.name,
       key: s.key,
       reason: 'Paquete agotado',
@@ -928,6 +1119,7 @@
     }));
     noProg.slice(0, 15).forEach(s => urgent.push({
       priority: 'Sin programacion',
+      filter: 'Sin programacion',
       name: s.name,
       key: norm(s.name),
       reason: 'No tiene fechas futuras',
@@ -935,6 +1127,7 @@
     }));
     lowProg.slice(0, 15).forEach(s => urgent.push({
       priority: 'Pocas futuras',
+      filter: 'Pocas futuras',
       name: s.name,
       key: norm(s.name),
       reason: 'Programacion por completar',
@@ -971,8 +1164,11 @@
       return 'pill-urgency-info';
     };
 
-    ctx.el.reviewTodayBody.innerHTML = urgent.length
-      ? urgent.map((item) => `
+    const activeFilter = state.reviewFilter || '';
+    const visibleUrgent = activeFilter ? urgent.filter(item => item.filter === activeFilter) : urgent;
+
+    ctx.el.reviewTodayBody.innerHTML = visibleUrgent.length
+      ? visibleUrgent.map((item) => `
         <tr class="${urgencyClass(item.priority)}">
           <td><span class="pill ${urgencyPillClass(item.priority)}">${escapeHTML(item.priority)}</span></td>
           <td style="font-weight:700">${escapeHTML(item.name)}</td>
@@ -985,6 +1181,14 @@
 
     ctx.el.reviewTodayBody.querySelectorAll('[data-review-open]').forEach(btn => {
       btn.addEventListener('click', () => openStudentFichaByName(btn.getAttribute('data-review-open') || ''));
+    });
+    ctx.el.reviewKpiGrid?.querySelectorAll('[data-review-filter]').forEach(btn => {
+      const label = btn.getAttribute('data-review-filter') || '';
+      btn.classList.toggle('active', label === activeFilter);
+      btn.addEventListener('click', () => {
+        state.reviewFilter = state.reviewFilter === label ? '' : label;
+        renderReviewToday();
+      });
     });
   }
 
@@ -1611,6 +1815,24 @@
     });
     ctx.el.clientesSearch?.addEventListener('input', renderClientesView);
     ctx.el.btnClientesRefresh?.addEventListener('click', () => loadClientesB2C(true));
+    ctx.el.registroCalPrev?.addEventListener('click', () => {
+      state.registroCalendar.month -= 1;
+      if (state.registroCalendar.month < 0) {
+        state.registroCalendar.month = 11;
+        state.registroCalendar.year -= 1;
+      }
+      state.registroCalendar.selected = '';
+      renderRegistroCalendar();
+    });
+    ctx.el.registroCalNext?.addEventListener('click', () => {
+      state.registroCalendar.month += 1;
+      if (state.registroCalendar.month > 11) {
+        state.registroCalendar.month = 0;
+        state.registroCalendar.year += 1;
+      }
+      state.registroCalendar.selected = '';
+      renderRegistroCalendar();
+    });
 
     // Volver al dashboard desde lista/ficha
     ctx.el.btnBackToDash?.addEventListener('click', () => showDashboard(state.dashMode));
