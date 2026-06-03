@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-<link rel="stylesheet" href="./styles.css?v=2026.8"/>
+<link rel="stylesheet" href="./styles.css?v=2026.progcolors1"/>
 
 </head>
 
@@ -46,10 +46,11 @@
       <button class="btn ghost" id="btnClases">📝 Clases</button>
       <button class="btn ghost" id="btnVerBase">🗄️ Base de datos</button>
       <button class="btn ghost" id="btnRefreshProg">📅 Prog.</button>
+      <button class="btn ghost" id="btnSyncSettings">⚙ Config.</button>
       <button class="btn primary" id="btnRefresh">↻ Actualizar</button>
       <button class="btn ghost" id="btnTop2025" style="display:none">🗂️ 2025</button>
 
-      <span class="pill" id="badgeMode">TSV</span>
+      <span class="pill" id="badgeMode">Firebase</span>
       <span class="pill soft" id="badgeCount">0 registros</span>
 
     </div>
@@ -59,105 +60,180 @@
   <!-- Row 2: Dashboard tabs -->
   <div class="dashTabs-row">
     <div class="dashTabs">
-      <button id="dashTabClas"  class="tab active">📊 Clasificación</button>
-      <button id="dashTabSaldo" class="tab">💰 Saldos</button>
-      <button id="dashTabProg"  class="tab">📅 Programación</button>
+      <button id="viewTabReview" class="tab active">Revisar Hoy</button>
+      <button id="viewTabSearch" class="tab">Buscar</button>
+      <button id="viewTabProg" class="tab">Programación</button>
+      <button id="viewTabSaldo" class="tab">Saldos</button>
+      <button id="viewTabRegistro" class="tab">Registro</button>
+      <button id="viewTabClientes" class="tab">Clientes</button>
+      <button id="viewTabKpis" class="tab">KPIs</button>
     </div>
   </div>
 
   <!-- Row 3: Título dinámico -->
   <div class="dash-heading">
-    <h2 id="dashTitle">Dashboard · Clasificación</h2>
-    <p id="dashSub">Agrupado por Activos / Por revisar / Inactivos. Click para ver lista de estudiantes.</p>
+    <h2 id="dashTitle">Revisar Hoy</h2>
+    <p id="dashSub">Lo urgente primero: por revisar, saldos, programación y registro.</p>
   </div>
 
 </header>
 
 
 <!-- ═══════════════════════════════════════════
+     HERO NAV
+════════════════════════════════════════════ -->
+<section class="hero-nav" id="heroNav">
+  <div class="hero-nav-inner">
+
+    <button class="hero-card hero-card--urgent" data-hero-tab="viewTabReview">
+      <div class="hero-card-icon">🚨</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Revisar Hoy</div>
+        <div class="hero-card-sub">Urgentes por atender</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--search" data-hero-tab="viewTabSearch">
+      <div class="hero-card-icon">🔍</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Buscar</div>
+        <div class="hero-card-sub">Ficha de estudiante</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--prog" data-hero-tab="viewTabProg">
+      <div class="hero-card-icon">📅</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Programación</div>
+        <div class="hero-card-sub">Clases y calendarios</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--saldo" data-hero-tab="viewTabSaldo">
+      <div class="hero-card-icon">💰</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Saldos</div>
+        <div class="hero-card-sub">Deben · Se acabó · A favor</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--registro" data-hero-tab="viewTabRegistro">
+      <div class="hero-card-icon">📋</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Registro</div>
+        <div class="hero-card-sub">Clasificación y tabla</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--clientes" data-hero-tab="viewTabClientes">
+      <div class="hero-card-icon">👥</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Clientes</div>
+        <div class="hero-card-sub">Pagos B2C</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--kpis" data-hero-tab="viewTabKpis">
+      <div class="hero-card-icon">📊</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">KPIs</div>
+        <div class="hero-card-sub">Métricas de negocio</div>
+      </div>
+    </button>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════
      MAIN
 ════════════════════════════════════════════ -->
 <main class="page">
 
-
-  <!-- ─── Filtros ─── -->
-  <section class="card" id="filtersCard">
-
-    <div class="filters-grid">
-
-      <div class="fgrp">
-        <div class="flabel">👤 Estudiante</div>
-        <input id="fStudent" class="fctrl" list="nombresLista"
-               placeholder="Escribe un nombre…" autocomplete="off"/>
-        <datalist id="nombresLista"></datalist>
-      </div>
-
-      <div class="fgrp">
-        <div class="flabel">
-          🎛️ Servicio
-          <span class="fcount" id="fServiceCount">0</span>
-        </div>
-        <div class="multi" id="serviceMulti">
-          <button type="button" class="multi-btn" id="serviceBtn">Selecciona servicio(s) ▾</button>
-          <div class="multi-pop" id="servicePop" aria-hidden="true">
-            <div class="multi-search">
-              <input id="serviceSearch" class="multi-search-input" type="text" placeholder="Buscar servicio..."/>
-              <button class="btn small ghost" id="serviceClear">Limpiar</button>
-            </div>
-            <div class="multi-list" id="serviceList"></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="fgrp">
-        <div class="flabel">🏫 Profesor</div>
-        <select id="fProfesor" class="fctrl">
-          <option value="">Todos</option>
-        </select>
-      </div>
-
-      <div class="fgrp">
-        <div class="flabel">🏷️ Tipo</div>
-        <select id="fTipo" class="fctrl">
-          <option value="">Todos</option>
-          <option value="Clase">Clase</option>
-          <option value="Pago">Pago</option>
-        </select>
-      </div>
-
-      <div class="fgrp">
-        <div class="flabel">📅 Desde</div>
-        <input id="fDesde" class="fctrl" type="date"/>
-      </div>
-
-      <div class="fgrp">
-        <div class="flabel">📅 Hasta</div>
-        <input id="fHasta" class="fctrl" type="date"/>
-      </div>
-
-    </div>
-
-    <div class="filters-actions">
-      <button class="btn primary" id="btnPDFTop">📄 PDF</button>
-      <button class="btn" id="btnApply">♻️ Aplicar</button>
-      <button class="btn ghost" id="btnReset">🧼 Limpiar</button>
-      <span class="status" id="status">Cargando…</span>
-    </div>
-
+  <section class="tabs">
+    <div class="tabs-spacer"></div>
+    <button class="btn small ghost" id="btnBackToDash" title="Volver" style="display:none">← Volver</button>
   </section>
 
+  <section class="card" id="reviewTodayView">
+    <div class="card-title">
+      <h3>Revisar Hoy</h3>
+      <p class="muted">Prioridades operativas organizadas para revisar una por una.</p>
+    </div>
+    <div class="kpis-3" id="reviewKpiGrid"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Prioridad</th>
+            <th>Estudiante</th>
+            <th>Motivo</th>
+            <th>Tiempo / saldo</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="reviewTodayBody">
+          <tr><td colspan="5" class="empty-td">Cargando pendientes...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
 
-  <!-- ─── Tabs vista ─── -->
-  <section class="tabs">
-    <button class="tab active" id="tabClas">Estudiantes · Clasificación</button>
-    <button class="tab" id="tabSaldos">Saldos</button>
-    <button class="tab" id="tabProg">Programación</button>
-    <div class="tabs-spacer"></div>
-    <button class="btn small ghost" id="btnBackToDash" title="Volver a dashboard" style="display:none">← Volver</button>
+  <section class="card" id="searchView" style="display:none">
+    <div class="card-title">
+      <h3>Buscar estudiante</h3>
+      <p class="muted">Para responder rápido por clases, saldo, paquete y programación.</p>
+    </div>
+    <div class="fgrp fgrp-student">
+      <div class="flabel">👤 Estudiante</div>
+      <input id="quickStudentSearch" class="fctrl" list="nombresLista"
+             placeholder="Escribe un nombre..." autocomplete="off"/>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnQuickSearch">Abrir ficha</button>
+      <span class="status" id="quickSearchStatus">Busca por nombre.</span>
+    </div>
   </section>
 
 
   <!-- ─── Dashboard Clasificación ─── -->
+  <section class="card" id="clientesView" style="display:none">
+    <div class="card-title">
+      <h3>Clientes / pagos B2C</h3>
+      <p class="muted">Transacciones completas del registro de pagos en Firestore.</p>
+    </div>
+    <div class="filters-grid">
+      <div class="fgrp fgrp-student">
+        <div class="flabel">Cliente, estudiante o servicio</div>
+        <input id="clientesSearch" class="fctrl"
+               placeholder="Buscar en pagos..." autocomplete="off"/>
+      </div>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnClientesRefresh">Actualizar clientes</button>
+      <span class="status" id="clientesStatus">Cargando pagos...</span>
+    </div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Usuarios</th>
+            <th>Servicios</th>
+            <th>Total</th>
+            <th>Medio</th>
+            <th>Ajustes</th>
+            <th>FEVM</th>
+            <th>ID</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="clientesBody">
+          <tr><td colspan="9" class="empty-td">Cargando pagos...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <section class="card" id="dashboardClasView">
     <div class="card-title">
       <h3 id="dashClasTitle">Dashboard de estudiantes</h3>
@@ -207,8 +283,8 @@
             <th>Estudiante</th>
             <th>Estado</th>
             <th>Próxima</th>
+            <th>Programadas</th>
             <th>Futuras</th>
-            <th>Alertas</th>
             <th></th>
           </tr>
         </thead>
@@ -295,6 +371,72 @@
 
     </section>
 
+    <!-- Filtros registro -->
+    <section class="card" id="filtersCard">
+
+      <div class="fgrp fgrp-student">
+        <div class="flabel">👤 Estudiante</div>
+        <input id="fStudent" class="fctrl" list="nombresLista"
+               placeholder="Escribe un nombre…" autocomplete="off"/>
+        <datalist id="nombresLista"></datalist>
+      </div>
+
+      <div class="filters-grid">
+
+        <div class="fgrp">
+          <div class="flabel">
+            🎛️ Servicio
+            <span class="fcount" id="fServiceCount">0</span>
+          </div>
+          <div class="multi" id="serviceMulti">
+            <button type="button" class="multi-btn" id="serviceBtn">Selecciona servicio(s) ▾</button>
+            <div class="multi-pop" id="servicePop" aria-hidden="true">
+              <div class="multi-search">
+                <input id="serviceSearch" class="multi-search-input" type="text" placeholder="Buscar servicio..."/>
+                <button class="btn small ghost" id="serviceClear">Limpiar</button>
+              </div>
+              <div class="multi-list" id="serviceList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">🏫 Profesor</div>
+          <select id="fProfesor" class="fctrl">
+            <option value="">Todos</option>
+          </select>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">🏷️ Tipo</div>
+          <select id="fTipo" class="fctrl">
+            <option value="">Todos</option>
+            <option value="Clase">Clase</option>
+            <option value="Pago">Pago</option>
+          </select>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">📅 Desde</div>
+          <input id="fDesde" class="fctrl" type="date"/>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">📅 Hasta</div>
+          <input id="fHasta" class="fctrl" type="date"/>
+        </div>
+
+      </div>
+
+      <div class="filters-actions">
+        <button class="btn primary" id="btnPDFTop">📄 PDF</button>
+        <button class="btn" id="btnApply">♻️ Aplicar</button>
+        <button class="btn ghost" id="btnReset">🧼 Limpiar</button>
+        <span class="status" id="status">Cargando…</span>
+      </div>
+
+    </section>
+
     <!-- Tabla RIP -->
     <div class="table-wrap" id="tablaContainer">
       <table class="tbl">
@@ -318,7 +460,6 @@
     </div>
 
     <div class="ficha-actions">
-      <button class="btn ghost" id="btn2025" style="display:none">🗂️ 2025</button>
       <button class="btn" id="btnOpenMainFicha">🧾 Ficha principal</button>
       <button class="btn ghost" id="btnOpenMoreInfo">🔗 Más info</button>
       <button class="btn" id="btnFichaEditMode">✏️ Modo edición</button>
@@ -340,17 +481,32 @@
 <!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="./firebase.config.js?v=2026.firebase"></script>
+<script src="./rip.calculations.js?v=2026.progcomplete1"></script>
+<script src="./firebase.auth.js?v=2026.firebase"></script>
+<script src="./rip.repository.js?v=2026.clientesedit1"></script>
+<script src="./rip.core.js?v=2026.reviewlastclass1"></script>
+<script src="./ui.shared.js?v=2026.clientes1"></script>
+<script src="./ui.dashboard.js?v=2026.reviewlastclass1"></script>
+<script src="./ui.ficha.js?v=2026.cycles2"></script>
+<script src="./ui.table.js?v=2026.9"></script>
+<script src="./rip.programacion.js?v=2026.progcomplete1"></script>
+<script src="./app.js?v=2026.clientesedit1"></script>
+<script src="./rip.sync.js?v=2026.sync1"></script>
+<script src="./ui.editor.js?v=2026.firebase"></script>
 <script>
-  window.RIP_EDITOR_API_URL = "https://script.google.com/macros/s/AKfycby2Pw3c4Q8Sr-mB4g5OT6wlC9ig73OkRwKh2Pqw8FHH6zqkAMyz5SC6wiOcUPLfD2-RuQ/exec";
-  window.RIP_EDITOR_TOKEN = "MUSICALA-EDITOR-2026";
+(function(){
+  document.querySelectorAll('[data-hero-tab]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var tabId = btn.getAttribute('data-hero-tab');
+      var tab = document.getElementById(tabId);
+      if(tab){ tab.click(); }
+      document.getElementById('heroNav').scrollIntoView({behavior:'smooth',block:'start'});
+      window.scrollBy(0, -200);
+    });
+  });
+})();
 </script>
-<script src="./rip.core.js?v=2026.8"></script>
-<script src="./ui.shared.js?v=2026.8"></script>
-<script src="./ui.dashboard.js?v=2026.8"></script>
-<script src="./ui.ficha.js?v=2026.8"></script>
-<script src="./ui.table.js?v=2026.8"></script>
-<script src="./rip.programacion.js?v=2026.8"></script>
-<script src="./app.js?v=2026.8"></script>
 
 </body>
 </html>

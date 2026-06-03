@@ -11,8 +11,8 @@
   'use strict';
 
   const RIPProgramacion = {};
-  const API_URL = 'https://script.google.com/macros/s/AKfycbyJaPrhQ-Ve09EQM6DjYMjaVDsugHIBVPqvKecxH_eepSoO0O5rHG3FkyyJyKRSVVhjjQ/exec';
-  const API_TOKEN = 'MUSICALA-PROGRAMACION-2026';
+  const API_URL = '';
+  const API_TOKEN = '';
   const MAX_CLASSES = 24;
   const DEFAULT_CLASS_LIMIT = 24;
   const SESSION_PREFIX = 'rip_prog_schedule_';
@@ -40,10 +40,44 @@
   }
 
   function isPagoRow(r) {
-    const tipo = String(r?.tipo || '').trim().toLowerCase();
+    const tipo = norm(r?.tipo);
     if (tipo === 'pago') return true;
     if (tipo === 'clase') return false;
     return !!String(r?.pago || '').trim();
+  }
+
+  function parsePackageSize(row) {
+    const mov = Math.abs(Number(row?.movimiento) || 0);
+    if (mov > 0 && mov <= MAX_CLASSES) return mov;
+    return 0;
+  }
+
+  function normalizePackageKey(value) {
+    const key = norm(value || 'sin-clasificacion');
+    if (key === 'pago') return '*';
+    if (key === 'ms sp') return 'ms g';
+    return key;
+  }
+
+  function getPackageKey(row) {
+    const value = isPagoRow(row) ? row?.clasifPago : row?.clasif;
+    return normalizePackageKey(value);
+  }
+
+  function isMatriculaPago(row) {
+    return isPagoRow(row) && norm(`${row?.servicio || ''} ${row?.clasifPago || ''} ${row?.clasif || ''}`).includes('matricula');
+  }
+
+  function getChronoRows(rows) {
+    return [...(rows || [])].sort((a, b) => {
+      const ta = Number(a?.fechaTs) || 0;
+      const tb = Number(b?.fechaTs) || 0;
+      if (ta !== tb) return ta - tb;
+      const pa = isPagoRow(a) ? 0 : 1;
+      const pb = isPagoRow(b) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return String(a?.fecha || a?.fechaRaw || '').localeCompare(String(b?.fecha || b?.fechaRaw || ''));
+    });
   }
 
   function getStudentClassLimit(state, studentName) {
@@ -51,19 +85,59 @@
     const key = norm(studentName);
     if (!key || !all.length) return DEFAULT_CLASS_LIMIT;
 
-    const rows = all
-      .filter(r => norm(r?.estudiante) === key || norm(r?.estudianteKey) === key)
-      .sort((a, b) => (Number(b?.fechaTs) || 0) - (Number(a?.fechaTs) || 0));
+    const rows = getChronoRows(all.filter(r => norm(r?.estudiante) === key || norm(r?.estudianteKey) === key));
+    let lastPackageTotal = 0;
+    const activeByKey = new Map();
+    const pendingPackagesByKey = new Map();
+    const getQueue = (map, packageKey) => {
+      if (!map.has(packageKey)) map.set(packageKey, []);
+      return map.get(packageKey);
+    };
 
-    const lastPago = rows.find(isPagoRow);
-    if (!lastPago) return DEFAULT_CLASS_LIMIT;
+    const makePackage = (total) => ({ total, remaining: total });
+    const consume = (pack) => {
+      if (!pack) return;
+      pack.remaining = Math.max(0, pack.remaining - 1);
+    };
 
-    const mov = Math.abs(Number(lastPago?.movimiento) || 0);
-    if (mov > 0) return Math.min(MAX_CLASSES, mov);
+    for (const row of rows) {
+      const mov = Number(row?.movimiento) || 0;
+      const packageKey = getPackageKey(row);
+      if (!isMatriculaPago(row) && isPagoRow(row) && mov > 0) {
+        const total = parsePackageSize(row);
+        if (!total) continue;
+        lastPackageTotal = total;
+        const pack = makePackage(total);
+        const active = activeByKey.get(packageKey);
+        if (active && active.remaining > 0) getQueue(pendingPackagesByKey, packageKey).push(pack);
+        else activeByKey.set(packageKey, pack);
+        continue;
+      }
 
-    const pagoText = String(lastPago?.pago || '');
-    const n = Number((pagoText.match(/\d+/) || [])[0] || 0);
-    return n > 0 ? Math.min(MAX_CLASSES, n) : DEFAULT_CLASS_LIMIT;
+      if (norm(row?.tipo) !== 'clase' || mov >= 0) continue;
+      let activeKey = packageKey;
+      let active = activeByKey.get(activeKey) || activeByKey.get('*') || null;
+      if (!active && pendingPackagesByKey.has(packageKey)) {
+        active = getQueue(pendingPackagesByKey, packageKey).shift() || null;
+        activeKey = packageKey;
+        if (active) activeByKey.set(activeKey, active);
+      }
+      if (!active && pendingPackagesByKey.has('*')) {
+        active = getQueue(pendingPackagesByKey, '*').shift() || null;
+        activeKey = '*';
+        if (active) activeByKey.set(activeKey, active);
+      }
+      if (!active) continue;
+      consume(active);
+      if (active.remaining <= 0) {
+        const next = getQueue(pendingPackagesByKey, activeKey).shift() || null;
+        if (next) activeByKey.set(activeKey, next);
+        else activeByKey.delete(activeKey);
+      }
+    }
+
+    const activeTotals = Array.from(activeByKey.values()).filter(p => p.remaining > 0).map(p => p.total);
+    return activeTotals[activeTotals.length - 1] || lastPackageTotal || DEFAULT_CLASS_LIMIT;
   }
 
   function setText(el, value) {
@@ -114,12 +188,13 @@
     return arr
       .map(v => String(v || '').trim())
       .filter(Boolean)
+      .sort()
       .slice(0, limit);
   }
 
   function fillToMax(arr, limit = MAX_CLASSES) {
     const out = Array.isArray(arr)
-      ? arr.map(v => String(v || '').trim()).slice(0, limit)
+      ? arr.map(v => String(v || '').trim()).filter(Boolean).sort().slice(0, limit)
       : [];
 
     while (out.length < limit) out.push('');
@@ -140,32 +215,30 @@
   function getAlertHTML(row) {
     if (!row) return '<span class="tag">—</span>';
     if (row.noSchedule) return `<span class="tag danger">Sin programación</span>`;
-    if (row.lowFuture) return `<span class="tag warn">Pocas futuras</span>`;
-    return `<span class="tag ok">OK</span>`;
+    if (row.lowFuture) return `<span class="tag warn">Por completar</span>`;
+    return `<span class="tag ok">OK completo</span>`;
   }
 
   function getAlertText(row) {
     if (!row) return '—';
     if (row.noSchedule) return 'Sin programación';
-    if (row.lowFuture) return 'Pocas futuras';
+    if (row.lowFuture) return 'Por completar';
     return 'OK';
   }
 
-  function getAlertTextFromSchedule(fechas, today) {
+  function getAlertTextFromSchedule(fechas, today, limit = MAX_CLASSES) {
     const clean = normalizeFechas(fechas);
     if (!clean.length) return 'Sin programación';
 
-    const { futureCount } = getFutureStats(clean, today);
-    if (futureCount === 0) return 'Sin programación';
-    if (futureCount < 2) return 'Pocas futuras';
+    if (clean.length < (Number(limit) || MAX_CLASSES)) return 'Por completar';
     return 'OK';
   }
 
-  function getGroupedRows(rows = [], limit = MAX_CLASSES) {
+  function getGroupedRows(rows = []) {
     return {
       none: rows.filter(r => (r.filled || 0) === 0),
-      partial: rows.filter(r => (r.filled || 0) > 0 && (r.filled || 0) < limit),
-      complete: rows.filter(r => (r.filled || 0) >= limit)
+      partial: rows.filter(r => (r.filled || 0) > 0 && (r.filled || 0) < (Number(r.limit) || MAX_CLASSES)),
+      complete: rows.filter(r => (r.filled || 0) >= (Number(r.limit) || MAX_CLASSES))
     };
   }
 
@@ -242,6 +315,27 @@
   }
 
   function apiCall(params = {}) {
+    if (window.RIPRepository) {
+      if (params.action === 'getAllData') {
+        return RIPProgramacion.loadResumen();
+      }
+      if (params.action === 'getSchedule') {
+        return window.RIPRepository.loadStudentSchedule(params.student)
+          .then(res => ({ ok: true, fechas: res.fechas || [], row: res }));
+      }
+      if (params.action === 'saveSchedule') {
+        let dates = [];
+        try { dates = JSON.parse(params.dates || '[]'); } catch (_) { dates = []; }
+        return window.RIPRepository.saveSchedule(params.student, dates)
+          .then(res => ({ ok: true, fechas: res.fechas || [] }));
+      }
+      if (params.action === 'saveScheduleFrom') {
+        let dates = [];
+        try { dates = JSON.parse(params.dates || '[]'); } catch (_) { dates = []; }
+        return window.RIPRepository.saveScheduleFrom(params.student, Number(params.startIndex) || 0, dates)
+          .then(res => ({ ok: true, fechas: res.fechas || [] }));
+      }
+    }
     return new Promise((resolve, reject) => {
       const callbackName = '__jsonp_' + Math.random().toString(36).slice(2);
       const script = document.createElement('script');
@@ -423,7 +517,7 @@
       const merged = fillToMax(currentArr);
       merged[index] = newVal || '';
 
-      const cleanDates = merged.map(v => v || '');
+      const cleanDates = merged.slice(0, getStudentClassLimit(state, studentName)).map(v => v || '');
 
       const res = await apiCall({
         action: 'saveSchedule',
@@ -534,7 +628,7 @@
   RIPProgramacion.renderKpis = function (ctx, state, onOpenList, onOpenStudent) {
     const data = state?.prog?.data;
     const rows = data?.dashboard || [];
-    const grouped = getGroupedRows(rows, MAX_CLASSES);
+    const grouped = getGroupedRows(rows);
 
     state.prog.onOpenList = onOpenList || null;
     state.prog.onOpenStudent = onOpenStudent || null;
@@ -569,12 +663,12 @@
       `;
     } else {
       ctx.el.progTableBody.innerHTML = filtered.map(r => `
-        <tr>
+        <tr class="prog-row ${r.noSchedule ? 'prog-row-none' : r.lowFuture ? 'prog-row-partial' : 'prog-row-complete'}">
           <td>${escapeHTML(r.name)}</td>
-          <td>${escapeHTML(r.estado || '')}</td>
-          <td>${escapeHTML(r.nextISO || '-')}</td>
-          <td>${r.futureCount ?? 0}</td>
           <td>${getAlertHTML(r)}</td>
+          <td>${escapeHTML(r.nextISO || '-')}</td>
+          <td>${escapeHTML(`${r.filled || 0}/${r.limit || MAX_CLASSES}`)}</td>
+          <td>${escapeHTML(`${r.futureCount ?? 0} futuras`)}</td>
           <td><button class="btn small" type="button" data-prog-open="${escapeHTML(r.name)}">Ver</button></td>
         </tr>
       `).join('');
@@ -877,7 +971,7 @@
           action: 'saveSchedule',
           token: API_TOKEN,
           student: studentName,
-          dates: JSON.stringify(dates)
+        dates: JSON.stringify(dates.slice(0, classLimit))
         });
 
         if (!res?.ok) {
@@ -885,7 +979,7 @@
           return;
         }
 
-        cacheSchedule(state, studentName, dates);
+        cacheSchedule(state, studentName, dates.slice(0, classLimit));
 
         setStatus(res.message || 'Programación guardada.', 'ok');
         await syncStudentInfoAfterSave(ctx, state, studentName);
@@ -1123,7 +1217,7 @@
           token: API_TOKEN,
           student: studentName,
           startIndex,
-          dates: JSON.stringify(preview)
+          dates: JSON.stringify(preview.slice(0, classLimit))
         });
 
         if (!res?.ok) {
@@ -1170,6 +1264,72 @@
     }
 
     renderProgramar(ctx, state, name);
+  };
+
+  // Firebase adapter: replaces the old Apps Script/JSONP data source while keeping
+  // the public RIPProgramacion API used by app.js and ui.ficha.js.
+  RIPProgramacion.loadResumen = async function () {
+    const [programacion, students, registro] = await Promise.all([
+      window.RIPRepository.loadProgramacion(),
+      window.RIPRepository.loadStudents(),
+      window.RIPRepository.loadRegistro()
+    ]);
+    const calc = window.RIPCalculations;
+    const today = todayISO();
+    const studentMap = new Map();
+    (students || []).forEach(s => {
+      const key = s.nameKey || norm(s.name);
+      if (key) studentMap.set(key, s.name || key);
+    });
+    (programacion || []).forEach(p => {
+      const key = p.estudianteKey || p.studentId || norm(p.estudiante);
+      if (key && !studentMap.has(key)) studentMap.set(key, p.estudiante || key);
+    });
+    const bySchedule = new Map((programacion || []).map(p => [p.estudianteKey || p.studentId || norm(p.estudiante), p]));
+    const rowsByStudent = new Map();
+    (registro || []).forEach(row => {
+      const key = row?.estudianteKey || norm(row?.estudiante);
+      if (!key) return;
+      if (!rowsByStudent.has(key)) rowsByStudent.set(key, []);
+      rowsByStudent.get(key).push(row);
+      if (!studentMap.has(key)) studentMap.set(key, row.estudiante || key);
+    });
+    const dashboard = Array.from(studentMap.entries()).map(([key, name]) => {
+      const sch = bySchedule.get(key) || {};
+      const fechas = normalizeFechas(sch.fechas || []);
+      const limit = calc?.getStudentClassLimit ? calc.getStudentClassLimit(rowsByStudent.get(key) || []) : MAX_CLASSES;
+      const st = calc.calculateProgramacionStatus(fechas, today, limit);
+      return {
+        name,
+        estado: st.status,
+        fechas,
+        filled: fechas.length,
+        limit,
+        nextISO: st.nextClassDate || '',
+        futureCount: st.futureCount || 0,
+        noSchedule: st.status === 'Sin programacion' || st.status === 'Sin programación',
+        lowFuture: st.status === 'Pocas futuras' || st.status === 'Por completar',
+        complete: st.status === 'OK'
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    return { ok: true, today, dashboard };
+  };
+
+  const firebaseLoadStudentSchedule = async function (studentName) {
+    const res = await window.RIPRepository.loadStudentSchedule(studentName);
+    return { ok: true, fechas: res.fechas || [], row: res };
+  };
+
+  const firebaseSaveSchedule = async function (studentName, fechas) {
+    const saved = await window.RIPRepository.saveSchedule(studentName, fechas);
+    return { ok: true, fechas: saved.fechas || [] };
+  };
+
+  const oldAttachStudent = RIPProgramacion.attachStudent;
+  RIPProgramacion.attachStudent = async function (ctx, state, studentName, opts = {}) {
+    if (!state.prog) state.prog = {};
+    if (!state.prog.data) state.prog.data = await RIPProgramacion.loadResumen();
+    return oldAttachStudent(ctx, state, studentName, opts);
   };
 
   window.RIPProgramacion = RIPProgramacion;

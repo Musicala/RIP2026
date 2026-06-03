@@ -13,8 +13,99 @@
     return;
   }
 
-  const { escapeHTML, fmtMoney } = window.RIPUI.shared;
+  const { escapeHTML, fmtMoney, norm } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
+
+  // =========================
+  // Base de datos externa
+  // =========================
+  const BD_URL = 'https://musicala.github.io/basededatosmusicala/';
+  let __bdData = null;      // null = no cargado, Array = cargado
+  let __bdLoading = false;
+
+  async function fetchBDData() {
+    if (__bdData !== null) return __bdData;
+    if (__bdLoading) {
+      // espera a que termine la carga en curso
+      return new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (!__bdLoading) { clearInterval(check); resolve(__bdData || []); }
+        }, 120);
+      });
+    }
+    __bdLoading = true;
+    try {
+      // Intento 1: data.json
+      let res = await fetch(BD_URL + 'data.json', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        __bdData = Array.isArray(json) ? json : (json.data || json.estudiantes || json.records || []);
+        return __bdData;
+      }
+    } catch (_) {}
+    try {
+      // Intento 2: estudiantes.json
+      const res = await fetch(BD_URL + 'estudiantes.json', { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        __bdData = Array.isArray(json) ? json : [];
+        return __bdData;
+      }
+    } catch (_) {}
+    // No se pudo obtener datos estructurados → array vacío (se mostrará link directo)
+    __bdData = [];
+    return __bdData;
+  }
+
+  function findInBD(bdData, studentName) {
+    if (!bdData || !bdData.length) return null;
+    const target = norm(studentName);
+    return bdData.find(r => {
+      const n = norm(
+        r.nombre || r.name || r.estudiante || r.Nombre || r.Estudiante || ''
+      );
+      return n === target || (n && target && (n.includes(target) || target.includes(n)));
+    }) || null;
+  }
+
+  function getBDStatusFromRecord(r) {
+    if (!r) return null;
+    const keys = Object.keys(r);
+    // Detectar campo de contacto
+    const contactKey = keys.find(k => /contact|contacta|llam|whats/i.test(k));
+    const stepKey    = keys.find(k => /paso|step|etapa|estado|estatus|fase/i.test(k));
+    const noteKey    = keys.find(k => /nota|note|comment|observ/i.test(k));
+    return {
+      contacto: contactKey ? String(r[contactKey] || '—').trim() : '—',
+      paso:     stepKey    ? String(r[stepKey]    || '—').trim() : '—',
+      nota:     noteKey    ? String(r[noteKey]    || '').trim()  : ''
+    };
+  }
+
+  function openBDModal(studentName) {
+    const prev = document.getElementById('ripBDModal');
+    if (prev) prev.remove();
+
+    const url = `${BD_URL}?buscar=${encodeURIComponent(studentName)}&search=${encodeURIComponent(studentName)}`;
+
+    const modal = document.createElement('div');
+    modal.id = 'ripBDModal';
+    modal.className = 'bd-iframe-modal';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="bd-iframe-box">
+        <div class="bd-iframe-head">
+          <span class="bd-iframe-title">🗄️ Base de datos · ${escapeHTML(studentName)}</span>
+          <button class="rip-modal-close" type="button">×</button>
+        </div>
+        <iframe class="bd-iframe-frame" src="${escapeHTML(url)}" sandbox="allow-scripts allow-same-origin allow-forms" loading="lazy"></iframe>
+      </div>
+    `;
+    const close = () => modal.remove();
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    document.body.appendChild(modal);
+  }
 
   // =========================
   // Helpers: normalización de estados "Por revisar"
@@ -57,6 +148,23 @@
     return 'info';
   }
 
+  function daysSinceValue(student) {
+    const n = Number(student?.daysSinceLastClass);
+    return Number.isFinite(n) ? n : -1;
+  }
+
+  function sortByReviewTime(items) {
+    return [...(items || [])].sort((a, b) => {
+      const da = daysSinceValue(a);
+      const db = daysSinceValue(b);
+      if (da !== db) return db - da;
+      const ta = Number(a?.lastClassTs) || 0;
+      const tb = Number(b?.lastClassTs) || 0;
+      if (ta !== tb) return ta - tb;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'es');
+    });
+  }
+
   // =========================
   // Card HTML
   // =========================
@@ -75,8 +183,9 @@
 
   // =========================
   // Render lista intermedia (SIN destruir la tabla)
+  // bdEligible = true → muestra botón "Base de datos" para inactivos/pausa
   // =========================
-  function renderStudentList(ctx, title, items, onPickStudent) {
+  function renderStudentList(ctx, title, items, onPickStudent, { bdEligible = false } = {}) {
     const { el } = ctx;
     if (!el.fichaView || !el.tableBody) return;
 
@@ -86,8 +195,6 @@
     if (el.btnBackToDash) el.btnBackToDash.style.display = '';
 
     if (el.fichaTitle) el.fichaTitle.textContent = title;
-    if (el.fichaSub)   el.fichaSub.textContent   = 'Selecciona un estudiante para abrir su ficha';
-
     if (el.fichaStudent)   el.fichaStudent.textContent  = '—';
     if (el.fichaFecha)     el.fichaFecha.textContent     = '—';
     if (el.fichaUltPago)   el.fichaUltPago.textContent   = '—';
@@ -97,12 +204,28 @@
     if (el.btnPDF)       el.btnPDF.style.display       = 'none';
     if (el.btnVolverDash) el.btnVolverDash.style.display = 'none';
 
+    // Sub-texto: con o sin botón BD
+    if (el.fichaSub) {
+      if (bdEligible) {
+        el.fichaSub.innerHTML =
+          `Selecciona un estudiante para abrir su ficha &nbsp;·&nbsp; ` +
+          `<button type="button" id="btnCargarBD" class="btn small ghost" style="vertical-align:middle;">` +
+          `🗄️ Cargar base de datos</button>`;
+      } else {
+        el.fichaSub.textContent = 'Selecciona un estudiante para abrir su ficha';
+      }
+    }
+
+    // Renderizar filas (con data-name para BD)
     const rowsHTML = (items || [])
       .map((s) => {
+        const days = daysSinceValue(s);
         const badge =
           typeof s.saldo === 'number'
             ? `${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`
-            : (s.paramClasif || '');
+            : days >= 0
+              ? `${days} dias · ${s.finalClasif || s.paramClasif || ''}`
+              : (s.finalClasif || s.paramClasif || '');
 
         return `
           <tr>
@@ -110,6 +233,7 @@
               <button type="button"
                 class="student-row"
                 data-skey="${escapeHTML(s.key)}"
+                data-sname="${escapeHTML(s.name)}"
                 style="
                   width:100%; display:flex; align-items:center;
                   justify-content:space-between; gap:12px;
@@ -117,7 +241,10 @@
                   cursor:pointer; font-weight:800;
                 ">
                 <span>${escapeHTML(s.name)}</span>
-                <span class="pill soft">${escapeHTML(badge)}</span>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${bdEligible ? `<span class="bd-badge" data-bd-name="${escapeHTML(s.name)}">BD</span>` : ''}
+                  <span class="pill soft">${escapeHTML(badge)}</span>
+                </div>
               </button>
             </td>
           </tr>
@@ -128,12 +255,68 @@
     el.tableBody.innerHTML =
       rowsHTML || `<tr><td colspan="12" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
 
+    // Listener: abrir ficha
     el.fichaView.querySelectorAll('.student-row').forEach((btn) => {
       btn.addEventListener('click', () => {
         const skey = btn.getAttribute('data-skey') || '';
         if (skey) onPickStudent(skey);
       });
     });
+
+    // Listener: cargar BD
+    if (bdEligible) {
+      const btnBD = document.getElementById('btnCargarBD');
+      if (btnBD) {
+        btnBD.addEventListener('click', async () => {
+          btnBD.disabled = true;
+          btnBD.textContent = '⏳ Cargando BD…';
+          const data = await fetchBDData();
+          btnBD.textContent = data.length
+            ? `🗄️ BD cargada (${data.length} registros)`
+            : '🗄️ BD (sin datos estructurados — click por estudiante)';
+          btnBD.disabled = false;
+
+          // Actualizar badges
+          el.fichaView.querySelectorAll('.bd-badge[data-bd-name]').forEach((badge) => {
+            const name = badge.getAttribute('data-bd-name') || '';
+            if (!name) return;
+
+            if (!data.length) {
+              // Sin datos: muestra botón para abrir en ventana
+              badge.textContent = '🔗 Ver';
+              badge.classList.add('bd-info');
+              badge.style.cursor = 'pointer';
+              badge.title = 'Abrir en base de datos';
+              badge.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openBDModal(name);
+              }, { once: true });
+              return;
+            }
+
+            const rec = findInBD(data, name);
+            if (!rec) {
+              badge.textContent = '—';
+              badge.title = 'No encontrado en BD';
+              return;
+            }
+
+            const status = getBDStatusFromRecord(rec);
+            badge.textContent = status.paso !== '—' ? `Paso: ${status.paso}` : '✓ En BD';
+            badge.title = `Contacto: ${status.contacto} | Paso: ${status.paso}${status.nota ? ' | ' + status.nota : ''}`;
+            badge.classList.add(
+              status.contacto && status.contacto !== '—' && status.contacto !== 'No' ? 'bd-ok' : 'bd-warn'
+            );
+            // Click: abrir modal con iframe como detalle
+            badge.style.cursor = 'pointer';
+            badge.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openBDModal(name);
+            }, { once: true });
+          });
+        });
+      }
+    }
   }
 
   // =========================
@@ -145,19 +328,26 @@
     if (!el.dashGridClas) return;
 
     const groups = RIPCore.buildClasificacionDashboard(students);
+    groups.porRevisar = sortByReviewTime(groups.porRevisar);
 
     // ── Sub-grupos para "Por revisar" ──────────────────────────────────────────
     // Agrupa por sub-estado para tarjetas individuales
     const subGroups = new Map(); // label -> [students]
     for (const s of groups.porRevisar) {
-      const label = getPorRevisarSubLabel(s.paramClasif);
+      const label = getPorRevisarSubLabel(s.finalClasif || s.paramClasif);
       if (!subGroups.has(label)) subGroups.set(label, []);
       subGroups.get(label).push(s);
     }
+    subGroups.forEach((items, label) => subGroups.set(label, sortByReviewTime(items)));
 
-    // Ordenar: primero los de mayor cantidad
+    // Ordenar: primero el grupo mas urgente por tiempo, luego cantidad
     const subGroupsSorted = Array.from(subGroups.entries())
-      .sort((a, b) => b[1].length - a[1].length);
+      .sort((a, b) => {
+        const maxA = daysSinceValue(a[1][0]);
+        const maxB = daysSinceValue(b[1][0]);
+        if (maxA !== maxB) return maxB - maxA;
+        return b[1].length - a[1].length;
+      });
 
     // ── HTML de tarjetas ───────────────────────────────────────────────────────
     let html = '';
@@ -228,22 +418,23 @@
         const t = c.getAttribute('data-title') || '';
 
         if (t === 'Activos netos') {
-          onOpenList('Activos netos', groups.activosNetos);
+          onOpenList('Activos netos', groups.activosNetos, { bdEligible: false });
           return;
         }
         if (t === 'Por revisar (total)') {
-          onOpenList('Por revisar (todos)', groups.porRevisar);
+          onOpenList('Por revisar (todos por tiempo)', groups.porRevisar, { bdEligible: true });
           return;
         }
         if (t === 'Inactivos') {
-          onOpenList('Inactivos', groups.inactivos);
+          onOpenList('Inactivos', groups.inactivos, { bdEligible: true });
           return;
         }
 
         // Sub-estados de "Por revisar"
         const subItems = subGroups.get(t);
         if (subItems) {
-          onOpenList(`Por revisar · ${t}`, subItems);
+          const isEnPausa = t.toLowerCase().includes('pausa') || t.toLowerCase().includes('registro');
+          onOpenList(`Por revisar · ${t}`, subItems, { bdEligible: isEnPausa });
           return;
         }
       });
@@ -303,9 +494,9 @@
     el.dashGridSaldo.querySelectorAll('.pocket').forEach((c) => {
       c.addEventListener('click', () => {
         const t = c.getAttribute('data-title') || '';
-        if (t.startsWith('Deben')) onOpenList('Deben (saldo < 0)', cats.deben);
-        else if (t.startsWith('Se acabó')) onOpenList('Se acabó (saldo = 0)', cats.seAcabo);
-        else onOpenList('Les debemos / Clases activas (saldo > 0)', cats.lesDebemos);
+        if (t.startsWith('Deben')) onOpenList('Deben (saldo < 0)', cats.deben, { bdEligible: false });
+        else if (t.startsWith('Se acabó')) onOpenList('Se acabó (saldo = 0)', cats.seAcabo, { bdEligible: false });
+        else onOpenList('Les debemos / Clases activas (saldo > 0)', cats.lesDebemos, { bdEligible: false });
       });
     });
   }

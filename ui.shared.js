@@ -107,6 +107,7 @@
       // Header actions
       btnRefresh: $('btnRefresh'),
       btnRefreshProg: $('btnRefreshProg'),
+      btnSyncSettings: $('btnSyncSettings'),
       btnVerBase: $('btnVerBase'),
       btnPago: $('btnPago'),
       btnClases: $('btnClases'),
@@ -115,6 +116,13 @@
       toastWrap: $('toastWrap'),
 
       // Dashboard header tabs (arriba)
+      viewTabReview: $('viewTabReview'),
+      viewTabSearch: $('viewTabSearch'),
+      viewTabProg: $('viewTabProg'),
+      viewTabSaldo: $('viewTabSaldo'),
+      viewTabRegistro: $('viewTabRegistro'),
+      viewTabClientes: $('viewTabClientes'),
+      viewTabKpis: $('viewTabKpis'),
       dashTabClas: $('dashTabClas'),
       dashTabSaldo: $('dashTabSaldo'),
       dashTabProg: $('dashTabProg'),
@@ -149,6 +157,18 @@
       btnBackToDash: $('btnBackToDash'),
 
       // Views
+      reviewTodayView: $('reviewTodayView'),
+      reviewTodayBody: $('reviewTodayBody'),
+      reviewKpiGrid: $('reviewKpiGrid'),
+      searchView: $('searchView'),
+      quickStudentSearch: $('quickStudentSearch'),
+      btnQuickSearch: $('btnQuickSearch'),
+      quickSearchStatus: $('quickSearchStatus'),
+      clientesView: $('clientesView'),
+      clientesSearch: $('clientesSearch'),
+      btnClientesRefresh: $('btnClientesRefresh'),
+      clientesStatus: $('clientesStatus'),
+      clientesBody: $('clientesBody'),
       dashboardClasView: $('dashboardClasView'),
       dashboardSaldoView: $('dashboardSaldoView'),
       dashboardProgView: $('dashboardProgView'),

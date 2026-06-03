@@ -1,0 +1,41 @@
+{
+  "indexes": [
+    { "collectionGroup": "registro", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "estudianteKey", "order": "ASCENDING" },
+      { "fieldPath": "fechaTs", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "registro", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "year", "order": "ASCENDING" },
+      { "fieldPath": "estudianteKey", "order": "ASCENDING" },
+      { "fieldPath": "fechaTs", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "registro", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "tipo", "order": "ASCENDING" },
+      { "fieldPath": "fechaTs", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "registro", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "profesorKey", "order": "ASCENDING" },
+      { "fieldPath": "fechaTs", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "registro", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "servicioKey", "order": "ASCENDING" },
+      { "fieldPath": "fechaTs", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "programacion", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "estudianteKey", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "programacion", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "studentComputed", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "clasificacionFinal", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "studentComputed", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "programacionStatus", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "studentComputed", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "saldo", "order": "ASCENDING" }
+    ] }
+  ],
+  "fieldOverrides": []
+}

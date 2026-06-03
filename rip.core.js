@@ -21,15 +21,13 @@
   // =========================
   RIPCore.CONFIG = {
     // TSV principal (Registro 2026 desde columna C ya publicado)
-    TSV_REGISTRO_URL:
-      'https://docs.google.com/spreadsheets/d/e/2PACX-1vREJFkqvhXwjBNPCQXTg4pHXUplygJU1ZZG6-xgOeAJ2ifnEMHmuoDJKwQIpxVfGfCrmfmNCS_8RHTc/pub?gid=1810443337&single=true&output=tsv',
+    TSV_REGISTRO_URL: '',
 
     // TSV parámetros (Col A estudiante, Col F clasificación => índice 5)
-    TSV_PARAMS_URL:
-      'https://docs.google.com/spreadsheets/d/e/2PACX-1vREJFkqvhXwjBNPCQXTg4pHXUplygJU1ZZG6-xgOeAJ2ifnEMHmuoDJKwQIpxVfGfCrmfmNCS_8RHTc/pub?gid=745458333&single=true&output=tsv',
+    TSV_PARAMS_URL: '',
 
-    // Cache TTL (ms)
-    CACHE_TTL_MS: 1000 * 60 * 8, // 8 min
+    // Cache TTL (ms) — 0 = siempre recarga desde red
+    CACHE_TTL_MS: 0,
 
     // LocalStorage keys
     CACHE_KEYS: {
@@ -38,11 +36,7 @@
       params: 'rip2026_cache_params_v2',
       meta: 'rip2026_cache_meta_v2'
     },
-    HIST_LAST_CLASS_TSV_URLS: {
-      "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-      "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-      "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-    }
+    HIST_LAST_CLASS_TSV_URLS: {}
   };
 
   // =========================
@@ -214,6 +208,19 @@
     return 'Exestudiante (+24 meses)';
   };
 
+  const classifyFinalByFormula = (days, manualClasif = '') => {
+    if (norm(manualClasif) === 'activo') return 'Activo';
+    if (!Number.isFinite(days)) return 'Inactivo sin info';
+    if (days < 8) return 'Activo';
+    if (days < 15) return 'Activo no registro (8-15 dias)';
+    if (days <= 30) return 'Activo En pausa (15-30 dias)';
+    if (days <= 90) return 'Inactivo en pausa (1-3 meses)';
+    if (days <= 180) return 'Inactivo lejano (3-6 meses)';
+    if (days <= 365) return 'Inactivo extendido (6-12 meses)';
+    if (days <= 730) return 'Inactivo historico (12-24 meses)';
+    return 'Exestudiante (+24 meses)';
+  };
+
   // TSV parser robusto (publicado suele venir plano)
   const parseTSV = (text) => {
     const lines = String(text ?? '')
@@ -242,6 +249,93 @@
     "2025": { fecha: 4, nombre: 3 }
   };
   const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
+
+  function buildFirebasePack(registro, students, programacion, computed) {
+    const paramsMap = new Map();
+    const set = new Map();
+    for (const s of students || []) {
+      const key = s.nameKey || s.key || norm(s.name);
+      if (key) set.set(key, s.name || key);
+      if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
+    }
+    for (const r of registro || []) {
+      if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+    }
+
+    const lastClassTsByStudent = new Map();
+    for (const r of registro || []) {
+      if (!r?.estudianteKey) continue;
+      const tipo = norm(r?.tipo || '');
+      if (tipo !== 'clase') continue;
+      const ts = Number(r?.fechaTs) || 0;
+      if (!ts) continue;
+      const prev = Number(lastClassTsByStudent.get(r.estudianteKey)) || 0;
+      if (ts > prev) lastClassTsByStudent.set(r.estudianteKey, ts);
+    }
+    const today = startOfDay(new Date());
+    const computedMap = new Map((computed || []).map(c => [c.studentId || c.id, c]));
+    const allStudents = Array.from(set.entries()).map(([key, name]) => {
+      const c = computedMap.get(key) || {};
+      const paramClasif = paramsMap.get(key) || '';
+      const lastTs = Number(lastClassTsByStudent.get(key)) || (c.ultimaClase ? Number(parseDate(c.ultimaClase)?.getTime()) || 0 : 0);
+      const lastDate = lastTs ? startOfDay(new Date(lastTs)) : null;
+      const daysSince = lastDate ? Math.floor((today.getTime() - lastDate.getTime()) / MS_DAY) : NaN;
+      const finalClasif = classifyFinalByFormula(daysSince, paramClasif);
+      return {
+        key,
+        name,
+        paramClasif,
+        finalClasif,
+        lastClassTs: lastTs,
+        daysSinceLastClass: daysSince,
+        saldo: Number(c.saldo) || 0,
+        computed: c
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+    return {
+      registro,
+      allStudents,
+      searchStudents: allStudents,
+      paramsMap,
+      programacion: { dashboard: buildProgramacionDashboard(programacion, allStudents, registro), today: new Date().toISOString().slice(0, 10) },
+      computed,
+      meta: { source: 'firebase' }
+    };
+  }
+
+  function buildProgramacionDashboard(programacion, allStudents, registro) {
+    const calc = window.RIPCalculations;
+    const schedules = new Map((programacion || []).map(p => [p.estudianteKey || p.studentId || norm(p.estudiante), p]));
+    const rowsByStudent = new Map();
+    for (const row of registro || []) {
+      const key = row?.estudianteKey || norm(row?.estudiante);
+      if (!key) continue;
+      if (!rowsByStudent.has(key)) rowsByStudent.set(key, []);
+      rowsByStudent.get(key).push(row);
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    return (allStudents || []).map((s) => {
+      const sch = schedules.get(s.key) || {};
+      const fechas = Array.isArray(sch.fechas) ? sch.fechas : [];
+      const limit = calc?.getStudentClassLimit ? calc.getStudentClassLimit(rowsByStudent.get(s.key) || []) : 24;
+      const status = calc?.calculateProgramacionStatus
+        ? calc.calculateProgramacionStatus(fechas, today, limit)
+        : { status: 'Sin programacion', futureCount: 0, nextClassDate: '' };
+      return {
+        name: s.name,
+        estado: status.status,
+        fechas,
+        filled: fechas.filter(Boolean).length,
+        limit,
+        nextISO: status.nextClassDate || '',
+        futureCount: status.futureCount || 0,
+        noSchedule: status.status === 'Sin programacion' || status.status === 'Sin programación',
+        lowFuture: status.status === 'Pocas futuras' || status.status === 'Por completar',
+        complete: status.status === 'OK'
+      };
+    });
+  }
 
   // =========================
   // Cache local TTL
@@ -312,15 +406,6 @@
   const getHistoricLastClassMap = async (year) => {
     const y = String(year || '');
     if (histLastClassCache.has(y)) return histLastClassCache.get(y);
-    try {
-      const raw = sessionStorage.getItem(`rip2026_hist_lastclass_${y}`);
-      if (raw) {
-        const obj = JSON.parse(raw);
-        const m = new Map(Object.entries(obj || {}).map(([k, v]) => [k, Number(v) || 0]));
-        histLastClassCache.set(y, m);
-        return m;
-      }
-    } catch (_) {}
     const url = RIPCore.CONFIG.HIST_LAST_CLASS_TSV_URLS[y];
     const cm = HIST_COLMAP[y];
     if (!url || !cm) return new Map();
@@ -341,11 +426,6 @@
       if (ts > prev) out.set(k, ts);
     });
     histLastClassCache.set(y, out);
-    try {
-      const obj = {};
-      out.forEach((v, k) => { obj[k] = v; });
-      sessionStorage.setItem(`rip2026_hist_lastclass_${y}`, JSON.stringify(obj));
-    } catch (_) {}
     return out;
   };
 
@@ -405,6 +485,15 @@
   // - Cache propia (registroFast) para mostrar casi instantáneo
   // =========================
   RIPCore.loadRegistroFast = async ({ force = false } = {}) => {
+    if (window.RIPRepository?.loadRegistro) {
+      const rows = await window.RIPRepository.loadRegistro();
+      const set = new Map();
+      for (const r of rows) if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+      return {
+        rows,
+        allStudents: Array.from(set.entries()).map(([key, name]) => ({ key, name, paramClasif: '' })).sort((a, b) => a.name.localeCompare(b.name, 'es'))
+      };
+    }
     const meta = readCacheMeta();
     const canUseCache = !force;
 
@@ -440,7 +529,8 @@
       findHeaderByAliases(parsed.headers, [COLS.movimiento, 'Movimientos', 'Saldo movimiento']) ||
       parsed.headers[11] || '';
 
-    const rows = parsed.rows.map((r) => {
+    const rows = parsed.rows.map((r, rowIndex) => {
+      const sheetRow = rowIndex + 2;
       const estudiante = r[COLS.estudiante] || '';
       const clasifRaw = getValueByHeaderOrIndex(r, parsed.headers, clasifHeader, 10);
       const movRaw = getValueByHeaderOrIndex(r, parsed.headers, movHeader, 11);
@@ -448,6 +538,8 @@
       const auto = classifyMovimiento(r[COLS.tipo], r[COLS.servicio], r[COLS.pago], clasifRaw, '');
       return {
         id: HAS_ID ? (r[COLS.id] || '') : '',
+        rowNum: sheetRow,
+        __rowNum: sheetRow,
         estudiante,
         estudianteKey: norm(estudiante),
         fechaRaw: r[COLS.fecha] || '',
@@ -480,6 +572,15 @@
   };
 
 RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
+    if (window.RIPRepository?.loadRegistro) {
+      const [registro, students, programacion, computed] = await Promise.all([
+        window.RIPRepository.loadRegistro(),
+        window.RIPRepository.loadStudents(),
+        window.RIPRepository.loadProgramacion(),
+        window.RIPRepository.loadComputed()
+      ]);
+      return buildFirebasePack(registro, students, programacion, computed);
+    }
     const meta = readCacheMeta();
     const canUseCache = !force;
 
@@ -514,7 +615,8 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
       const HAS_CLASIF_PAGO = !!clasifPagoHeader;
 
       // Normaliza y añade computados
-      const rows = parsed.rows.map((r) => {
+      const rows = parsed.rows.map((r, rowIndex) => {
+        const sheetRow = rowIndex + 2;
         const estudiante = r[COLS.estudiante] || '';
         const d = parseDate(r[COLS.fecha]);
         const movRaw = HAS_MOV
@@ -530,6 +632,8 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
         return {
           raw: r,
           id: r[COLS.id] || '',
+          rowNum: sheetRow,
+          __rowNum: sheetRow,
           estudiante,
           estudianteKey: norm(estudiante),
           fechaRaw: r[COLS.fecha] || '',
@@ -641,7 +745,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
         const lastTs = Number(lastClassTsByStudent.get(k)) || Number(histMerged.get(k)) || 0;
         const lastDate = lastTs ? startOfDay(new Date(lastTs)) : null;
         const daysSince = lastDate ? Math.floor((today.getTime() - lastDate.getTime()) / MS_DAY) : NaN;
-        const finalClasif = classifyByDaysSinceLastClass(daysSince, norm(paramClasif) === 'activo');
+        const finalClasif = classifyFinalByFormula(daysSince, paramClasif);
         return { key: k, name, paramClasif, finalClasif, lastClassTs: lastTs || 0, daysSinceLastClass: daysSince };
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
@@ -665,6 +769,9 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     };
 
     for (const s of students) {
+      if (!s.finalClasif && Number.isFinite(Number(s.daysSinceLastClass))) {
+        s.finalClasif = classifyFinalByFormula(Number(s.daysSinceLastClass), s.paramClasif || '');
+      }
       const c = norm(s.finalClasif || s.paramClasif || '');
 
       // ✅ Activos netos: SOLO "Activo"
@@ -807,6 +914,27 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     return true;
   });
 };
+
+  // Limpiar todos los cachés en memoria y almacenamiento
+  RIPCore.clearCaches = () => {
+    histLastClassCache.clear();
+    try {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('rip2026_')) keys.push(k);
+      }
+      keys.forEach(k => localStorage.removeItem(k));
+    } catch (_) {}
+    try {
+      const skeys = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k) skeys.push(k);
+      }
+      skeys.forEach(k => sessionStorage.removeItem(k));
+    } catch (_) {}
+  };
 
   // Exports
   RIPCore.COL_LABELS = COLS;

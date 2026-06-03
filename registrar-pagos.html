@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Registrar pagos - RIP 2026</title>
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    .pay-wrap{max-width:980px;margin:0 auto}
+    .pay-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:760px){.pay-grid{grid-template-columns:1fr}}
+    .pay-user{border:1px solid var(--bd);border-radius:8px;padding:14px;background:#fff;margin-top:12px}
+    .pay-user h4{margin:0 0 12px}
+    .pay-total{display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding:14px;border:1px solid var(--bd);border-radius:8px;background:#f8fafc;font-weight:900}
+    .pay-total strong{font-size:24px;color:var(--brand)}
+    .pay-success{display:none;margin-top:12px;padding:12px;border:1px solid #16a34a;border-radius:8px;background:#f0fdf4;color:#166534;font-weight:800}
+    .pay-success.show{display:block}
+  </style>
+</head>
+<body>
+  <main class="page pay-wrap">
+    <section class="card">
+      <div class="card-title">
+        <h3>Registrar pago</h3>
+        <p class="muted">Guarda la transaccion en Clientes B2C y crea los pagos en el RIP Firebase.</p>
+      </div>
+
+      <form id="paymentForm">
+        <div class="pay-grid">
+          <label class="field">
+            <span>Fecha de pago</span>
+            <input id="fechaPago" class="control" type="date" required>
+          </label>
+          <label class="field">
+            <span>Tipo de estudiante</span>
+            <select id="tipoEstudiante" class="control"></select>
+          </label>
+        </div>
+
+        <div id="usersWrap"></div>
+
+        <div class="pay-grid" style="margin-top:14px">
+          <label class="field">
+            <span>Medio de pago</span>
+            <select id="medioPago" class="control" required></select>
+          </label>
+          <label class="field">
+            <span>Comentario</span>
+            <input id="comentario" class="control" type="text" placeholder="Comentario...">
+          </label>
+          <label class="field">
+            <span>Recargo</span>
+            <input id="recargo" class="control money" type="number" min="0" step="1" value="0">
+          </label>
+          <label class="field">
+            <span>Descuento</span>
+            <input id="descuento" class="control money" type="number" min="0" step="1" value="0">
+          </label>
+          <label class="field">
+            <span>FEVM</span>
+            <input id="FEVM" class="control" type="number" min="0" step="1" value="0">
+          </label>
+        </div>
+
+        <div class="pay-total">
+          <span>Total general</span>
+          <strong id="totalGeneral">$0</strong>
+        </div>
+
+        <div class="filters-actions" style="margin-top:14px">
+          <button class="btn primary" id="btnSavePayment" type="submit">Guardar pago</button>
+          <button class="btn ghost" id="btnReset" type="button">Limpiar</button>
+          <span class="status" id="status">Cargando...</span>
+        </div>
+        <div class="pay-success" id="paySuccess">Pago guardado en Clientes B2C y Registro.</div>
+      </form>
+    </section>
+  </main>
+
+  <datalist id="studentsList"></datalist>
+  <datalist id="servicesList"></datalist>
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script src="./firebase.config.js?v=2026.prices1"></script>
+  <script src="./rip.calculations.js?v=2026.pkg3"></script>
+  <script src="./firebase.auth.js"></script>
+  <script src="./rip.repository.js?v=2026.payments1"></script>
+  <script src="./ui.shared.js?v=2026.views1"></script>
+  <script src="./registrar-pagos.js?v=2026.prices1"></script>
+</body>
+</html>

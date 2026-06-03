@@ -1,0 +1,19 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAllowed() {
+      return request.auth != null
+        && request.auth.token.email in [
+          "catalina.medina.leal@gmail.com",
+          "alekcaballeromusic@gmail.com",
+          "imusicala@gmail.com",
+          "asesormusicala@gmail.com"
+        ];
+    }
+
+    match /{document=**} {
+      allow read, write: if isAllowed();
+    }
+  }
+}

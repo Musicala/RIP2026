@@ -17,10 +17,9 @@
   }
 
   const RIPUI = window.RIPUI;
-  const { toast, buildContext, hide, show, setText, setHTML, norm, escapeHTML } = RIPUI.shared;
+  const { toast, buildContext, hide, show, setText, setHTML, norm, escapeHTML, fmtMoney } = RIPUI.shared;
   const MORE_INFO_URL = 'https://musicala.github.io/estudiantesmusicala/';
-  const TSV_ESTUDIANTES_URL =
-    'https://docs.google.com/spreadsheets/d/e/2PACX-1vQQO-CBQoN1QZ4GFExJWmPz6YNLO6rhaIsWBv-Whlu9okpZRpcxfUtLYeAMKaiNOQJrrf3Vcwhk32kZ/pub?gid=2130299316&single=true&output=tsv';
+  const TSV_ESTUDIANTES_URL = '';
   const FICHA_COL = {
     nombre: 0, estado: 1, edad: 4, tel: 9, cel: 10, curso: 11,
     estiloM: 12, estiloN: 13, estiloO: 14, plan: 16, modalidad: 17, acudiente: 20
@@ -30,12 +29,7 @@
   // =========================
   // Config índice global
   // =========================
-  const STUDENT_INDEX_URLS = {
-    "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREJFkqvhXwjBNPCQXTg4pHXUplygJU1ZZG6-xgOeAJ2ifnEMHmuoDJKwQIpxVfGfCrmfmNCS_8RHTc/pub?gid=1810443337&single=true&output=tsv",
-    "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-    "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-    "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-  };
+  const STUDENT_INDEX_URLS = {};
 
   const STUDENT_INDEX_COLMAP = {
     "2023": { fecha: 1, nombre: 2, servicio: 4, hora: 7, pago: null, profesor: null },
@@ -60,11 +54,13 @@
     allStudents: [],          // estudiantes del registro actual (2026)
     searchStudents: [],       // índice global liviano 2023-2026
     filteredRows: [],
+    clientesB2C: [],
+    clientesLoaded: false,
     selectedServicios: new Set(),
     currentStudentKey: '',
     currentStudentName: '',
     currentSearchEntry: null,
-    dashMode: 'clas', // 'clas' | 'saldo' | 'prog'
+    dashMode: 'review',
     historicalIndexReady: false,
 
     prog: {
@@ -73,10 +69,13 @@
       currentStudentRow: null,
       groupFilter: '',
       mode: 'dash' // dash | prog | reprog
-    }
+    },
+    syncSettings: readSyncSettings()
   };
 
   const ctx = buildContext();
+  let syncTimer = null;
+  let syncWriteTimer = null;
 
   // =========================
   // Helpers internos
@@ -89,6 +88,115 @@
     } catch (err) {
       console.warn('No se pudo limpiar caché:', err);
     }
+  }
+
+  function readSyncSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('rip2026_sync_settings') || '{}');
+      return {
+        mode: saved.mode || 'afterEdit',
+        intervalMinutes: Number(saved.intervalMinutes) || 5
+      };
+    } catch (_) {
+      return { mode: 'afterEdit', intervalMinutes: 5 };
+    }
+  }
+
+  function saveSyncSettings(settings) {
+    state.syncSettings = {
+      mode: settings.mode || 'afterEdit',
+      intervalMinutes: Number(settings.intervalMinutes) || 5
+    };
+    localStorage.setItem('rip2026_sync_settings', JSON.stringify(state.syncSettings));
+    setupSyncTimer();
+  }
+
+  function setupSyncTimer() {
+    if (syncTimer) clearInterval(syncTimer);
+    syncTimer = null;
+    const s = state.syncSettings || readSyncSettings();
+    if (s.mode !== 'interval') return;
+    const minutes = Math.max(1, Number(s.intervalMinutes) || 5);
+    syncTimer = setInterval(() => {
+      boot({ force: true }).catch((err) => {
+        console.error(err);
+        toast(ctx.el.toastWrap, 'No se pudo actualizar automaticamente.', 'warn');
+      });
+    }, minutes * 60000);
+  }
+
+  async function refreshAfterFirestoreWrite(detail = {}) {
+    const s = state.syncSettings || readSyncSettings();
+    if (s.mode !== 'afterEdit') return;
+    if (syncWriteTimer) clearTimeout(syncWriteTimer);
+    syncWriteTimer = setTimeout(async () => {
+      try {
+        toast(ctx.el.toastWrap, 'Cambio guardado. Actualizando...', 'info');
+        await boot({ force: true });
+        toast(ctx.el.toastWrap, 'Datos actualizados.', 'ok');
+      } catch (err) {
+        console.error(err, detail);
+        toast(ctx.el.toastWrap, 'El cambio se guardo, pero no se pudo actualizar la vista.', 'warn');
+      }
+    }, 700);
+  }
+
+  window.RIPAppFirestoreChanged = refreshAfterFirestoreWrite;
+
+  function openSyncSettingsModal() {
+    const current = state.syncSettings || readSyncSettings();
+    const prev = document.getElementById('ripSyncSettingsModal');
+    if (prev) prev.remove();
+    const modal = document.createElement('div');
+    modal.id = 'ripSyncSettingsModal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-editor-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Configuracion de actualizacion</span>
+          <button class="rip-modal-close" type="button" aria-label="Cerrar">x</button>
+        </div>
+        <div class="rip-modal-body rip-editor-body">
+          <div class="ripedit-grid">
+            <label class="ripedit-field" style="grid-column:1/-1">
+              <span class="ripedit-label">Cuando se guarden cambios</span>
+              <select id="ripSyncMode" class="control">
+                <option value="afterEdit" ${current.mode === 'afterEdit' ? 'selected' : ''}>Actualizar de una al editar</option>
+                <option value="interval" ${current.mode === 'interval' ? 'selected' : ''}>Actualizar cada cierto tiempo</option>
+                <option value="manual" ${current.mode === 'manual' ? 'selected' : ''}>Solo con el boton Actualizar</option>
+              </select>
+            </label>
+            <label class="ripedit-field" style="grid-column:1/-1">
+              <span class="ripedit-label">Intervalo en minutos</span>
+              <input id="ripSyncInterval" type="number" min="1" class="control" value="${String(current.intervalMinutes || 5)}">
+            </label>
+          </div>
+        </div>
+        <div class="rip-modal-foot">
+          <button class="btn ghost rip-modal-cancel" type="button">Cancelar</button>
+          <button class="btn primary rip-modal-save" type="button">Guardar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('rip-modal-in'));
+    const close = () => {
+      modal.classList.remove('rip-modal-in');
+      setTimeout(() => modal.remove(), 160);
+    };
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-cancel')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-save')?.addEventListener('click', () => {
+      saveSyncSettings({
+        mode: modal.querySelector('#ripSyncMode')?.value || 'afterEdit',
+        intervalMinutes: modal.querySelector('#ripSyncInterval')?.value || 5
+      });
+      toast(ctx.el.toastWrap, 'Configuracion guardada.', 'ok');
+      close();
+    });
   }
 
   function getStudentByKey(studentKey) {
@@ -119,6 +227,10 @@
 
   async function ensureStudentsInfoMap() {
     if (__studentsInfoMap instanceof Map) return __studentsInfoMap;
+    if (!TSV_ESTUDIANTES_URL) {
+      __studentsInfoMap = new Map();
+      return __studentsInfoMap;
+    }
     const res = await fetch(TSV_ESTUDIANTES_URL + '&_ts=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) throw new Error('No pude cargar TSV_ESTUDIANTES');
     const txt = await res.text();
@@ -190,6 +302,9 @@
   }
 
   function hideAllMainViews() {
+    hide(ctx.el.reviewTodayView);
+    hide(ctx.el.searchView);
+    hide(ctx.el.clientesView);
     hide(ctx.el.dashboardClasView);
     hide(ctx.el.dashboardSaldoView);
     hide(ctx.el.dashboardProgView);
@@ -198,6 +313,36 @@
 
   function setHeaderTextsByMode(mode) {
     if (!ctx.el.dashTitle || !ctx.el.dashSub) return;
+
+    if (mode === 'review') {
+      ctx.el.dashTitle.textContent = 'Revisar Hoy';
+      ctx.el.dashSub.textContent = 'Lo urgente primero: por revisar, saldos, programacion y registro.';
+      return;
+    }
+
+    if (mode === 'search') {
+      ctx.el.dashTitle.textContent = 'Buscar estudiante';
+      ctx.el.dashSub.textContent = 'Consulta rapida para responder por clases, saldo, paquete y programacion.';
+      return;
+    }
+
+    if (mode === 'registro') {
+      ctx.el.dashTitle.textContent = 'Registro';
+      ctx.el.dashSub.textContent = 'Auditoria, filtros, edicion y registro completo.';
+      return;
+    }
+
+    if (mode === 'clientes') {
+      ctx.el.dashTitle.textContent = 'Clientes / pagos B2C';
+      ctx.el.dashSub.textContent = 'Registro de pagos por cliente, usuario, servicio y medio de pago.';
+      return;
+    }
+
+    if (mode === 'kpis') {
+      ctx.el.dashTitle.textContent = 'KPIs';
+      ctx.el.dashSub.textContent = 'Numeros generales de estudiantes, saldos y programacion.';
+      return;
+    }
 
     if (mode === 'clas') {
       ctx.el.dashTitle.textContent = 'Dashboard · Clasificación';
@@ -217,6 +362,14 @@
 
   function syncDashTabs() {
     const mode = state.dashMode;
+
+    ctx.el.viewTabReview?.classList.toggle('active', mode === 'review');
+    ctx.el.viewTabSearch?.classList.toggle('active', mode === 'search');
+    ctx.el.viewTabProg?.classList.toggle('active', mode === 'prog');
+    ctx.el.viewTabSaldo?.classList.toggle('active', mode === 'saldo');
+    ctx.el.viewTabRegistro?.classList.toggle('active', mode === 'registro');
+    ctx.el.viewTabClientes?.classList.toggle('active', mode === 'clientes');
+    ctx.el.viewTabKpis?.classList.toggle('active', mode === 'kpis');
 
     ctx.el.dashTabClas?.classList.toggle('active', mode === 'clas');
     ctx.el.dashTabSaldo?.classList.toggle('active', mode === 'saldo');
@@ -238,6 +391,8 @@
     state.allStudents = [];
     state.searchStudents = [];
     state.filteredRows = [];
+    state.clientesB2C = [];
+    state.clientesLoaded = false;
     state.selectedServicios = new Set();
     state.currentStudentKey = '';
     state.currentStudentName = '';
@@ -338,7 +493,7 @@
   async function getParsedIndexYear(year) {
     const y = String(year || '').trim();
     if (!STUDENT_INDEX_URLS[y]) {
-      throw new Error(`No hay URL configurada para ${y}`);
+      return { headers: [], rows: [] };
     }
 
     if (__studentIndexYearCache.has(y)) {
@@ -480,22 +635,368 @@
     }, 0);
   }
 
+  function describeClienteUsuarios(row) {
+    return (Array.isArray(row?.usuarios) ? row.usuarios : [])
+      .map(u => String(u?.estudiante || u?.nombre || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  function describeClienteServicios(row) {
+    return (Array.isArray(row?.usuarios) ? row.usuarios : [])
+      .map(u => String(u?.servicio || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  function filterClientesB2C() {
+    const q = norm(ctx.el.clientesSearch?.value || '');
+    const rows = Array.isArray(state.clientesB2C) ? state.clientesB2C : [];
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const haystack = [
+        row.id,
+        row.fecha,
+        row.medioPago,
+        row.tipoEstudiante,
+        row.comentario,
+        describeClienteUsuarios(row),
+        describeClienteServicios(row)
+      ].join(' ');
+      return norm(haystack).includes(q);
+    });
+  }
+
+  function buildClienteEditUserRows(row) {
+    const usuarios = Array.isArray(row?.usuarios) && row.usuarios.length
+      ? row.usuarios
+      : [{ estudiante: '', servicio: '', precio: 0 }];
+    return usuarios.map((u, index) => `
+      <div class="ripedit-grid cliente-user-row" data-user-row>
+        <label class="ripedit-field">
+          <span class="ripedit-label">Estudiante ${index + 1}</span>
+          <input class="control" data-cliente-user="estudiante" value="${escapeHTML(u.estudiante || '')}">
+        </label>
+        <label class="ripedit-field">
+          <span class="ripedit-label">Servicio</span>
+          <input class="control" data-cliente-user="servicio" value="${escapeHTML(u.servicio || '')}">
+        </label>
+        <label class="ripedit-field">
+          <span class="ripedit-label">Precio</span>
+          <input class="control" data-cliente-user="precio" value="${escapeHTML(u.precio || '')}">
+        </label>
+      </div>
+    `).join('');
+  }
+
+  function readClienteEditModal(modal) {
+    const usuarios = Array.from(modal.querySelectorAll('[data-user-row]')).map((row, index) => ({
+      index: index + 1,
+      estudiante: row.querySelector('[data-cliente-user="estudiante"]')?.value || '',
+      servicio: row.querySelector('[data-cliente-user="servicio"]')?.value || '',
+      precio: row.querySelector('[data-cliente-user="precio"]')?.value || ''
+    })).filter(u => u.estudiante.trim() || u.servicio.trim() || String(u.precio).trim());
+    return {
+      fecha: modal.querySelector('[data-cliente-field="fecha"]')?.value || '',
+      tipoEstudiante: modal.querySelector('[data-cliente-field="tipoEstudiante"]')?.value || '',
+      medioPago: modal.querySelector('[data-cliente-field="medioPago"]')?.value || '',
+      recargo: modal.querySelector('[data-cliente-field="recargo"]')?.value || '',
+      descuento: modal.querySelector('[data-cliente-field="descuento"]')?.value || '',
+      FEVM: modal.querySelector('[data-cliente-field="FEVM"]')?.value || '',
+      comentario: modal.querySelector('[data-cliente-field="comentario"]')?.value || '',
+      usuarios
+    };
+  }
+
+  function openClienteEditModal(recordId) {
+    const row = (state.clientesB2C || []).find(r => r.id === recordId);
+    if (!row) return;
+    const prev = document.getElementById('ripClienteEditModal');
+    if (prev) prev.remove();
+    const modal = document.createElement('div');
+    modal.id = 'ripClienteEditModal';
+    modal.className = 'rip-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-editor-box" style="width:min(920px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto;">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Editar pago B2C</span>
+          <button class="rip-modal-close" type="button" aria-label="Cerrar">x</button>
+        </div>
+        <div class="rip-modal-body rip-editor-body">
+          <div class="ripedit-grid">
+            <label class="ripedit-field">
+              <span class="ripedit-label">Fecha</span>
+              <input class="control" data-cliente-field="fecha" value="${escapeHTML(row.fecha || '')}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Tipo estudiante</span>
+              <input class="control" data-cliente-field="tipoEstudiante" value="${escapeHTML(row.tipoEstudiante || '')}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Medio de pago</span>
+              <input class="control" data-cliente-field="medioPago" value="${escapeHTML(row.medioPago || '')}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Recargo</span>
+              <input class="control" data-cliente-field="recargo" value="${escapeHTML(row.recargo || '')}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Descuento</span>
+              <input class="control" data-cliente-field="descuento" value="${escapeHTML(row.descuento || '')}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">FEVM</span>
+              <input class="control" data-cliente-field="FEVM" value="${escapeHTML(row.FEVM || '')}">
+            </label>
+            <label class="ripedit-field" style="grid-column:1/-1">
+              <span class="ripedit-label">Comentario</span>
+              <textarea class="control" data-cliente-field="comentario" rows="2">${escapeHTML(row.comentario || '')}</textarea>
+            </label>
+          </div>
+          <div class="card-title" style="margin-top:14px">
+            <h3>Usuarios del pago</h3>
+            <p class="muted">El total se recalcula con precios + recargo - descuento.</p>
+          </div>
+          <div id="clienteUsersEdit">${buildClienteEditUserRows(row)}</div>
+          <div class="filters-actions">
+            <button class="btn ghost" type="button" id="btnClienteAddUser">Agregar usuario</button>
+            <span class="status" id="clienteEditStatus">Listo para editar.</span>
+          </div>
+        </div>
+        <div class="rip-modal-foot">
+          <button class="btn ghost rip-modal-cancel" type="button">Cancelar</button>
+          <button class="btn primary rip-modal-save" type="button">Guardar cambios</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('rip-modal-in'));
+    const close = () => {
+      modal.classList.remove('rip-modal-in');
+      setTimeout(() => modal.remove(), 180);
+    };
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-cancel')?.addEventListener('click', close);
+    modal.querySelector('#btnClienteAddUser')?.addEventListener('click', () => {
+      const wrap = modal.querySelector('#clienteUsersEdit');
+      const temp = document.createElement('div');
+      temp.innerHTML = buildClienteEditUserRows({ usuarios: [{ estudiante: '', servicio: '', precio: 0 }] });
+      wrap?.appendChild(temp.firstElementChild);
+    });
+    modal.querySelector('.rip-modal-save')?.addEventListener('click', async () => {
+      try {
+        setText(modal.querySelector('#clienteEditStatus'), 'Guardando...');
+        const saved = await RIPRepository.updateClienteB2C(recordId, readClienteEditModal(modal));
+        state.clientesB2C = (state.clientesB2C || []).map(r => r.id === recordId ? saved : r);
+        renderClientesView();
+        toast(ctx.el.toastWrap, 'Pago actualizado.', 'success');
+        close();
+      } catch (err) {
+        console.error(err);
+        setText(modal.querySelector('#clienteEditStatus'), 'No se pudo guardar.');
+        toast(ctx.el.toastWrap, 'No se pudo guardar el pago.', 'warn');
+      }
+    });
+  }
+
+  function renderClientesView() {
+    if (!ctx.el.clientesBody) return;
+    const rows = filterClientesB2C();
+    setText(ctx.el.clientesStatus, state.clientesLoaded
+      ? `${rows.length} de ${(state.clientesB2C || []).length} pagos`
+      : 'Cargando pagos...');
+    if (!rows.length) {
+      ctx.el.clientesBody.innerHTML = `<tr><td colspan="9" class="empty-td">${state.clientesLoaded ? 'No hay pagos para mostrar.' : 'Cargando pagos...'}</td></tr>`;
+      return;
+    }
+    ctx.el.clientesBody.innerHTML = rows.map((row) => {
+      const ajuste = [
+        Number(row.recargo) ? `+${fmtMoney(row.recargo)}` : '',
+        Number(row.descuento) ? `-${fmtMoney(row.descuento)}` : ''
+      ].filter(Boolean).join(' / ') || '-';
+      return `
+        <tr>
+          <td>${escapeHTML(row.fecha || '')}</td>
+          <td>${escapeHTML(describeClienteUsuarios(row) || '-')}</td>
+          <td>${escapeHTML(describeClienteServicios(row) || '-')}</td>
+          <td>${escapeHTML(fmtMoney(row.total || 0))}</td>
+          <td>${escapeHTML(row.medioPago || '-')}</td>
+          <td>${escapeHTML(ajuste)}</td>
+          <td>${escapeHTML(fmtMoney(row.FEVM || 0))}</td>
+          <td><code>${escapeHTML(String(row.id || '').slice(0, 10))}</code></td>
+          <td><button class="btn small" type="button" data-cliente-edit="${escapeHTML(row.id || '')}">Editar</button></td>
+        </tr>
+      `;
+    }).join('');
+    ctx.el.clientesBody.querySelectorAll('[data-cliente-edit]').forEach(btn => {
+      btn.addEventListener('click', () => openClienteEditModal(btn.getAttribute('data-cliente-edit')));
+    });
+  }
+
+  async function loadClientesB2C(force = false) {
+    if (state.clientesLoaded && !force) {
+      renderClientesView();
+      return state.clientesB2C;
+    }
+    setText(ctx.el.clientesStatus, 'Cargando pagos...');
+    try {
+      state.clientesB2C = await RIPRepository.loadClientesB2C();
+      state.clientesLoaded = true;
+      renderClientesView();
+      return state.clientesB2C;
+    } catch (err) {
+      console.error(err);
+      state.clientesLoaded = false;
+      setText(ctx.el.clientesStatus, 'No se pudieron cargar los pagos.');
+      if (ctx.el.clientesBody) {
+        ctx.el.clientesBody.innerHTML = '<tr><td colspan="9" class="empty-td">No se pudieron cargar los pagos.</td></tr>';
+      }
+      return [];
+    }
+  }
+
   // =========================
   // Navegación de vistas
   // =========================
   function showDashboard(mode) {
-    state.dashMode = mode || 'clas';
+    state.dashMode = mode || 'review';
 
     hideAllMainViews();
 
+    if (state.dashMode === 'review') {
+      show(ctx.el.reviewTodayView);
+      renderReviewToday();
+    }
+    if (state.dashMode === 'search') show(ctx.el.searchView);
+    if (state.dashMode === 'clientes') {
+      show(ctx.el.clientesView);
+      loadClientesB2C(false);
+    }
     if (state.dashMode === 'clas') show(ctx.el.dashboardClasView);
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
     if (state.dashMode === 'prog') show(ctx.el.dashboardProgView);
+    if (state.dashMode === 'registro') {
+      show(ctx.el.fichaView);
+      hide(ctx.el.programacionStudentView);
+      show(ctx.el.tablaContainer);
+      hide(ctx.el.fichaSummaryBlock);
+      setText(ctx.el.fichaTitle, 'Registro');
+      setText(ctx.el.fichaSub, 'Filtra, revisa y edita el registro completo.');
+    }
+    if (state.dashMode === 'kpis') show(ctx.el.dashboardClasView);
 
     syncDashTabs();
     setHeaderTextsByMode(state.dashMode);
 
     hide(ctx.el.btnBackToDash);
+  }
+
+  function renderReviewToday() {
+    if (!ctx.el.reviewTodayBody) return;
+    const clas = RIPCore.buildClasificacionDashboard(state.allStudents || []);
+    const saldos = RIPCore.buildSaldosDashboard(state.allStudents || [], state.registro || []);
+    const progRows = state.prog?.data?.dashboard || [];
+    const noProg = progRows.filter(r => r.noSchedule);
+    const lowProg = progRows.filter(r => r.lowFuture);
+    const review = [...(clas.porRevisar || [])].sort((a, b) => (Number(b.daysSinceLastClass) || 0) - (Number(a.daysSinceLastClass) || 0));
+    const urgent = [];
+
+    review.slice(0, 20).forEach(s => urgent.push({
+      priority: 'Por revisar',
+      name: s.name,
+      key: s.key,
+      reason: s.finalClasif || s.paramClasif || '',
+      metric: `${Number(s.daysSinceLastClass) || 0} dias`
+    }));
+    saldos.deben.slice(0, 15).forEach(s => urgent.push({
+      priority: 'Saldo rojo',
+      name: s.name,
+      key: s.key,
+      reason: 'Debe revisar saldo',
+      metric: fmtMoney(s.saldo)
+    }));
+    saldos.seAcabo.slice(0, 15).forEach(s => urgent.push({
+      priority: 'Saldo en 0',
+      name: s.name,
+      key: s.key,
+      reason: 'Paquete agotado',
+      metric: '0'
+    }));
+    noProg.slice(0, 15).forEach(s => urgent.push({
+      priority: 'Sin programacion',
+      name: s.name,
+      key: norm(s.name),
+      reason: 'No tiene fechas futuras',
+      metric: `${s.futureCount || 0} futuras`
+    }));
+    lowProg.slice(0, 15).forEach(s => urgent.push({
+      priority: 'Pocas futuras',
+      name: s.name,
+      key: norm(s.name),
+      reason: 'Programacion por completar',
+      metric: `${s.futureCount || 0} futuras`
+    }));
+
+    if (ctx.el.reviewKpiGrid) {
+      ctx.el.reviewKpiGrid.innerHTML = [
+        ['Por revisar', review.length],
+        ['Saldo rojo', saldos.deben.length],
+        ['En 0', saldos.seAcabo.length],
+        ['Sin programacion', noProg.length],
+        ['Pocas futuras', lowProg.length]
+      ].map(([label, value]) => `
+        <button class="kpi kpi-btn" type="button" data-review-filter="${escapeHTML(label)}">
+          <div class="n">${escapeHTML(value)}</div>
+          <div class="t">${escapeHTML(label)}</div>
+        </button>
+      `).join('');
+    }
+
+    const urgencyClass = (priority) => {
+      const p = priority.toLowerCase();
+      if (p.includes('revisar')) return 'urgency-review';
+      if (p.includes('rojo'))    return 'urgency-danger';
+      if (p.includes('en 0'))    return 'urgency-zero';
+      return 'urgency-info';
+    };
+    const urgencyPillClass = (priority) => {
+      const p = priority.toLowerCase();
+      if (p.includes('revisar')) return 'pill-urgency-review';
+      if (p.includes('rojo'))    return 'pill-urgency-danger';
+      if (p.includes('en 0'))    return 'pill-urgency-zero';
+      return 'pill-urgency-info';
+    };
+
+    ctx.el.reviewTodayBody.innerHTML = urgent.length
+      ? urgent.map((item) => `
+        <tr class="${urgencyClass(item.priority)}">
+          <td><span class="pill ${urgencyPillClass(item.priority)}">${escapeHTML(item.priority)}</span></td>
+          <td style="font-weight:700">${escapeHTML(item.name)}</td>
+          <td>${escapeHTML(item.reason)}</td>
+          <td style="font-weight:700">${escapeHTML(item.metric)}</td>
+          <td><button class="btn small primary" type="button" data-review-open="${escapeHTML(item.name)}">Abrir</button></td>
+        </tr>
+      `).join('')
+      : `<tr><td colspan="5" class="empty-td">No hay urgentes por ahora. ✅</td></tr>`;
+
+    ctx.el.reviewTodayBody.querySelectorAll('[data-review-open]').forEach(btn => {
+      btn.addEventListener('click', () => openStudentFichaByName(btn.getAttribute('data-review-open') || ''));
+    });
+  }
+
+  function openStudentFichaByName(name) {
+    const key = norm(name);
+    const entry = (state.searchStudents || []).find(s => norm(s.name) === key)
+      || (state.allStudents || []).find(s => norm(s.name) === key);
+    if (entry && RIPUI.ficha?.openStudentFromSearch) {
+      RIPUI.ficha.openStudentFromSearch(ctx, state, entry);
+      return;
+    }
+    if (key) openStudentFicha(key);
   }
 
   function showFichaContainer() {
@@ -1016,23 +1517,23 @@
   // =========================
   function renderDashboards() {
     // Clasificación
-    RIPUI.dashboard.renderDashClas(ctx, state.allStudents, (title, list) => {
+    RIPUI.dashboard.renderDashClas(ctx, state.allStudents, (title, list, opts = {}) => {
       showFichaContainer();
       ensureFichaProgramacionHidden();
 
       RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
         openStudentFicha(studentKey, { focusProgramacion: false });
-      });
+      }, { bdEligible: !!opts.bdEligible });
     });
 
     // Saldos
-    RIPUI.dashboard.renderDashSaldo(ctx, state.allStudents, state.registro, (title, list) => {
+    RIPUI.dashboard.renderDashSaldo(ctx, state.allStudents, state.registro, (title, list, opts = {}) => {
       showFichaContainer();
       ensureFichaProgramacionHidden();
 
       RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey) => {
         openStudentFicha(studentKey, { focusProgramacion: false });
-      });
+      }, { bdEligible: !!opts?.bdEligible });
     });
 
     // Programación
@@ -1080,14 +1581,36 @@
   // =========================
   function wireTopUI() {
     // Tabs arriba
-    ctx.el.dashTabClas?.addEventListener('click', () => showDashboard('clas'));
+    ctx.el.viewTabReview?.addEventListener('click', () => showDashboard('review'));
+    ctx.el.viewTabSearch?.addEventListener('click', () => showDashboard('search'));
+    ctx.el.viewTabProg?.addEventListener('click', () => showDashboard('prog'));
+    ctx.el.viewTabSaldo?.addEventListener('click', () => showDashboard('saldo'));
+    ctx.el.viewTabRegistro?.addEventListener('click', () => showDashboard('registro'));
+    ctx.el.viewTabClientes?.addEventListener('click', () => showDashboard('clientes'));
+    ctx.el.viewTabKpis?.addEventListener('click', () => showDashboard('kpis'));
+
+    ctx.el.dashTabClas?.addEventListener('click', () => showDashboard('kpis'));
     ctx.el.dashTabSaldo?.addEventListener('click', () => showDashboard('saldo'));
     ctx.el.dashTabProg?.addEventListener('click', () => showDashboard('prog'));
 
-    // Tabs intermedios
-    ctx.el.tabClas?.addEventListener('click', () => showDashboard('clas'));
+    ctx.el.tabClas?.addEventListener('click', () => showDashboard('kpis'));
     ctx.el.tabSaldos?.addEventListener('click', () => showDashboard('saldo'));
     ctx.el.tabProg?.addEventListener('click', () => showDashboard('prog'));
+
+    ctx.el.btnQuickSearch?.addEventListener('click', () => {
+      const name = ctx.el.quickStudentSearch?.value || '';
+      if (!name.trim()) {
+        setText(ctx.el.quickSearchStatus, 'Escribe un nombre para buscar.');
+        return;
+      }
+      setText(ctx.el.quickSearchStatus, 'Abriendo ficha...');
+      openStudentFichaByName(name);
+    });
+    ctx.el.quickStudentSearch?.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') ctx.el.btnQuickSearch?.click();
+    });
+    ctx.el.clientesSearch?.addEventListener('input', renderClientesView);
+    ctx.el.btnClientesRefresh?.addEventListener('click', () => loadClientesB2C(true));
 
     // Volver al dashboard desde lista/ficha
     ctx.el.btnBackToDash?.addEventListener('click', () => showDashboard(state.dashMode));
@@ -1139,7 +1662,7 @@
 
     // Registrar pago
     ctx.el.btnPago?.addEventListener('click', () => {
-      const url = window.PAYMENT_WEBAPP_URL || 'https://musicala.github.io/registrodepagos2026/';
+      const url = window.PAYMENT_WEBAPP_URL || './registrar-pagos.html';
       if (!url) {
         toast(ctx.el.toastWrap, 'PAYMENT_WEBAPP_URL no está configurada en esta versión.', 'warn');
         return;
@@ -1149,7 +1672,7 @@
 
     // Registrar clases
     ctx.el.btnClases?.addEventListener('click', () => {
-      const url = window.REGISTRAR_CLASES_URL || 'https://musicala.github.io/RegistroWix2026/';
+      const url = window.REGISTRAR_CLASES_URL || './registrar-clases.html';
       if (!url) {
         toast(ctx.el.toastWrap, 'REGISTRAR_CLASES_URL no está configurada en esta versión.', 'warn');
         return;
@@ -1230,7 +1753,7 @@
       if (force) clearAppCaches();
       resetStateForFreshLoad();
 
-      setText(ctx.el.badgeMode, 'LIVE');
+      setText(ctx.el.badgeMode, 'Firebase');
       setText(ctx.el.badgeCount, 'Cargando…');
       setText(ctx.el.status, 'Cargando registro 2026…');
 
@@ -1254,7 +1777,7 @@
         }
       }
 
-      setText(ctx.el.badgeMode, 'LIVE');
+      setText(ctx.el.badgeMode, 'Firebase');
       setText(ctx.el.badgeCount, `${state.registro.length} registros`);
       setText(ctx.el.status, 'Cargando análisis y programación…');
 
@@ -1293,7 +1816,7 @@
 
       renderDashboards();
 
-      setText(ctx.el.badgeMode, 'LIVE');
+      setText(ctx.el.badgeMode, 'Firebase');
       setText(ctx.el.badgeCount, `${state.registro.length} registros`);
       setText(ctx.el.status, 'Listo ✅');
       setTimeout(async () => {
@@ -1340,8 +1863,37 @@
   };
 
   // =========================
+  // Filtros sticky: mide topbar y actualiza --topbar-h
+  // =========================
+  function syncTopbarHeight() {
+    const topbar = document.querySelector('.topbar');
+    if (topbar) {
+      document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
+    }
+  }
+
+  syncTopbarHeight();
+  window.addEventListener('resize', syncTopbarHeight);
+  // Resinc tras carga de fuentes (puede cambiar el alto del topbar)
+  if (document.fonts?.ready) document.fonts.ready.then(syncTopbarHeight);
+
+  // Limpiar localStorage de cachés obsoletos al iniciar
+  (function clearOldLocalStorage() {
+    try {
+      const ripKeys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('rip2026_') && k !== 'rip2026_sync_settings') ripKeys.push(k);
+      }
+      ripKeys.forEach(k => localStorage.removeItem(k));
+    } catch (_) {}
+  })();
+
+  // =========================
   // Init
   // =========================
+  ctx.el.btnSyncSettings?.addEventListener('click', openSyncSettingsModal);
   wireTopUI();
   boot({ force: false });
+  setupSyncTimer();
 })();

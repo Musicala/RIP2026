@@ -22,18 +22,13 @@
 
   const { escapeHTML, fmtMoney, toast, norm, show, hide, setText } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
-  const EDITOR_API_URL = window.RIP_EDITOR_API_URL || '';
-  const EDITOR_TOKEN = window.RIP_EDITOR_TOKEN || 'MUSICALA-EDITOR-2026';
+  const EDITOR_API_URL = '';
+  const EDITOR_TOKEN = '';
 
   // =========================
   // Config años / TSV / columnas
   // =========================
-  const TSV_URLS = {
-    "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREJFkqvhXwjBNPCQXTg4pHXUplygJU1ZZG6-xgOeAJ2ifnEMHmuoDJKwQIpxVfGfCrmfmNCS_8RHTc/pub?gid=1810443337&single=true&output=tsv",
-    "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-    "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-    "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-  };
+  const TSV_URLS = {};
 
   const COLMAP = {
     "2023": { fecha: 1, nombre: 2, servicio: 4, hora: 7, pago: null, profesor: null },
@@ -72,7 +67,7 @@
 
   async function getParsedYearTSV(year) {
     const y = String(year || '').trim();
-    if (!TSV_URLS[y]) throw new Error(`No hay URL configurada para ${y}`);
+    if (!TSV_URLS[y]) return { headers: [], rows: [] };
 
     if (tsvYearCache.has(y)) return tsvYearCache.get(y);
 
@@ -258,12 +253,19 @@
     const cycleById = new Map();
     const cycleMetaById = new Map();
     const getRowId = (r) => String(r.id || `${r.fechaRaw}|${r.hora}|${r.servicio}`);
-    const getOrderNumber = (r, fallback) => {
-      const raw = String(r?.id || '').trim();
-      const n = Number(raw);
-      if (Number.isFinite(n)) return n;
-      const m = raw.match(/\d+/);
-      return m ? Number(m[0]) : fallback;
+    const getChronoKey = (r, fallback) => {
+      const rowNum = Number(r?.rowNum || r?.__rowNum || 0);
+      if (Number.isFinite(rowNum) && rowNum > 0) return rowNum;
+      const ts = Number(r?.fechaTs) || 0;
+      if (ts) return ts;
+      const parsed = window.RIPCalculations?.parseDate?.(r?.fecha || r?.fechaRaw);
+      return parsed ? parsed.getTime() : fallback;
+    };
+    const getTimeKey = (r) => {
+      const raw = String(r?.hora || '').trim();
+      const m = raw.match(/(\d{1,2}):(\d{2})/);
+      if (!m) return 0;
+      return Number(m[1]) * 60 + Number(m[2]);
     };
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
@@ -307,9 +309,12 @@
     const bottomToTop = rows
       .map((r, i) => ({ r, i }))
       .sort((a, b) => {
-        const ta = getOrderNumber(a.r, a.i);
-        const tb = getOrderNumber(b.r, b.i);
+        const ta = getChronoKey(a.r, a.i);
+        const tb = getChronoKey(b.r, b.i);
         if (ta !== tb) return ta - tb;
+        const ha = getTimeKey(a.r);
+        const hb = getTimeKey(b.r);
+        if (ha !== hb) return ha - hb;
         const pa = isPagoRow(a.r) ? 0 : 1;
         const pb = isPagoRow(b.r) ? 0 : 1;
         if (pa !== pb) return pa - pb;
@@ -323,7 +328,7 @@
       const rid = getRowId(r);
       const packageKey = getPackageKey(r);
 
-      if (!matricula && mov > 0) {
+      if (!matricula && isPagoRow(r) && mov > 0) {
         cycle += 1;
         const pack = makePackage(cycle, mov);
         let activePackage = activeByKey.get(packageKey) || null;
@@ -441,8 +446,10 @@
               : `Plan #${cycleIdx + 1}`;
         const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}`;
         const debtClass = isClaseRow(r) && mov < 0 ? 'row-debt' : '';
+        const actionKey = getEditableRowKey(r);
+        const canPersistRow = !!actionKey;
         const actions = editable
-          ? `<td class="td-ficha-actions"><button class="btn small ghost" type="button" data-edit-row="${escapeHTML(r.id || '')}">Editar</button> <button class="btn small" type="button" data-dup-row="${escapeHTML(r.id || '')}">Duplicar</button> <button class="btn small ghost" type="button" data-del-row="${escapeHTML(r.id || '')}">Eliminar</button></td>`
+          ? `<td class="td-ficha-actions"><button class="btn small ghost" type="button" data-edit-row="${escapeHTML(actionKey)}" ${canPersistRow ? '' : 'disabled title="Fila sin ID ni número de fila"'}>Editar</button> <button class="btn small" type="button" data-dup-row="${escapeHTML(actionKey)}" ${canPersistRow ? '' : 'disabled title="Fila sin ID ni número de fila"'}>Duplicar</button> <button class="btn small ghost" type="button" data-del-row="${escapeHTML(actionKey)}" ${canPersistRow ? '' : 'disabled title="Fila sin ID ni número de fila"'}>Eliminar</button></td>`
           : '';
 
         return `
@@ -728,10 +735,6 @@
       el.btnTop2025.textContent = activeYear === '2025' ? '🗂️ Volver 2026' : '🗂️ 2025';
     }
 
-    if (el.btn2025) {
-      el.btn2025.style.display = years.includes('2025') ? '' : 'none';
-      el.btn2025.textContent = activeYear === '2025' ? 'Volver 2026' : '2025';
-    }
   }
 
   function renderYearButtons(ctx, state) {
@@ -812,7 +815,6 @@
       renderYearButtons(ctx, state);
 
       if (el.btnTop2025) el.btnTop2025.disabled = true;
-      if (el.btn2025) el.btn2025.disabled = true;
 
       setText(el.fichaSub, `Cargando registro ${y}...`);
 
@@ -838,7 +840,6 @@
       }
     } finally {
       if (el.btnTop2025) el.btnTop2025.disabled = false;
-      if (el.btn2025) el.btn2025.disabled = false;
     }
   }
 
@@ -947,7 +948,48 @@
     return { ...row, __isNew: !!row.__isNew, __deleted: !!row.__deleted };
   }
 
+  function getEditableRowKey(row) {
+    const id = String(row?.id || '').trim();
+    if (id) return 'id:' + id;
+
+    const rn = Number(row?.rowNum || row?.__rowNum || 0);
+    if (Number.isFinite(rn) && rn >= 2) return 'row:' + rn;
+
+    const local = String(row?.__localKey || '').trim();
+    if (local) return 'local:' + local;
+
+    return '';
+  }
+
+  function findEditableRowByKey(rows, key) {
+    const k = String(key || '').trim();
+    if (!k) return null;
+    return (rows || []).find((r) => getEditableRowKey(r) === k) || null;
+  }
+
+  function getEditorRowParams(row) {
+    const rowId = String(row?.id || '').trim();
+    const rowNum = Number(row?.rowNum || row?.__rowNum || 0);
+    const params = {};
+    if (rowId) params.rowId = rowId;
+    if (Number.isFinite(rowNum) && rowNum >= 2) params.rowNum = String(rowNum);
+    return params;
+  }
+
+  function assertEditableRowReference(row, actionLabel) {
+    const params = getEditorRowParams(row);
+    if (!params.rowId && !params.rowNum) {
+      throw new Error(`${actionLabel}: la fila no tiene ID ni número de fila. Actualiza el registro y revisa la columna ID.`);
+    }
+    return params;
+  }
+
   function apiCallEditor(params = {}) {
+    if (window.RIPRepository) {
+      if (params.action === 'editRow') return window.RIPRepository.updateRegistroRow(params.rowId, JSON.parse(params.data || '{}')).then(() => ({ ok: true }));
+      if (params.action === 'addRow') return window.RIPRepository.addRegistroRow(JSON.parse(params.data || '{}')).then((r) => ({ ok: true, newId: r.id }));
+      if (params.action === 'deleteRow') return window.RIPRepository.deleteRegistroRow(params.rowId).then(() => ({ ok: true }));
+    }
     if (!EDITOR_API_URL) return Promise.reject(new Error('RIP_EDITOR_API_URL no esta configurada'));
     return new Promise((resolve, reject) => {
       const cb = '__rip_editor_' + Math.random().toString(36).slice(2);
@@ -1070,11 +1112,11 @@
       const editBtn = ev.target.closest('[data-edit-row]');
       const dupBtn = ev.target.closest('[data-dup-row]');
       const delBtn = ev.target.closest('[data-del-row]');
-      const id = editBtn?.getAttribute('data-edit-row') || dupBtn?.getAttribute('data-dup-row') || delBtn?.getAttribute('data-del-row');
-      if (!id) return;
+      const key = editBtn?.getAttribute('data-edit-row') || dupBtn?.getAttribute('data-dup-row') || delBtn?.getAttribute('data-del-row');
+      if (!key) return;
 
       const rows = ctx.__fichaRowsWorking || [];
-      const row = rows.find((r) => String(r.id) === String(id));
+      const row = findEditableRowByKey(rows, key);
       if (!row) return;
       const state = ctx.__fichaState;
 
@@ -1089,6 +1131,9 @@
       if (dupBtn) {
         const copy = cloneRow(row);
         copy.id = 'LOCAL-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
+        delete copy.rowNum;
+        delete copy.__rowNum;
+        copy.__localKey = copy.id;
         copy.__isNew = true;
         rows.unshift(copy);
         refreshEditableFicha(ctx, state);
@@ -1104,11 +1149,6 @@
   }
 
   async function saveEditChanges(ctx, state) {
-    if (!EDITOR_API_URL) {
-      toast(ctx.el.toastWrap, 'Configura RIP_EDITOR_API_URL para guardar edicion.', 'warn');
-      return;
-    }
-
     const rows = (ctx.__fichaRowsWorking || []).map(cloneRow);
     const baseMap = new Map((ctx.__fichaRowsBase || []).map((r) => [String(r.id), r]));
 
@@ -1121,28 +1161,36 @@
         return { row: r, changes };
       })
       .filter((x) => Object.keys(x.changes).length > 0);
-    const deleted = (ctx.__fichaRowsBase || []).filter((r) => !rows.find((x) => String(x.id) === String(r.id) && !x.__deleted));
+    const deleted = (ctx.__fichaRowsBase || [])
+      .filter((r) => !rows.find((x) => getEditableRowKey(x) === getEditableRowKey(r) && !x.__deleted))
+      .sort((a, b) => Number(b.rowNum || b.__rowNum || 0) - Number(a.rowNum || a.__rowNum || 0));
 
     for (const u of updated) {
+      const rowRef = assertEditableRowReference(u.row, 'Editar');
       const res = await apiCallEditor({
         action: 'editRow',
-        token: EDITOR_TOKEN,
-        rowId: u.row.id,
+        ...rowRef,
         data: JSON.stringify(u.changes)
       });
-      if (!res?.ok) throw new Error(res?.error || ('Error editando ' + u.row.id));
+      if (!res?.ok) throw new Error(res?.error || ('Error editando ' + (u.row.id || u.row.rowNum || 'fila')));
     }
 
     for (const r of created) {
-      const res = await apiCallEditor({ action: 'addRow', token: EDITOR_TOKEN, data: JSON.stringify(toEditablePayload(r)) });
+      const res = await apiCallEditor({ action: 'addRow', data: JSON.stringify(toEditablePayload(r)) });
       if (!res?.ok) throw new Error(res?.error || 'Error duplicando fila');
       if (res?.newId) r.id = res.newId;
+      if (res?.rowNum) {
+        r.rowNum = Number(res.rowNum) || r.rowNum;
+        r.__rowNum = Number(res.rowNum) || r.__rowNum;
+      }
+      delete r.__localKey;
       r.__isNew = false;
     }
 
     for (const r of deleted) {
-      const res = await apiCallEditor({ action: 'deleteRow', token: EDITOR_TOKEN, rowId: r.id });
-      if (!res?.ok) throw new Error(res?.error || ('Error eliminando ' + r.id));
+      const rowRef = assertEditableRowReference(r, 'Eliminar');
+      const res = await apiCallEditor({ action: 'deleteRow', ...rowRef });
+      if (!res?.ok) throw new Error(res?.error || ('Error eliminando ' + (r.id || r.rowNum || 'fila')));
     }
 
     const cleaned = rows.filter((r) => !r.__deleted).map((r) => {
@@ -1159,6 +1207,11 @@
     ctx.__fichaRowsWorking = cleaned.map(cloneRow);
     ctx.__fichaEditMode = false;
     toggleEditButtons(ctx, false);
+
+    // Evita que una fila eliminada reaparezca por caché local después de guardar.
+    try { window.RIPCore?.clearCaches?.(); } catch (_) {}
+    try { window.RIPApp?.clearAppCaches?.(); } catch (_) {}
+
     refreshEditableFicha(ctx, state);
     toast(ctx.el.toastWrap, 'Cambios guardados', 'ok');
   }
