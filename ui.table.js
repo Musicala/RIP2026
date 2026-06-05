@@ -92,19 +92,54 @@
     return Array.isArray(state.allStudents) ? state.allStudents : [];
   }
 
+  function studentNameScore(value) {
+    const text = String(value || '').trim();
+    const upper = (text.match(/[A-Zаимсзя]/g) || []).length;
+    const words = norm(text).split(' ').filter(Boolean).length;
+    return text.length + words * 10 + upper * 2;
+  }
+
+  function shouldMergeStudentNames(a, b) {
+    const ak = norm(a);
+    const bk = norm(b);
+    if (!ak || !bk) return false;
+    if (ak === bk) return true;
+    const shorter = ak.length <= bk.length ? ak : bk;
+    const longer = ak.length <= bk.length ? bk : ak;
+    const words = shorter.split(' ').filter(Boolean);
+    return words.length >= 2 && longer.includes(shorter);
+  }
+
   function dedupeStudentsByName(students) {
-    const seen = new Set();
     const out = [];
     for (const s of students || []) {
       const name = String(s?.name || '').trim();
       const k = norm(name);
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      out.push(s);
+      if (!k) continue;
+      const idx = out.findIndex(prev => shouldMergeStudentNames(prev?.name, name));
+      if (idx >= 0) {
+        if (studentNameScore(name) > studentNameScore(out[idx]?.name)) out[idx] = s;
+      } else {
+        out.push(s);
+      }
     }
     return out;
   }
 
+
+  function removeShortContainedNames(students) {
+    const list = students || [];
+    return list.filter((s) => {
+      const name = String(s?.name || '').trim();
+      const key = norm(name);
+      const words = key.split(' ').filter(Boolean);
+      if (words.length !== 1) return true;
+      return !list.some(other => {
+        const otherKey = norm(other?.name);
+        return otherKey !== key && otherKey.split(' ').filter(Boolean).length >= 2 && otherKey.includes(key);
+      });
+    });
+  }
   function getStudentDisplayName(s) {
     return String(s?.name || '').trim();
   }
@@ -119,7 +154,7 @@
     if (!dl) return;
 
     const q = norm(query || '');
-    const pool = dedupeStudentsByName(students);
+    const pool = removeShortContainedNames(dedupeStudentsByName(students));
 
     const list = q
       ? pool.filter((s) => norm(getStudentDisplayName(s)).includes(q)).slice(0, 80)
@@ -136,7 +171,7 @@
   function findStudentMatches(students, name) {
     const target = norm(name);
     if (!target) return [];
-    const pool = dedupeStudentsByName(students || []);
+    const pool = removeShortContainedNames(dedupeStudentsByName(students || []));
     const exact = pool.filter((s) => norm(s?.name) === target);
     return exact.length ? exact : pool.filter((s) => norm(s?.name).includes(target));
   }

@@ -415,18 +415,37 @@
     };
   }
 
-  function dedupeByNormalizedName(items) {
-    const seen = new Set();
-    const out = [];
+  function studentNameScore(value) {
+    const text = String(value || '').trim();
+    const upper = (text.match(/[A-Z¡…Õ”⁄—]/g) || []).length;
+    const words = norm(text).split(' ').filter(Boolean).length;
+    return text.length + words * 10 + upper * 2;
+  }
 
+  function shouldMergeStudentNames(a, b) {
+    const ak = norm(a);
+    const bk = norm(b);
+    if (!ak || !bk) return false;
+    if (ak === bk) return true;
+    const shorter = ak.length <= bk.length ? ak : bk;
+    const longer = ak.length <= bk.length ? bk : ak;
+    const words = shorter.split(' ').filter(Boolean);
+    return words.length >= 2 && longer.includes(shorter);
+  }
+
+  function dedupeByNormalizedName(items) {
+    const out = [];
     for (const item of items || []) {
       const name = String(item?.name || '').trim();
       const key = norm(name);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
+      if (!key) continue;
+      const idx = out.findIndex(prev => shouldMergeStudentNames(prev?.name, name));
+      if (idx >= 0) {
+        if (studentNameScore(name) > studentNameScore(out[idx]?.name)) out[idx] = item;
+      } else {
+        out.push(item);
+      }
     }
-
     return out;
   }
 
@@ -1425,9 +1444,14 @@
       const partial = pool.filter(s => norm(s.name).includes(key));
       if (partial.length === 1) entry = partial[0];
       else if (partial.length > 1) {
-        setText(ctx.el.quickSearchStatus, `EncontrÈ ${partial.length} coincidencias. Escoge una de la lista.`);
-        RIPUI.table?.renderStudentDatalist?.(ctx, pool, name);
-        return;
+        const ranked = [...partial].sort((a, b) => studentNameScore(b.name) - studentNameScore(a.name));
+        const bestKey = norm(ranked[0]?.name);
+        if (bestKey && partial.every(s => bestKey.includes(norm(s.name)))) entry = ranked[0];
+        else {
+          setText(ctx.el.quickSearchStatus, 'Encontre ' + partial.length + ' coincidencias. Escoge una de la lista.');
+          RIPUI.table?.renderStudentDatalist?.(ctx, pool, name);
+          return;
+        }
       }
     }
     if (entry && RIPUI.ficha?.openStudentFromSearch) {

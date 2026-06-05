@@ -185,13 +185,22 @@
   }
 
 
+  function studentNameScore(value) {
+    const text = String(value || '').trim();
+    const upper = (text.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length;
+    const words = norm(text).split(' ').filter(Boolean).length;
+    return text.length + words * 10 + upper * 2;
+  }
+
   function buildLocalStudentIndex(registro, students, programacion) {
     const byKey = new Map();
     const add = (name, source, id) => {
       const clean = String(name || '').trim();
       const key = norm(clean);
       if (!clean || !key) return;
-      if (!byKey.has(key)) byKey.set(key, { id: id || key, sourceCollection: source || 'rip', name: clean, nameKey: key, emails: [], active: true });
+      const current = byKey.get(key);
+      const next = { id: id || key, sourceCollection: source || 'rip', name: clean, nameKey: key, emails: [], active: true };
+      if (!current || studentNameScore(clean) > studentNameScore(current.name)) byKey.set(key, next);
     };
     (students || []).forEach(s => add(s.name || s.estudiante, 'rip/students', s.id || s.nameKey));
     (programacion || []).forEach(p => add(p.estudiante || p.name, 'rip/programacion', p.id || p.studentId || p.estudianteKey));
@@ -208,7 +217,9 @@
       snap.forEach((docSnap) => {
         const data = docSnap.data() || {};
         const email = normalizeEmail(data.email || docSnap.id);
-        const name = String(data.estudiante || data.name || '').trim();
+        const savedName = String(data.estudiante || data.name || '').trim();
+        const canonical = findLocalStudentByName(savedName);
+        const name = String(canonical?.name || savedName).trim();
         const key = norm(name || data.estudianteKey || '');
         if (email && name) links.set(email, {
           id: data.estudianteKey || key || docSnap.id,
@@ -262,7 +273,7 @@
     const matches = localStudents.filter((student) => {
       const candidate = student.nameKey || norm(student.name);
       if (!candidate) return false;
-      if (candidate === target || candidate.includes(target) || target.includes(candidate)) return true;
+      if (candidate === target || candidate.includes(target)) return true;
       if (targetParts.length >= 2) return targetParts.every(part => candidate.includes(part));
       return targetParts.length === 1 && targetParts[0].length >= 5 && candidate.includes(targetParts[0]);
     });
@@ -274,7 +285,9 @@
       seen.add(key);
       unique.push(student);
     }
-    return unique.length === 1 ? unique[0] : null;
+    if (!unique.length) return null;
+    unique.sort((a, b) => studentNameScore(b.name) - studentNameScore(a.name));
+    return unique[0];
   }
   function normalizeEmail(value) {
     return String(value || '')
@@ -304,10 +317,10 @@
   function findOfficialStudentByEmail(email) {
     const target = normalizeEmail(email);
     if (!target) return null;
-    const localExact = localEmailLinks.get(target);
-    if (localExact) return localExact;
     const exact = officialStudentsByEmail.get(target);
     if (exact) return exact;
+    const localExact = localEmailLinks.get(target);
+    if (localExact) return localExact;
 
     const targetUser = target.split('@')[0] || target;
     const matches = [];
@@ -362,7 +375,7 @@
   function normalizeOfficialStudent(data, id, sourceCollection) {
     const first = String(pickObjectValue(data, ['nombre', 'name', 'nombres', 'firstName', 'first name', 'nombreEstudiante', 'nombre estudiante', 'nombreAlumno', 'nombre alumno']) || '').trim();
     const last = String(pickObjectValue(data, ['apellido', 'apellidos', 'lastName', 'last name', 'apellidoEstudiante', 'apellido estudiante', 'apellidoAlumno', 'apellido alumno']) || '').trim();
-    const full = String(pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName', 'estudiante', 'studentName', 'nombreEstudianteCompleto', 'nombre estudiante completo', 'alumno', 'cliente']) || '').trim();
+    const full = String(pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName', 'estudiante', 'studentName', 'nombreEstudianteCompleto', 'nombre estudiante completo', 'nombre del estudiante', 'nombre_del_estudiante', 'nombre y apellido', 'nombre_y_apellido', 'nombres y apellidos', 'nombres_y_apellidos', 'nombre acudiente estudiante', 'alumno', 'cliente']) || '').trim();
     const firstEmail = collectEmails(data, id)[0] || '';
     const name = full || [first, last].filter(Boolean).join(' ').trim() || String(data?.nombre || data?.name || id || firstEmail).trim();
     const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificación']);
