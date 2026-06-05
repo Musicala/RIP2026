@@ -31,6 +31,12 @@
   let invalidRows = [];
   let existingHashes = new Set();
   let existingDates = new Set();
+  let officialStudentsByEmail = new Map();
+  let officialStudentsLoaded = false;
+  let officialStudentsError = '';
+  let officialStudentsReadStats = { collections: 0, docs: 0, emails: 0 };
+  let localStudents = [];
+  let localEmailLinks = new Map();
   const today = new Date();
   let calendarYear = today.getFullYear();
   let calendarMonth = today.getMonth();
@@ -45,7 +51,9 @@
     setStatus('Conectando con Firebase...');
     await window.RIPFirebase.ready;
     await refreshExisting();
-    setStatus('Listo para cargar CSV');
+    await loadLocalEmailLinks();
+    await loadOfficialStudentsIndex();
+    setStatus('Listo para cargar CSV. ' + officialStudentsByEmail.size + ' estudiantes activos por correo.');
   }
 
   function wire() {
@@ -90,7 +98,12 @@
 
   async function refreshExisting() {
     setStatus('Leyendo clases existentes...');
-    const registro = await window.RIPRepository.loadRegistro();
+    const [registro, students, programacion] = await Promise.all([
+      window.RIPRepository.loadRegistro(),
+      window.RIPRepository.loadStudents(),
+      window.RIPRepository.loadProgramacion()
+    ]);
+    buildLocalStudentIndex(registro, students, programacion);
     existingHashes = new Set(registro.map(r => r.recordHash).filter(Boolean));
     const classDates = registro
       .filter(r => norm(r.tipo) === 'clase')
@@ -108,6 +121,7 @@
     hideUploadSuccess();
     setStatus('Leyendo CSV...');
     const text = await file.text();
+    await ensureOfficialStudentsIndex();
     const objects = parseCSV(text);
     rawRows = objects.map((row, idx) => fromWixRow(row, idx));
     applyDedupe();
@@ -115,15 +129,278 @@
     setStatus(`CSV cargado: ${rawRows.length} filas revisadas.`);
   }
 
+  async function ensureOfficialStudentsIndex() {
+    if (officialStudentsLoaded || officialStudentsError) return;
+    await loadOfficialStudentsIndex();
+  }
+
+  async function loadOfficialStudentsIndex() {
+    const config = window.MUSICALA_STUDENTS_FIREBASE_CONFIG;
+    if (!config) {
+      officialStudentsError = 'No esta configurado el Firestore de estudiantes activos.';
+      return;
+    }
+
+    setStatus('Leyendo estudiantes activos por correo...');
+    try {
+      const CDN = 'https://www.gstatic.com/firebasejs/10.12.5/';
+      const appMod = await import(CDN + 'firebase-app.js');
+      const fsMod = await import(CDN + 'firebase-firestore.js');
+      const appName = 'musicala-students-active';
+      const app = appMod.getApps().some(a => a.name === appName)
+        ? appMod.getApp(appName)
+        : appMod.initializeApp(config, appName);
+      const db = fsMod.getFirestore(app);
+      const collections = window.MUSICALA_STUDENTS_COLLECTIONS || ['students', 'Students', 'estudiantes', 'Estudiantes', 'alumnos', 'Alumnos', 'usuarios', 'Usuarios'];
+      const byEmail = new Map();
+      let docsRead = 0;
+      let collectionsRead = 0;
+
+      for (const collectionName of collections) {
+        try {
+          const snap = await fsMod.getDocs(fsMod.collection(db, collectionName));
+          if (!snap.empty) collectionsRead++;
+          docsRead += snap.size;
+          snap.forEach((docSnap) => {
+            const student = normalizeOfficialStudent(docSnap.data(), docSnap.id, collectionName);
+            if (!student.active || !student.emails.length) return;
+            for (const email of student.emails) {
+              if (!byEmail.has(email)) byEmail.set(email, student);
+            }
+          });
+        } catch (err) {
+          console.warn(`No se pudo leer ${collectionName} en estudiantes-musicala:`, err);
+        }
+      }
+
+      officialStudentsByEmail = byEmail;
+      officialStudentsLoaded = true;
+      officialStudentsReadStats = { collections: collectionsRead, docs: docsRead, emails: byEmail.size };
+      officialStudentsError = '';
+      console.info('Estudiantes activos leidos:', officialStudentsReadStats);
+    } catch (err) {
+      console.error(err);
+      officialStudentsError = err?.message || 'No se pudo cargar estudiantes activos.';
+    }
+  }
+
+
+  function buildLocalStudentIndex(registro, students, programacion) {
+    const byKey = new Map();
+    const add = (name, source, id) => {
+      const clean = String(name || '').trim();
+      const key = norm(clean);
+      if (!clean || !key) return;
+      if (!byKey.has(key)) byKey.set(key, { id: id || key, sourceCollection: source || 'rip', name: clean, nameKey: key, emails: [], active: true });
+    };
+    (students || []).forEach(s => add(s.name || s.estudiante, 'rip/students', s.id || s.nameKey));
+    (programacion || []).forEach(p => add(p.estudiante || p.name, 'rip/programacion', p.id || p.studentId || p.estudianteKey));
+    (registro || []).forEach(r => add(r.estudiante, 'rip/registro', r.estudianteKey));
+    localStudents = Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }
+
+  async function loadLocalEmailLinks() {
+    try {
+      const env = await window.RIPFirebase.ready;
+      const { collection, getDocs } = env.fs;
+      const snap = await getDocs(collection(env.db, 'wixStudentEmails'));
+      const links = new Map();
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() || {};
+        const email = normalizeEmail(data.email || docSnap.id);
+        const name = String(data.estudiante || data.name || '').trim();
+        const key = norm(name || data.estudianteKey || '');
+        if (email && name) links.set(email, {
+          id: data.estudianteKey || key || docSnap.id,
+          sourceCollection: 'rip/wixStudentEmails',
+          name,
+          nameKey: key,
+          emails: [email],
+          active: true
+        });
+      });
+      localEmailLinks = links;
+    } catch (err) {
+      console.warn('No se pudieron leer relaciones correo-estudiante locales:', err);
+      localEmailLinks = new Map();
+    }
+  }
+
+  async function saveLocalEmailLink(row) {
+    const email = normalizeEmail(row?.correo);
+    const name = String(row?.estudianteOficial || row?.estudiante || '').trim();
+    if (!email || !name) return;
+    try {
+      const env = await window.RIPFirebase.ready;
+      const { doc, setDoc, serverTimestamp } = env.fs;
+      await setDoc(doc(env.db, 'wixStudentEmails', email), {
+        email,
+        estudiante: name,
+        estudianteKey: norm(name),
+        estudianteWix: String(row.estudianteWix || '').trim(),
+        source: row.officialStudentCollection || 'rip/importador',
+        updatedAt: serverTimestamp(),
+        updatedBy: env.user?.email || ''
+      }, { merge: true });
+      localEmailLinks.set(email, {
+        id: norm(name),
+        sourceCollection: 'rip/wixStudentEmails',
+        name,
+        nameKey: norm(name),
+        emails: [email],
+        active: true
+      });
+    } catch (err) {
+      console.warn('No se pudo guardar relacion correo-estudiante:', err);
+    }
+  }
+
+  function findLocalStudentByName(name) {
+    const target = norm(name);
+    if (!target) return null;
+    const targetParts = target.split(' ').filter(p => p.length >= 3);
+    const matches = localStudents.filter((student) => {
+      const candidate = student.nameKey || norm(student.name);
+      if (!candidate) return false;
+      if (candidate === target || candidate.includes(target) || target.includes(candidate)) return true;
+      if (targetParts.length >= 2) return targetParts.every(part => candidate.includes(part));
+      return targetParts.length === 1 && targetParts[0].length >= 5 && candidate.includes(targetParts[0]);
+    });
+    const unique = [];
+    const seen = new Set();
+    for (const student of matches) {
+      const key = student.nameKey || norm(student.name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(student);
+    }
+    return unique.length === 1 ? unique[0] : null;
+  }
+  function normalizeEmail(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[<>"']/g, '');
+  }
+
+  function extractEmails(value) {
+    const out = [];
+    const visit = (v) => {
+      if (v === null || v === undefined) return;
+      if (Array.isArray(v)) return v.forEach(visit);
+      if (typeof v === 'object') return Object.values(v).forEach(visit);
+      const text = String(v || '').toLowerCase();
+      const matches = text.match(/[a-z0-9._%+-]+\s*@\s*[a-z0-9.-]+\s*\.\s*[a-z]{2,}/gi) || [];
+      matches.forEach(m => {
+        const email = normalizeEmail(m);
+        if (email.includes('@')) out.push(email);
+      });
+    };
+    visit(value);
+    return out;
+  }
+
+  function findOfficialStudentByEmail(email) {
+    const target = normalizeEmail(email);
+    if (!target) return null;
+    const localExact = localEmailLinks.get(target);
+    if (localExact) return localExact;
+    const exact = officialStudentsByEmail.get(target);
+    if (exact) return exact;
+
+    const targetUser = target.split('@')[0] || target;
+    const matches = [];
+    for (const [candidate, student] of officialStudentsByEmail.entries()) {
+      const c = normalizeEmail(candidate);
+      if (!c) continue;
+      const cUser = c.split('@')[0] || c;
+      if (
+        c.includes(target) ||
+        target.includes(c) ||
+        (targetUser.length >= 5 && cUser.includes(targetUser)) ||
+        (cUser.length >= 5 && targetUser.includes(cUser))
+      ) {
+        matches.push(student);
+      }
+    }
+
+    const unique = [];
+    const seen = new Set();
+    for (const student of matches) {
+      const key = `${student.sourceCollection || ''}:${student.id || student.name || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(student);
+    }
+    return unique.length === 1 ? unique[0] : null;
+  }
+
+  function pickObjectValue(data, names) {
+    const map = new Map(Object.keys(data || {}).map(k => [norm(k), data[k]]));
+    for (const name of names) {
+      const value = map.get(norm(name));
+      if (value !== undefined && value !== null && String(value).trim()) return value;
+    }
+    return '';
+  }
+
+  function collectEmails(data, id) {
+    const raw = [];
+    raw.push(id);
+    raw.push(pickObjectValue(data, ['email', 'correo', 'correo electronico', 'correo electrónico', 'mail', 'emailEstudiante', 'email estudiante', 'correoEstudiante', 'correo estudiante', 'emailAlumno', 'email alumno', 'correoAlumno', 'correo alumno', 'emailAcudiente', 'correoAcudiente', 'correo electronico envio de guias e informacion adicional', 'correo electrónico envío de guías e información adicional', 'correo_electronico_envio_de_guias_e_informacion_adicional']));
+    for (const key of ['emails', 'correos']) {
+      const value = data?.[key];
+      if (Array.isArray(value)) raw.push(...value);
+      else if (value && typeof value === 'object') raw.push(...Object.values(value));
+      else if (value) raw.push(value);
+    }
+    raw.push(...extractEmails(data));
+    return Array.from(new Set(raw.flatMap(extractEmails).concat(raw.map(normalizeEmail)).filter(v => v.includes('@'))));
+  }
+
+  function normalizeOfficialStudent(data, id, sourceCollection) {
+    const first = String(pickObjectValue(data, ['nombre', 'name', 'nombres', 'firstName', 'first name', 'nombreEstudiante', 'nombre estudiante', 'nombreAlumno', 'nombre alumno']) || '').trim();
+    const last = String(pickObjectValue(data, ['apellido', 'apellidos', 'lastName', 'last name', 'apellidoEstudiante', 'apellido estudiante', 'apellidoAlumno', 'apellido alumno']) || '').trim();
+    const full = String(pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName', 'estudiante', 'studentName', 'nombreEstudianteCompleto', 'nombre estudiante completo', 'alumno', 'cliente']) || '').trim();
+    const firstEmail = collectEmails(data, id)[0] || '';
+    const name = full || [first, last].filter(Boolean).join(' ').trim() || String(data?.nombre || data?.name || id || firstEmail).trim();
+    const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificación']);
+    const activeText = norm(activeRaw);
+    const inactive = activeText.includes('inactivo') || activeText.includes('inactiva') || activeText.includes('exestudiante') || activeText.includes('retirado');
+    const active = activeRaw === false ? false : !inactive;
+    return {
+      id,
+      sourceCollection,
+      name,
+      emails: collectEmails(data, id),
+      active,
+      raw: data
+    };
+  }
+
+  function getWixName(row) {
+    const direct = pick(row, ['Nombre del cliente', 'Cliente', 'Nombre completo', 'Name']);
+    const first = pick(row, ['Nombre']);
+    const last = pick(row, ['Apellido']);
+    return direct || [first, last].filter(Boolean).join(' ').trim();
+  }
+
   function fromWixRow(row, idx) {
-    const estudiante = pick(row, ['Nombre del cliente', 'Cliente', 'Nombre', 'Nombre completo', 'Name', 'Email', 'Correo electronico', 'Correo electrÃ³nico', 'Email del cliente']);
-    const correo = pick(row, ['Email', 'Correo electronico', 'Correo electrÃ³nico', 'Email del cliente']);
+    const correo = normalizeEmail(pick(row, ['Email', 'Correo electronico', 'Correo electrónico', 'Email del cliente']));
+    const wixName = getWixName(row);
+    const official = (correo ? findOfficialStudentByEmail(correo) : null) || findLocalStudentByName(wixName);
     const fechaW = pick(row, ['Hora de inicio de reserva', 'Fecha', 'Fecha de reserva', 'Start Time', 'Booking start time']);
     const item = {
       sourceIndex: idx,
       tipo: 'Clase',
-      estudiante: estudiante || correo,
+      estudiante: official?.name || wixName || correo,
+      estudianteWix: wixName,
+      estudianteOficial: official?.name || '',
       correo,
+      officialStudentId: official?.id || '',
+      officialStudentCollection: official?.sourceCollection || '',
+      officialMatchStatus: official ? 'matched' : (correo ? 'missing' : 'no-email'),
       fechaW,
       fecha: parseWixDate(fechaW),
       hora: parseWixTime(fechaW),
@@ -135,7 +412,6 @@
     };
     return recompute(item);
   }
-
   function recompute(row) {
     const normalized = window.RIPRepository.normalizeRegistro(row);
     return {
@@ -152,6 +428,8 @@
 
   function validate(normalized) {
     const issues = [];
+    if (officialStudentsError) issues.push('sin validar estudiantes activos');
+    if (!normalized.correo) issues.push('sin correo');
     if (!normalized.estudianteKey) issues.push('sin estudiante');
     if (!normalized.fecha) issues.push('sin fecha');
     if (!normalized.servicio) issues.push('sin servicio');
@@ -167,7 +445,7 @@
     previewRows = [];
 
     for (const row of rawRows) {
-      const item = { ...row, status: 'ok', label: 'Lista', reason: '' };
+      const item = { ...row, status: 'ok', label: row.officialMatchStatus === 'matched' ? 'Correo OK' : 'Nombre Wix', reason: '' };
       if (row.validation && row.validation.length) {
         item.status = 'bad';
         item.label = 'Incompleta';
@@ -200,6 +478,21 @@
     const row = rawRows[idx];
     if (!row) return;
     row[field] = cell.textContent.trim();
+    if (field === 'estudiante') {
+      const local = findLocalStudentByName(row.estudiante);
+      if (local) {
+        row.estudiante = local.name;
+        row.estudianteOficial = local.name;
+        row.officialStudentId = local.id || local.nameKey || '';
+        row.officialStudentCollection = local.sourceCollection || 'rip/local';
+        row.officialMatchStatus = 'matched';
+      } else {
+        row.estudianteOficial = '';
+        row.officialStudentId = '';
+        row.officialStudentCollection = '';
+        row.officialMatchStatus = row.correo ? 'missing' : 'no-email';
+      }
+    }
     if (field === 'fechaW') {
       row.fecha = parseWixDate(row.fechaW);
       row.hora = parseWixTime(row.fechaW);
@@ -223,6 +516,7 @@
           skipped++;
           continue;
         }
+        await saveLocalEmailLink(row);
         const saved = await window.RIPRepository.addRegistroRow(row);
         existingHashes.add(saved.recordHash);
         if (shouldCountClassDate(saved.fecha || saved.fechaRaw)) existingDates.add(saved.fecha || saved.fechaRaw);
@@ -254,7 +548,7 @@
     els.previewBody.innerHTML = previewRows.slice(0, 200).map((row) => `
       <tr data-index="${row.sourceIndex}" title="${escapeHTML(row.reason || '')}">
         <td><span class="status-pill ${row.status}">${escapeHTML(row.label)}</span></td>
-        <td contenteditable="true" data-field="estudiante">${escapeHTML(row.estudiante)}</td>
+        <td contenteditable="true" data-field="estudiante" title="Wix: ${escapeHTML(row.estudianteWix || '')} · Correo: ${escapeHTML(row.correo || '')}">${escapeHTML(row.estudiante)}</td>
         <td contenteditable="true" data-field="fechaW">${escapeHTML(row.fechaW)}</td>
         <td contenteditable="true" data-field="servicio">${escapeHTML(row.servicio)}</td>
         <td contenteditable="true" data-field="profesor">${escapeHTML(row.profesor)}</td>

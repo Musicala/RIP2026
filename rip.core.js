@@ -148,6 +148,10 @@
   const hasText = (v) => String(v || '').trim().length > 0;
   const test = (txt, re) => re.test(String(txt || ''));
   const isTrialText = (servicioRaw, comentarioRaw = '') => /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/i.test(norm(`${servicioRaw || ''} ${comentarioRaw || ''}`));
+  const isTrialCPText = (servicioRaw, comentarioRaw = '', clasifRaw = '', clasifPagoRaw = '') => {
+    const txt = norm(`${servicioRaw || ''} ${comentarioRaw || ''} ${clasifRaw || ''} ${clasifPagoRaw || ''}`);
+    return /\bcp\b/i.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/i.test(txt);
+  };
   const isCourtesyText = (servicioRaw, comentarioRaw = '') => /\b(cortesia|gratis|obsequio)\b/i.test(norm(`${servicioRaw || ''} ${comentarioRaw || ''}`));
   const isTrialOrCourtesyText = (servicioRaw, comentarioRaw = '') => isTrialText(servicioRaw, comentarioRaw) || isCourtesyText(servicioRaw, comentarioRaw);
   const classifyMovimiento = (tipoRaw, servicioRaw, pagoRaw, clasifRaw, clasifPagoRaw, comentarioRaw = '') => {
@@ -160,6 +164,8 @@
     if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
     const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
     const s = servicio;
+    if (isTrialCPText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: isPago ? 'CP de Clase de prueba' : '' };
+    if (isCourtesyCCText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: isPago ? 'CC de Clase de cortesia' : '' };
     if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
     if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
@@ -186,11 +192,16 @@
     if (test(s, /musi/i) && !test(s, /personalizada/i)) return { clasifAuto: 'MS G', clasifPagoAuto: '' };
     if (test(s, /\bms\b/i)) return { clasifAuto: 'MS P', clasifPagoAuto: '' };
     return { clasifAuto: 'No clasificado', clasifPagoAuto: '' };
-  };  const computeMovimiento = (tipoRaw, servicioRaw, comentarioRaw, existingMovRaw) => {
+  };
+  const computeMovimiento = (tipoRaw, servicioRaw, comentarioRaw, existingMovRaw) => {
     const tipo = String(tipoRaw || '').trim();
     const servicio = String(servicioRaw || '').trim();
     const comentario = String(comentarioRaw || '').trim();
     const existing = Number(existingMovRaw);
+    if (/^pago$/i.test(tipo) && isTrialCPText(servicio, comentario)) return 1;
+    if (/^pago$/i.test(tipo) && isCourtesyCCText(servicio, comentario)) return 1;
+    if (/^clase$/i.test(tipo) && isTrialCPText(servicio, comentario)) return -1;
+    if (/^clase$/i.test(tipo) && isCourtesyCCText(servicio, comentario)) return -1;
     if (/^clase$/i.test(tipo) && isTrialOrCourtesyText(servicio, comentario)) return 0;
     if (Number.isFinite(existing) && existing !== 0) return existing;
     if (isCourtesyText(servicio, comentario)) return 0;
@@ -268,6 +279,11 @@
     }
     for (const r of registro || []) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+    }
+    for (const p of programacion || []) {
+      const key = p.estudianteKey || p.studentId || norm(p.estudiante || p.name);
+      const name = String(p.estudiante || p.name || '').trim();
+      if (key) set.set(key, name || set.get(key) || key);
     }
 
     const lastClassTsByStudent = new Map();

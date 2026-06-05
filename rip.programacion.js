@@ -54,7 +54,7 @@
 
   function normalizePackageKey(value) {
     const key = norm(value || 'sin-clasificacion');
-    if (key === 'pago') return '*';
+    if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
     if (key === 'ms sp') return 'ms g';
     return key;
   }

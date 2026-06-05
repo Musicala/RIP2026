@@ -269,7 +269,7 @@
     };
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
-      if (key === 'pago') return '*';
+      if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
       if (key === 'ms sp') return 'ms g';
       return key;
     };
@@ -285,8 +285,16 @@
       if (!map.has(key)) map.set(key, []);
       return map.get(key);
     };
-    const makePackage = (cycleIdx, mov) => ({
+    const getSpecialCode = (r, fallbackCycle = 0) => {
+      const txt = norm(`${r?.servicio || ''} ${r?.comentario || ''} ${r?.clasif || ''} ${r?.clasifPago || ''}`);
+      if (txt.includes('cp de clase de prueba') || (/\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt))) return 'CP';
+      if (txt.includes('cc de clase de cortesia') || (/\bcc\b/.test(txt) && /\b(cortesia|gratis|obsequio)\b/.test(txt))) return 'CC';
+      return `P${fallbackCycle + 1}`;
+    };
+
+    const makePackage = (cycleIdx, mov, sourceRow) => ({
       cycle: cycleIdx,
+      code: getSpecialCode(sourceRow, cycleIdx),
       total: Math.max(0, Math.round(mov)),
       remaining: Math.max(0, Math.round(mov)),
       used: 0,
@@ -303,6 +311,7 @@
         cycle: pack.cycle,
         classNo: pack.used,
         total: pack.total,
+        code: pack.code,
         overLimit
       });
     };
@@ -330,7 +339,7 @@
 
       if (!matricula && isPagoRow(r) && mov > 0) {
         cycle += 1;
-        const pack = makePackage(cycle, mov);
+        const pack = makePackage(cycle, mov, r);
         let activePackage = activeByKey.get(packageKey) || null;
         if (activePackage && activePackage.remaining > 0) getQueue(pendingPackagesByKey, packageKey).push(pack);
         else {
@@ -342,6 +351,7 @@
           kind: 'pago',
           cycle,
           total: pack.total,
+          code: pack.code,
           key: packageKey
         });
 
@@ -426,26 +436,27 @@
         const isMatricula = isMatriculaPago(r) || cycleIdxRaw < 0;
         const cycleIdx = Number.isFinite(cycleIdxRaw) ? cycleIdxRaw : 0;
         const cycleClass = isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`;
+        const specialCode = cycleMeta?.code || getSpecialCode(r, cycleIdx);
         const cycleLabel = isMatricula
           ? 'M'
           : cycleMeta?.kind === 'unpaid'
             ? '!'
           : cycleMeta?.kind === 'clase'
-            ? (cycleMeta.overLimit ? '!' : `P${cycleIdx + 1} ${cycleMeta.classNo}/${cycleMeta.total || '?'}`)
+            ? (cycleMeta.overLimit ? '!' : `${specialCode} ${cycleMeta.classNo}/${cycleMeta.total || '?'}`)
             : cycleMeta?.kind === 'pago'
-              ? `P${cycleIdx + 1} +${cycleMeta.total || mov}`
-              : `P${cycleIdx + 1}`;
+              ? `${specialCode} +${cycleMeta.total || mov}`
+              : specialCode;
         const cycleTitle = isMatricula
           ? 'Matrícula (sin conteo)'
           : cycleMeta?.kind === 'unpaid'
             ? 'Clase pendiente de pago'
           : cycleMeta?.kind === 'clase'
-            ? (cycleMeta.overLimit ? `Plan #${cycleIdx + 1} · clases agotadas` : `Plan #${cycleIdx + 1} · clase ${cycleMeta.classNo} de ${cycleMeta.total || '?'}`)
+            ? (cycleMeta.overLimit ? `${specialCode} · clases agotadas` : `${specialCode} redimido · clase ${cycleMeta.classNo} de ${cycleMeta.total || '?'}`)
             : cycleMeta?.kind === 'pago'
-              ? `Plan #${cycleIdx + 1} · pago de ${cycleMeta.total || mov} clases`
-              : `Plan #${cycleIdx + 1}`;
+              ? `${specialCode} activado · ${cycleMeta.total || mov} clase(s)`
+              : `${specialCode}`;
         const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}`;
-        const debtClass = isClaseRow(r) && mov < 0 ? 'row-debt' : '';
+        const debtClass = isClaseRow(r) && mov < 0 && (!cycleMeta || cycleMeta.kind === 'unpaid' || cycleMeta.overLimit) ? 'row-debt' : '';
         const actionKey = getEditableRowKey(r);
         const canPersistRow = !!actionKey;
         const actions = editable
@@ -585,6 +596,11 @@
     return fromClase || fromPago || fallback || 'Sin categor�a';
   }
 
+  function isTrialCPLabel(label) {
+    const key = norm(label);
+    return key.includes('cp de clase de prueba') || key.includes('cc de clase de cortesia');
+  }
+
   function buildSaldoBreakdown(rows) {
     const totals = new Map();
     let saldoTotal = 0;
@@ -597,13 +613,46 @@
       totals.set(cat, (totals.get(cat) || 0) + mov);
     }
 
+    let cpCredit = 0;
+    for (const [label, value] of totals.entries()) {
+      if (isTrialCPLabel(label) && value > 0) cpCredit += value;
+    }
+
+    let settledTrialClasses = 0;
+    if (cpCredit > 0) {
+      const negativeLabels = Array.from(totals.entries())
+        .filter(([label, value]) => value < 0 && !isTrialCPLabel(label))
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+
+      for (const [label, value] of negativeLabels) {
+        if (cpCredit <= 0) break;
+        const used = Math.min(cpCredit, Math.abs(value));
+        totals.set(label, value + used);
+        cpCredit -= used;
+        settledTrialClasses += used;
+      }
+
+      for (const [label, value] of totals.entries()) {
+        if (!isTrialCPLabel(label) || value <= 0) continue;
+        const used = value - cpCredit;
+        totals.set(label, Math.max(0, value - used));
+        break;
+      }
+    }
+
     const items = Array.from(totals.entries())
       .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => {
-        const absDiff = Math.abs(b.value) - Math.abs(a.value);
-        if (absDiff !== 0) return absDiff;
-        return String(a.label).localeCompare(String(b.label), 'es');
-      });
+      .filter(item => Math.abs(Number(item.value) || 0) > 0.0001);
+
+    if (settledTrialClasses > 0) {
+      items.push({ label: 'Clase de prueba saldada', value: 0 });
+    }
+
+    items.sort((a, b) => {
+      const absDiff = Math.abs(b.value) - Math.abs(a.value);
+      if (absDiff !== 0) return absDiff;
+      return String(a.label).localeCompare(String(b.label), 'es');
+    });
 
     return { saldoTotal, items };
   }

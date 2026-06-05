@@ -58,6 +58,10 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const comentario = norm(row?.comentario);
+    if (isTrialCP(row) && tipo === 'pago') return 1;
+    if (isCourtesyCC(row) && tipo === 'pago') return 1;
+    if (isTrialCP(row) && tipo === 'clase') return -1;
+    if (isCourtesyCC(row) && tipo === 'clase') return -1;
     if (isTrialOrCourtesy(row) && tipo === 'clase') return 0;
     if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
@@ -78,6 +82,8 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const s = norm(servicio);
+    if (isTrialCP(row)) return { clasif: 'CP de Clase de prueba', clasifPago: tipo === 'pago' ? 'CP de Clase de prueba' : '' };
+    if (isCourtesyCC(row)) return { clasif: 'CC de Clase de cortesia', clasifPago: tipo === 'pago' ? 'CC de Clase de cortesia' : '' };
     if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
     if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
@@ -109,6 +115,16 @@
   function buildClassUniqueId(row) {
     if (norm(row?.tipo) !== 'clase') return '';
     return [row?.fecha || row?.fechaRaw || '', norm(row?.servicio), norm(row?.hora), norm(row?.profesor)].join('|');
+  }
+
+  function isTrialCP(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    return /\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
+  }
+
+  function isCourtesyCC(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    return /\bcc\b/.test(txt) && /\b(cortesia|gratis|obsequio)\b/.test(txt);
   }
 
   function isTrial(row) {
@@ -162,7 +178,7 @@
   function getStudentClassLimit(records) {
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
-      if (key === 'pago') return '*';
+      if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
       if (key === 'ms sp') return 'ms g';
       return key;
     };
@@ -300,7 +316,7 @@
 
   window.RIPCalculations = {
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
-    isTrial, isCourtesy, isTrialOrCourtesy,
+    isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildRecordHash, markFirstOccurrence, countClassParticipants,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
     getStudentClassLimit, calculateProgramacionStatus, recalculateStudentFromRecords,

@@ -75,13 +75,17 @@
   }
 
   function getSearchStudents(state) {
-    const pool =
-      state.searchStudents ||
-      state.studentSearchIndex ||
-      state.globalStudentIndex ||
-      state.allStudents ||
-      [];
-    return Array.isArray(pool) ? pool : [];
+    const pools = [
+      state?.searchStudents,
+      state?.studentSearchIndex,
+      state?.globalStudentIndex,
+      state?.allStudents
+    ];
+    const out = [];
+    for (const pool of pools) {
+      if (Array.isArray(pool)) out.push(...pool);
+    }
+    return out;
   }
 
   function getCurrentYearStudents(state) {
@@ -129,10 +133,17 @@
       .join('');
   }
 
-  function findStudentEntryByName(students, name) {
+  function findStudentMatches(students, name) {
     const target = norm(name);
-    if (!target) return null;
-    return (students || []).find((s) => norm(s?.name) === target) || null;
+    if (!target) return [];
+    const pool = dedupeStudentsByName(students || []);
+    const exact = pool.filter((s) => norm(s?.name) === target);
+    return exact.length ? exact : pool.filter((s) => norm(s?.name).includes(target));
+  }
+
+  function findStudentEntryByName(students, name) {
+    const matches = findStudentMatches(students, name);
+    return matches.length === 1 ? matches[0] : null;
   }
 
   function findStudentKeyByName(students, name) {
@@ -143,8 +154,16 @@
 
   function openStudentFromInput(ctx, state, typedName) {
     const pool = getSearchStudents(state);
-    const entry = findStudentEntryByName(pool, typedName);
-    if (!entry) return false;
+    const matches = findStudentMatches(pool, typedName);
+    const entry = matches.length === 1 ? matches[0] : null;
+    if (!entry) {
+      if (matches.length > 1) {
+        setStatus(ctx, `Encontré ${matches.length} coincidencias. Escoge una de la lista.`);
+        renderStudentDatalist(ctx, pool, typedName);
+        return false;
+      }
+      return false;
+    }
 
     if (window.RIPUI?.ficha?.openStudentFromSearch) {
       window.RIPUI.ficha.openStudentFromSearch(ctx, state, entry);
@@ -476,5 +495,5 @@
     applyAndRender(ctx, state);
   }
 
-  RIPUI.table = { init, applyAndRender, resetFilters, readFilters, renderProfesorOptions, renderServiceList };
+  RIPUI.table = { init, applyAndRender, resetFilters, readFilters, renderProfesorOptions, renderServiceList, renderStudentDatalist };
 })();

@@ -96,6 +96,9 @@
 
   function refreshTableAfterEdit(ctx, state) {
     if (window.RIPUI?.table?.applyAndRender) window.RIPUI.table.applyAndRender(ctx, state);
+    if (typeof window.RIPApp?.renderRegistroCalendar === 'function' && state?.dashMode === 'registro') {
+      window.RIPApp.renderRegistroCalendar();
+    }
   }
 
   function upsertStateRow(state, row) {
@@ -163,8 +166,8 @@
     });
   }
 
-  function openNewRowModal(ctx, state) {
-    const body = `<div class="ripedit-grid">${buildFieldsHTML({ tipo: 'Clase' })}</div>`;
+  function openNewRowModal(ctx, state, defaults = {}) {
+    const body = `<div class="ripedit-grid">${buildFieldsHTML({ tipo: 'Clase', ...defaults })}</div>`;
     createModal('Nuevo registro', body, async (modal, close) => {
       const data = readFieldValues(modal);
       if (!data.estudiante) return notify(ctx, 'El campo Estudiante es requerido.', 'warn');

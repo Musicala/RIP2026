@@ -711,6 +711,7 @@
     renderDashClas,
     renderDashSaldo,
     renderStudentList,
+    toggleInlineFicha,
     restoreRegistroTableHead
   };
 })();

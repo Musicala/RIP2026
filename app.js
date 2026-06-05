@@ -990,20 +990,48 @@
       ? (parseISODate(iso)?.getDay() === 0 ? 'domingo no cuenta' : 'festivo no cuenta')
       : '';
     ctx.el.registroDayTitle.textContent = new Date(`${iso}T12:00:00`).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    const addButton = `
+      <div class="registro-day-actions">
+        <button class="btn primary small" type="button" data-registro-add="${escapeHTML(iso)}">Agregar registro</button>
+      </div>
+    `;
+
     if (rows.length) {
-      ctx.el.registroDayBody.innerHTML = rows.map(r => `
-        <div class="registro-day-row">
-          <strong>${escapeHTML(r.estudiante || '')}</strong>
-          <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' Â· '))}</span>
+      ctx.el.registroDayBody.innerHTML = addButton + rows.map(r => `
+        <div class="registro-day-row registro-day-row-editable">
+          <div class="registro-day-main">
+            <strong>${escapeHTML(r.estudiante || '')}</strong>
+            <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' · '))}</span>
+          </div>
+          <div class="registro-day-row-actions">
+            <button class="btn small ghost" type="button" data-registro-edit="${escapeHTML(r.id || '')}" ${r.id ? '' : 'disabled'}>Editar</button>
+            <button class="btn small ghost danger" type="button" data-registro-delete="${escapeHTML(r.id || '')}" ${r.id ? '' : 'disabled'}>Eliminar</button>
+          </div>
         </div>
       `).join('');
-      return;
+    } else {
+      ctx.el.registroDayBody.innerHTML = addButton + (reason
+        ? `<span class="pill soft">${escapeHTML(reason)}</span>`
+        : `<span class="pill pill-urgency-review">Falta subir clases de este dia</span>`);
     }
-    ctx.el.registroDayBody.innerHTML = reason
-      ? `<span class="pill soft">${escapeHTML(reason)}</span>`
-      : `<span class="pill pill-urgency-review">Falta subir clases de este dia</span>`;
-  }
 
+    ctx.el.registroDayBody.querySelector('[data-registro-add]')?.addEventListener('click', () => {
+      window.RIPUI?.editor?.openNewRowModal?.(ctx, state, { tipo: 'Clase', fechaRaw: iso, fecha: iso });
+    });
+    ctx.el.registroDayBody.querySelectorAll('[data-registro-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-registro-edit') || '';
+        if (id) window.RIPUI?.editor?.openEditModal?.(ctx, state, id);
+      });
+    });
+    ctx.el.registroDayBody.querySelectorAll('[data-registro-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-registro-delete') || '';
+        if (id && confirm('Eliminar este registro?')) window.RIPUI?.editor?.deleteRow?.(ctx, state, id);
+      });
+    });
+  }
   function renderRegistroCalendar() {
     const grid = ctx.el.registroCalendarGrid;
     if (!grid) return;
@@ -1114,7 +1142,14 @@
     return tipo === 'clase' || (tipo !== 'pago' && !String(row?.pago || '').trim());
   }
 
-  function buildTrialFollowupRows() {
+  function getTrialCreditCode(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    if (txt.includes('cp de clase de prueba') || (/\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt))) return 'CP';
+    if (txt.includes('cc de clase de cortesia') || (/\bcc\b/.test(txt) && /\b(cortesia|gratis|obsequio)\b/.test(txt))) return 'CC';
+    return '';
+  }
+
+  function buildTrialContinuityGroups() {
     const byStudent = new Map();
     for (const row of state.registro || []) {
       const key = row.estudianteKey || norm(row.estudiante);
@@ -1124,33 +1159,115 @@
     }
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    const out = [];
+    const groups = { sin: [], con: [] };
+
     byStudent.forEach((rows, key) => {
-      const sorted = [...rows].sort((a, b) => (Number(a.fechaTs) || 0) - (Number(b.fechaTs) || 0));
-      const trialRows = sorted.filter(r => isClassLike(r) && isTrialOrCourtesyRow(r));
-      const lastTrial = trialRows[trialRows.length - 1];
-      if (!lastTrial) return;
-      const trialTs = Number(lastTrial.fechaTs) || Number(RIPCore.util?.parseDate?.(lastTrial.fecha || lastTrial.fechaRaw)?.getTime()) || 0;
-      if (sorted.some(r => (Number(r.fechaTs) || 0) > trialTs)) return;
-      const lastDateStart = trialTs ? new Date(trialTs).setHours(0, 0, 0, 0) : todayStart;
+      const sorted = [...rows].sort((a, b) => {
+        const ta = Number(a.fechaTs) || Number(RIPCore.util?.parseDate?.(a.fecha || a.fechaRaw)?.getTime()) || 0;
+        const tb = Number(b.fechaTs) || Number(RIPCore.util?.parseDate?.(b.fecha || b.fechaRaw)?.getTime()) || 0;
+        if (ta !== tb) return ta - tb;
+        const pa = isClassLike(a) ? 1 : 0;
+        const pb = isClassLike(b) ? 1 : 0;
+        return pa - pb;
+      });
+
+      const credits = [];
+      const redeemed = [];
+      const directTrialRows = [];
+
+      for (const row of sorted) {
+        const mov = Number(row?.movimiento) || 0;
+        const code = getTrialCreditCode(row);
+        if (!isClassLike(row) && mov > 0 && code) {
+          credits.push({ code, remaining: Math.max(1, Math.round(mov)), source: row });
+          continue;
+        }
+
+        if (!isClassLike(row)) continue;
+        if (isTrialOrCourtesyRow(row)) directTrialRows.push({ row, code: getTrialCreditCode(row) || (norm(row?.clasif).includes('cortesia') ? 'CC' : 'CP') });
+        if (mov >= 0) continue;
+
+        const credit = credits.find(c => c.remaining > 0);
+        if (!credit) continue;
+        credit.remaining -= 1;
+        redeemed.push({ row, code: credit.code, source: credit.source });
+      }
+
+      const firstTrial = redeemed[0] || directTrialRows[0] || null;
+      const lastTrial = redeemed[redeemed.length - 1] || directTrialRows[directTrialRows.length - 1] || null;
+      if (!firstTrial || !lastTrial) return;
+
+      const firstTrialRow = firstTrial.row;
+      const firstTrialTs = Number(firstTrialRow.fechaTs) || Number(RIPCore.util?.parseDate?.(firstTrialRow.fecha || firstTrialRow.fechaRaw)?.getTime()) || 0;
+      const laterClass = sorted.find(r => isClassLike(r) && (Number(r.fechaTs) || Number(RIPCore.util?.parseDate?.(r.fecha || r.fechaRaw)?.getTime()) || 0) > firstTrialTs);
+      const referenceRow = laterClass || lastTrial.row;
+      const referenceTs = Number(referenceRow.fechaTs) || Number(RIPCore.util?.parseDate?.(referenceRow.fecha || referenceRow.fechaRaw)?.getTime()) || 0;
+      const lastDateStart = referenceTs ? new Date(referenceTs).setHours(0, 0, 0, 0) : todayStart;
       const days = Math.max(0, Math.floor((todayStart - lastDateStart) / 86400000));
       const student = (state.allStudents || []).find(s => s.key === key);
-      const name = lastTrial.estudiante || student?.name || key;
-      out.push({
-        priority: 'Prueba sin continuidad',
-        filter: 'Prueba sin continuidad',
+      const name = referenceRow.estudiante || student?.name || key;
+      const code = lastTrial.code || firstTrial.code || 'CP';
+      const target = laterClass ? groups.con : groups.sin;
+      target.push({
+        priority: laterClass ? 'Prueba con continuidad' : 'Prueba sin continuidad',
+        filter: laterClass ? 'Prueba con continuidad' : 'Prueba sin continuidad',
         name,
         key,
-        reason: norm(lastTrial.clasif).includes('cortesia') ? 'Cortesia sin continuidad' : 'Clase de prueba sin continuidad',
-        metric: `${days} dias`,
-        lastRegistro: lastTrial.fecha || lastTrial.fechaRaw || '',
+        reason: code === 'CC'
+          ? (laterClass ? 'Clase de cortesia con continuidad' : 'Clase de cortesia sin continuidad')
+          : (laterClass ? 'Clase de prueba con continuidad' : 'Clase de prueba sin continuidad'),
+        metric: laterClass ? `Continua desde ${laterClass.fecha || laterClass.fechaRaw || ''}` : `${days} dias`,
+        lastRegistro: referenceRow.fecha || referenceRow.fechaRaw || '',
         programacion: getReviewProgramacionText(name),
-        days
+        days,
+        lastClassTs: referenceTs,
+        finalClasif: laterClass ? 'CP/CC con continuidad' : 'CP/CC sin continuidad',
+        paramClasif: code
       });
     });
-    return out.sort((a, b) => b.days - a.days || String(a.name).localeCompare(String(b.name), 'es'));
+
+    groups.sin.sort((a, b) => b.days - a.days || String(a.name).localeCompare(String(b.name), 'es'));
+    groups.con.sort((a, b) => (Number(b.lastClassTs) || 0) - (Number(a.lastClassTs) || 0) || String(a.name).localeCompare(String(b.name), 'es'));
+    return groups;
   }
 
+  function buildTrialFollowupRows() {
+    return buildTrialContinuityGroups().sin;
+  }
+  function openTrialContinuityList(title, list) {
+    showFichaContainer();
+    ensureFichaProgramacionHidden();
+    RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey, studentName) => {
+      if (studentKey) openStudentFicha(studentKey, { focusProgramacion: false, studentName });
+      else if (studentName) openStudentFichaByName(studentName);
+    }, { bdEligible: false });
+  }
+
+  function appendTrialContinuityKpis() {
+    if (!ctx.el.dashGridClas) return;
+    const groups = buildTrialContinuityGroups();
+    const cards = [
+      ['Prueba / cortesía sin continuidad', groups.sin.length, 'No volvieron despues de CP/CC', 'sin'],
+      ['Prueba / cortesía con continuidad', groups.con.length, 'Volvieron despues de CP/CC', 'con']
+    ];
+    ctx.el.dashGridClas.insertAdjacentHTML('beforeend', cards.map(([title, value, subtitle, key]) => `
+      <button class="pocket ${key === 'con' ? 'ok' : 'warn'}" type="button" data-trial-continuity="${escapeHTML(key)}">
+        <div class="pocket-top">
+          <h3>${escapeHTML(title)}</h3>
+          <span class="pilltag ${key === 'con' ? 'ok' : 'warn'}">CP/CC</span>
+        </div>
+        <div class="big">${escapeHTML(value)}</div>
+        <div class="mini">${escapeHTML(subtitle)}</div>
+      </button>
+    `).join(''));
+    ctx.el.dashGridClas.querySelectorAll('[data-trial-continuity]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-trial-continuity') || '';
+        if (key === 'con') openTrialContinuityList('Prueba / cortesia con continuidad', groups.con);
+        else openTrialContinuityList('Prueba / cortesia sin continuidad', groups.sin);
+      });
+    });
+  }
   function renderReviewToday() {
     if (!ctx.el.reviewTodayBody) return;
     const clas = RIPCore.buildClasificacionDashboard(state.allStudents || []);
@@ -1159,7 +1276,9 @@
     const noProg = progRows.filter(r => r.noSchedule);
     const lowProg = progRows.filter(r => r.lowFuture);
     const review = [...(clas.porRevisar || [])].sort((a, b) => (Number(b.daysSinceLastClass) || 0) - (Number(a.daysSinceLastClass) || 0));
-    const trialFollowup = buildTrialFollowupRows();
+    const trialContinuity = buildTrialContinuityGroups();
+    const trialFollowup = trialContinuity.sin;
+    const trialContinued = trialContinuity.con;
     const urgent = [];
 
     review.slice(0, 20).forEach(s => urgent.push({
@@ -1213,6 +1332,7 @@
       programacion: getReviewProgramacionText(s.name)
     }));
     trialFollowup.forEach(s => urgent.push(s));
+    trialContinued.forEach(s => urgent.push(s));
 
     if (ctx.el.reviewKpiGrid) {
       ctx.el.reviewKpiGrid.innerHTML = [
@@ -1221,7 +1341,8 @@
         ['En 0', saldos.seAcabo.length],
         ['Sin programacion', noProg.length],
         ['Pocas futuras', lowProg.length],
-        ['Prueba sin continuidad', trialFollowup.length]
+        ['Prueba sin continuidad', trialFollowup.length],
+        ['Prueba con continuidad', trialContinued.length]
       ].map(([label, value]) => `
         <button class="kpi kpi-btn" type="button" data-review-filter="${escapeHTML(label)}">
           <div class="n">${escapeHTML(value)}</div>
@@ -1245,8 +1366,13 @@
       return 'pill-urgency-info';
     };
 
+    const reviewDateTs = (item) => {
+      const raw = item.lastRegistro || '';
+      return Number(RIPCore.util?.parseDate?.(raw)?.getTime()) || 0;
+    };
     const activeFilter = state.reviewFilter || '';
-    const visibleUrgent = activeFilter ? urgent.filter(item => item.filter === activeFilter) : urgent;
+    const visibleUrgent = (activeFilter ? urgent.filter(item => item.filter === activeFilter) : urgent)
+      .sort((a, b) => reviewDateTs(b) - reviewDateTs(a) || String(a.name).localeCompare(String(b.name), 'es'));
 
     ctx.el.reviewTodayBody.innerHTML = visibleUrgent.length
       ? visibleUrgent.map((item) => `
@@ -1257,13 +1383,22 @@
           <td style="font-weight:700">${escapeHTML(item.metric)}</td>
           <td>${escapeHTML(item.lastRegistro || 'â€”')}</td>
           <td>${escapeHTML(item.programacion || 'Sin programacion')}</td>
-          <td><button class="btn small primary" type="button" data-review-open="${escapeHTML(item.name)}">Abrir</button></td>
+          <td><button class="btn small primary" type="button" data-inline-open data-review-open="${escapeHTML(item.name)}" data-review-key="${escapeHTML(item.key || norm(item.name))}">Abrir</button></td>
         </tr>
       `).join('')
       : `<tr><td colspan="7" class="empty-td">No hay urgentes por ahora. âœ…</td></tr>`;
 
     ctx.el.reviewTodayBody.querySelectorAll('[data-review-open]').forEach(btn => {
-      btn.addEventListener('click', () => openStudentFichaByName(btn.getAttribute('data-review-open') || ''));
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-review-open') || '';
+        const key = btn.getAttribute('data-review-key') || norm(name);
+        const item = visibleUrgent.find(x => (x.key || norm(x.name)) === key || norm(x.name) === norm(name)) || { name, key };
+        if (RIPUI.dashboard?.toggleInlineFicha) {
+          RIPUI.dashboard.toggleInlineFicha(ctx, btn, { ...item, key, name: item.name || name });
+          return;
+        }
+        openStudentFichaByName(name);
+      });
     });
     ctx.el.reviewKpiGrid?.querySelectorAll('[data-review-filter]').forEach(btn => {
       const label = btn.getAttribute('data-review-filter') || '';
@@ -1275,10 +1410,26 @@
     });
   }
 
+  function getCombinedSearchStudents() {
+    return dedupeByNormalizedName([
+      ...(Array.isArray(state.searchStudents) ? state.searchStudents : []),
+      ...(Array.isArray(state.allStudents) ? state.allStudents : [])
+    ]);
+  }
+
   function openStudentFichaByName(name) {
     const key = norm(name);
-    const entry = (state.searchStudents || []).find(s => norm(s.name) === key)
-      || (state.allStudents || []).find(s => norm(s.name) === key);
+    const pool = getCombinedSearchStudents();
+    let entry = pool.find(s => norm(s.name) === key);
+    if (!entry && key) {
+      const partial = pool.filter(s => norm(s.name).includes(key));
+      if (partial.length === 1) entry = partial[0];
+      else if (partial.length > 1) {
+        setText(ctx.el.quickSearchStatus, `Encontré ${partial.length} coincidencias. Escoge una de la lista.`);
+        RIPUI.table?.renderStudentDatalist?.(ctx, pool, name);
+        return;
+      }
+    }
     if (entry && RIPUI.ficha?.openStudentFromSearch) {
       RIPUI.ficha.openStudentFromSearch(ctx, state, entry);
       return;
@@ -1816,6 +1967,7 @@
         else if (studentName) openStudentFichaByName(studentName);
       }, { bdEligible: !!opts.bdEligible });
     });
+    appendTrialContinuityKpis();
 
     // Saldos
     RIPUI.dashboard.renderDashSaldo(ctx, state.allStudents, state.registro, (title, list, opts = {}) => {
@@ -1897,6 +2049,14 @@
       }
       setText(ctx.el.quickSearchStatus, 'Abriendo ficha...');
       openStudentFichaByName(name);
+    });
+    ctx.el.quickStudentSearch?.addEventListener('input', () => {
+      const q = ctx.el.quickStudentSearch?.value || '';
+      RIPUI.table?.renderStudentDatalist?.(ctx, getCombinedSearchStudents(), q);
+    });
+    ctx.el.quickStudentSearch?.addEventListener('focus', () => {
+      const q = ctx.el.quickStudentSearch?.value || '';
+      RIPUI.table?.renderStudentDatalist?.(ctx, getCombinedSearchStudents(), q);
     });
     ctx.el.quickStudentSearch?.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') ctx.el.btnQuickSearch?.click();
@@ -2136,6 +2296,12 @@
           state.registro = hp.registro || state.registro;
           state.paramsMap = hp.paramsMap || state.paramsMap;
           state.allStudents = hp.allStudents || state.allStudents;
+          state.searchStudents = dedupeByNormalizedName(
+            mergeSearchIndexWithCurrentStudents([], state.allStudents || [])
+          );
+          if (RIPUI.table?.renderStudentDatalist) {
+            RIPUI.table.renderStudentDatalist(ctx, getCombinedSearchStudents(), ctx.el.fStudent?.value || ctx.el.quickStudentSearch?.value || '');
+          }
           renderDashboards();
         } catch (e) {
           console.warn('Historicos en segundo plano:', e);
@@ -2166,6 +2332,7 @@
     openStudentFicha,
     loadProgramacionSummary,
     renderDashboards,
+    renderRegistroCalendar,
     boot,
     clearAppCaches,
     loadGlobalStudentIndex,
