@@ -417,7 +417,7 @@
 
   function studentNameScore(value) {
     const text = String(value || '').trim();
-    const upper = (text.match(/[A-Z������]/g) || []).length;
+    const upper = (text.match(/[A-Z������]/g) || []).length;
     const words = norm(text).split(' ').filter(Boolean).length;
     return text.length + words * 10 + upper * 2;
   }
@@ -907,6 +907,9 @@
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
     if (state.dashMode === 'prog') show(ctx.el.dashboardProgView);
     if (state.dashMode === 'registro') {
+      state.currentStudentKey = '';
+      state.currentStudentName = '';
+      ctx.el.filtersCard?.classList.remove('filters-card--ficha');
       RIPUI.dashboard?.restoreRegistroTableHead?.(ctx);
       show(ctx.el.registroCalendarView);
       show(ctx.el.fichaView);
@@ -1021,7 +1024,7 @@
         <div class="registro-day-row registro-day-row-editable">
           <div class="registro-day-main">
             <strong>${escapeHTML(r.estudiante || '')}</strong>
-            <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' � '))}</span>
+            <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' � '))}</span>
           </div>
           <div class="registro-day-row-actions">
             <button class="btn small ghost" type="button" data-registro-edit="${escapeHTML(r.id || '')}" ${r.id ? '' : 'disabled'}>Editar</button>
@@ -1256,7 +1259,7 @@
   function openTrialContinuityList(title, list) {
     showFichaContainer();
     ensureFichaProgramacionHidden();
-    RIPUI.dashboard.renderStudentList(ctx, `Lista � ${title}`, list, (studentKey, studentName) => {
+    RIPUI.dashboard.renderStudentList(ctx, `Lista � ${title}`, list, (studentKey, studentName) => {
       if (studentKey) openStudentFicha(studentKey, { focusProgramacion: false, studentName });
       else if (studentName) openStudentFichaByName(studentName);
     }, { bdEligible: false });
@@ -1266,8 +1269,8 @@
     if (!ctx.el.dashGridClas) return;
     const groups = buildTrialContinuityGroups();
     const cards = [
-      ['Prueba / cortes�a sin continuidad', groups.sin.length, 'No volvieron despues de CP/CC', 'sin'],
-      ['Prueba / cortes�a con continuidad', groups.con.length, 'Volvieron despues de CP/CC', 'con']
+      ['Prueba / cortes�a sin continuidad', groups.sin.length, 'No volvieron despues de CP/CC', 'sin'],
+      ['Prueba / cortes�a con continuidad', groups.con.length, 'Volvieron despues de CP/CC', 'con']
     ];
     ctx.el.dashGridClas.insertAdjacentHTML('beforeend', cards.map(([title, value, subtitle, key]) => `
       <button class="pocket ${key === 'con' ? 'ok' : 'warn'}" type="button" data-trial-continuity="${escapeHTML(key)}">
@@ -1574,6 +1577,12 @@
     const studentName = getCurrentStudentName();
     state.prog.currentStudentName = studentName;
 
+    // Sincronizar input de filtro y restringir servicios al estudiante actual
+    if (ctx.el.fStudent && studentName) ctx.el.fStudent.value = studentName;
+    if (RIPUI.table?.renderServiceList) {
+      RIPUI.table.renderServiceList(ctx, state, state.registro, { keepSearch: false, estudianteKey: studentKey });
+    }
+
     if (window.RIPProgramacion?.attachStudent && studentName) {
       window.RIPProgramacion.attachStudent(ctx, state, studentName);
     }
@@ -1671,6 +1680,202 @@
 
     return libs;
   }
+  function extractPackages(tableEl) {
+    const CYCLE_COLORS = {
+      'cycle-0': '#2563eb', 'cycle-1': '#16a34a', 'cycle-2': '#d97706',
+      'cycle-3': '#dc2626', 'cycle-4': '#7c3aed', 'cycle-5': '#0d9488',
+      'cycle-6': '#db2777', 'cycle-7': '#6b7280'
+    };
+    const packages = [];
+    const cleanTitle = (value) => String(value || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[^\x20-\x7E]+/g, ' - ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const codeBefore = (title, keyword) => cleanTitle(title).split(new RegExp('\\s+' + keyword + '\\b', 'i'))[0]?.trim() || '';
+
+    // La tabla se muestra newest-first; invertimos para procesar oldest-first
+    // igual que la lógica de asignación de paquetes de ui.ficha.js.
+    const tableRows = [...(tableEl?.querySelectorAll('tbody tr') || [])].reverse();
+    tableRows.forEach((row) => {
+      const tds = row.querySelectorAll('td');
+      const typeTd = tds[1];
+      if (!typeTd) return;
+      const dot = typeTd.querySelector('.cycle-dot');
+      if (!dot || dot.classList.contains('cycle-matricula')) return;
+
+      const title = cleanTitle(dot.getAttribute('title') || '');
+      const cycleText = typeTd.querySelector('.cycle-num')?.textContent?.trim() || '';
+      const colorClass = [...dot.classList].find((c) => /^cycle-\d+$/.test(c)) || 'cycle-0';
+      const color = CYCLE_COLORS[colorClass] || '#1A3B6E';
+      const service = tds[4]?.textContent?.trim() || '';
+
+      if (/activado/i.test(title) || /\+\s*\d+/.test(cycleText)) {
+        const m = title.match(/activado.*?(\d+)/i) || cycleText.match(/\+\s*(\d+)/);
+        const code = codeBefore(title, 'activado') || cycleText.replace(/\+.*/, '').trim() || '?';
+        const total = parseInt(m?.[1], 10) || 0;
+        packages.push({ code, service, total, used: 0, extra: 0, color, colorClass });
+      } else if (/redimido/i.test(title) || /\d+\s*\/\s*\d+/.test(cycleText)) {
+        const m = title.match(/clase\s+(\d+)\s+de\s+(\d+)/i) || cycleText.match(/(\d+)\s*\/\s*(\d+)/);
+        const classNo = parseInt(m?.[1], 10) || 0;
+        const code = codeBefore(title, 'redimido') || cycleText.replace(/\d+\s*\/\s*\d+.*/, '').trim() || '';
+        const total = parseInt(m?.[2], 10) || 0;
+        if (!packages.some((pkg) => pkg.code === code && pkg.colorClass === colorClass) && total > 0) {
+          packages.push({ code, service, total, used: 0, extra: 0, color, colorClass });
+        }
+        for (let i = packages.length - 1; i >= 0; i--) {
+          if (packages[i].code === code && packages[i].colorClass === colorClass) {
+            packages[i].used = Math.max(packages[i].used, classNo);
+            break;
+          }
+        }
+      } else if (/agotadas/i.test(title)) {
+        const cm = title.match(/^(.+?)\s*-?\s*clases agotadas/i);
+        const code = cm?.[1]?.trim() || cycleText.replace(/!.*/, '').trim() || '';
+        for (let i = packages.length - 1; i >= 0; i--) {
+          if (packages[i].code === code && packages[i].colorClass === colorClass) {
+            packages[i].extra = (packages[i].extra || 0) + 1;
+            break;
+          }
+        }
+      } else if (/pendiente de pago/i.test(title) || cycleText === '!') {
+        if (packages.length > 0) {
+          packages[packages.length - 1].extra = (packages[packages.length - 1].extra || 0) + 1;
+        }
+      }
+    });
+
+    return packages.filter((p) => p.total > 0);
+  }
+
+  function buildFichaTemplate(element, sections, studentName, exportDate) {
+    const escH = escapeHTML;
+
+    const statusEl = element.querySelector('#fichaStatusBadge');
+    const statusText = statusEl?.textContent?.trim() || '';
+    const statusCls = ['activo', 'pausa', 'inactivo'].find((c) => statusEl?.classList.contains(c)) || '';
+
+    const stats = [
+      { label: 'Última clase',  value: element.querySelector('#fichaFecha')?.textContent?.trim() || '—' },
+      { label: 'Próxima clase', value: element.querySelector('#fichaProxPago')?.textContent?.trim() || '—' },
+      { label: 'Último pago',   value: element.querySelector('#fichaUltPago')?.textContent?.trim() || '—' },
+      { label: 'Valor pago',    value: element.querySelector('#fichaUltPagoValor')?.textContent?.trim() || '—' },
+      { label: 'Total pagos',   value: element.querySelector('#fichaTotalPagos')?.textContent?.trim() || '—' },
+    ];
+
+    const saldoChipsHTML = [...(element.querySelector('#fichaSaldosMini')?.querySelectorAll('.saldo-chip') || [])]
+      .map((chip) => {
+        const label = [...chip.childNodes]
+          .filter((n) => n.nodeType === 3)
+          .map((n) => n.textContent.trim())
+          .join('');
+        const value = chip.querySelector('b')?.textContent?.trim() || '';
+        const cls = chip.classList.contains('pos') ? 'pos' : chip.classList.contains('neg') ? 'neg' : 'zero';
+        return `<span class="pdf-ft-chip ${cls}">${escH(label)} <strong>${escH(value)}</strong></span>`;
+      }).join('');
+
+    const tableEl = element.querySelector('#tablaContainer');
+    const pkgs = (sections.paquetes !== false) ? extractPackages(tableEl) : [];
+
+    const packagesHTML = pkgs.map((pkg, idx) => {
+      const MAX_DOTS = 20;
+      const extra = pkg.extra || 0;
+      let dotsOrBar;
+      if (pkg.total <= MAX_DOTS) {
+        // Dots normales del paquete
+        const normalDots = Array.from({ length: pkg.total }, (_, i) =>
+          `<span class="pdf-ft-dot ${i < pkg.used ? 'filled' : 'empty'}" style="background:${i < pkg.used ? pkg.color : 'transparent'};border-color:${pkg.color}"></span>`
+        ).join('');
+        // Dots extra (clases fuera del paquete) en rojo con "!"
+        const extraDots = extra > 0
+          ? Array.from({ length: Math.min(extra, 6) }, () =>
+              `<span class="pdf-ft-dot filled pdf-ft-dot-extra" style="background:#dc2626;border-color:#dc2626" title="Clase sin cubrir"></span>`
+            ).join('') + (extra > 6 ? `<span style="font-size:10px;color:#dc2626;font-weight:700">+${extra - 6}</span>` : '')
+          : '';
+        dotsOrBar = normalDots + (extra > 0 ? `<span style="margin:0 4px;color:#94a3b8;font-size:10px">|</span>${extraDots}` : '');
+      } else {
+        const pct = Math.round((pkg.used / pkg.total) * 100);
+        dotsOrBar = `<div style="flex:1;height:10px;border-radius:5px;background:#e2e8f0;overflow:hidden"><div style="height:100%;width:${pct}%;background:${escH(pkg.color)};border-radius:5px"></div></div>`;
+      }
+      const remaining = pkg.total - pkg.used;
+      let countText;
+      if (extra > 0) {
+        countText = `${pkg.used}/${pkg.total} - ${extra} pendiente${extra === 1 ? '' : 's'}`;
+      } else if (remaining <= 0) {
+        countText = `${pkg.used}/${pkg.total} - Completo`;
+      } else {
+        countText = `${pkg.used}/${pkg.total} - ${remaining} restante${remaining === 1 ? '' : 's'}`;
+      }
+      const countColor = extra > 0 ? '#dc2626' : remaining <= 0 ? '#059669' : '#1A5FAD';
+      // cycle-dot idéntico al puntico de la tabla (usa la clase .cycle-X para el color)
+      const cycleDotHTML = `<span class="${escH(pkg.colorClass)}" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escH(pkg.color)};vertical-align:middle;margin-right:5px;flex-shrink:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)"></span>`;
+      return `
+        <div class="pdf-ft-pkg-row">
+          <div class="pdf-ft-pkg-num" style="background:${escH(pkg.color)}">${idx + 1}</div>
+          <div class="pdf-ft-pkg-info">
+            <div class="pdf-ft-pkg-code">${cycleDotHTML}${escH(pkg.code)}</div>
+            ${pkg.service ? `<div class="pdf-ft-pkg-service">${escH(pkg.service)}</div>` : ''}
+          </div>
+          <div class="pdf-ft-pkg-dots">${dotsOrBar}</div>
+          <div class="pdf-ft-pkg-count" style="color:${escH(countColor)}">${escH(countText)}</div>
+        </div>`;
+    }).join('');
+
+    let tableCloneHTML = '';
+    if (sections.registro !== false && tableEl) {
+      const tc = tableEl.cloneNode(true);
+      // IMPORTANTE: el selector CSS usa ".pdf-export-clone .pdf-registro-table",
+      // por eso ponemos pdf-export-clone en un wrapper externo, no en la tabla misma.
+      tc.classList.add('pdf-registro-table');
+      tc.querySelectorAll('.ficha-actions, .tabs, button').forEach((n) => n.remove());
+      tc.querySelectorAll('*').forEach((n) => {
+        try { n.scrollLeft = 0; n.scrollTop = 0; if (n.style) { n.style.transform = 'none'; n.style.translate = 'none'; } } catch (_) {}
+      });
+      tc.querySelectorAll('.table-wrap, .tableWrap').forEach((n) => {
+        n.style.overflow = 'visible'; n.style.maxHeight = 'none';
+        n.style.height = 'auto'; n.style.width = '100%'; n.style.maxWidth = 'none';
+      });
+      // Wrapper con clase pdf-export-clone para que los selectores CSS funcionen
+      const wrapper = document.createElement('div');
+      wrapper.className = 'pdf-export-clone';
+      wrapper.appendChild(tc);
+      tableCloneHTML = wrapper.outerHTML;
+    }
+
+    const showSaldos = sections.saldos !== false;
+    const showRegistro = sections.registro !== false;
+
+    return `
+      <div class="pdf-ficha-template">
+        <div class="pdf-ft-header-img">
+          <img src="${typeof MEMBRETE_HEADER_B64 !== 'undefined' ? MEMBRETE_HEADER_B64 : './membrete_img_0.png'}" alt="Musicala" style="width:100%;display:block;"/>
+          <div class="pdf-ft-header-overlay">
+            <span>Exportado el <strong>${escH(exportDate)}</strong></span>
+          </div>
+        </div>
+        <div class="pdf-ft-body">
+          ${showSaldos ? `
+          <div class="pdf-ft-student-card">
+            <div class="pdf-ft-student-head">
+              <div class="pdf-ft-name">${escH(studentName)}</div>
+              ${statusText ? `<span class="pdf-ft-badge ${escH(statusCls)}">${escH(statusText)}</span>` : ''}
+            </div>
+            <div class="pdf-ft-stats-grid">
+              ${stats.map((s) => `<div class="pdf-ft-stat"><div class="pdf-ft-stat-label">${escH(s.label)}</div><div class="pdf-ft-stat-value">${escH(s.value)}</div></div>`).join('')}
+            </div>
+          </div>
+          ${saldoChipsHTML ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Saldos por servicio</div><div class="pdf-ft-chips">${saldoChipsHTML}</div></div>` : ''}
+          ${pkgs.length ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Paquetes de clases</div><div class="pdf-ft-packages">${packagesHTML}</div></div>` : ''}
+          ` : ''}
+          ${!showSaldos && pkgs.length ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Paquetes de clases</div><div class="pdf-ft-packages">${packagesHTML}</div></div>` : ''}
+          ${showRegistro ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Registro de clases y pagos</div><div class="pdf-ft-table-wrap">${tableCloneHTML}</div></div>` : ''}
+        </div>
+        <div class="pdf-ft-footer-img">
+          <img src="${typeof MEMBRETE_FOOTER_B64 !== 'undefined' ? MEMBRETE_FOOTER_B64 : './membrete_img_1.png'}" alt="" style="width:100%;display:block;"/>
+        </div>
+      </div>`;
+  }
+
   async function exportPDF(element, filename, sections = {}) {
     if (!element) {
       toast(ctx.el.toastWrap, 'No hay contenido para exportar.', 'warn');
@@ -1703,11 +1908,10 @@
       day: 'numeric'
     });
 
-    // Ancho real del lienzo de exportación. Más pequeño que 1200 para que la
-    // ficha y la tabla no nazcan desbordadas en móviles. Igual se escala completo
-    // dentro de la página PDF, sin recortar columnas.
-    const PDF_EXPORT_WIDTH = 1080;
-    const PDF_MARGIN_MM = 5;
+    const isFicha = element === ctx.el.fichaView;
+    // Ficha → portrait 800px; tabla general → landscape 1080px
+    const PDF_EXPORT_WIDTH = isFicha ? 800 : 1080;
+    const PDF_MARGIN_MM = 8;
     const PDF_TARGET_SCALE = 3;
     const PDF_MAX_RENDER_PIXELS = 90000000;
 
@@ -1728,81 +1932,92 @@
       pointerEvents: 'none'
     });
 
-    const clone = element.cloneNode(true);
-    clone.classList.add('pdf-export-clone');
-    Object.assign(clone.style, {
-      display: 'block',
-      width: '100%',
-      minWidth: '0',
-      maxWidth: 'none',
-      boxSizing: 'border-box',
-      height: 'auto',
-      maxHeight: 'none',
-      overflow: 'visible',
-      background: '#ffffff',
-      transform: 'none'
-    });
+    let sourcePage;
 
-    // Quita scrolls heredados. Si una tabla quedó movida horizontalmente en pantalla,
-    // el clon no debe conservar ese scroll, porque ahí nace el “PDF cortado”.
-    clone.querySelectorAll('*').forEach((node) => {
-      try {
+    if (isFicha) {
+      stage.innerHTML = buildFichaTemplate(element, sections, title, exportDate);
+      sourcePage = stage.querySelector('.pdf-ficha-template');
+    } else {
+      const clone = element.cloneNode(true);
+      clone.classList.add('pdf-export-clone');
+      Object.assign(clone.style, {
+        display: 'block',
+        width: '100%',
+        minWidth: '0',
+        maxWidth: 'none',
+        boxSizing: 'border-box',
+        height: 'auto',
+        maxHeight: 'none',
+        overflow: 'visible',
+        background: '#ffffff',
+        transform: 'none'
+      });
+
+      clone.querySelectorAll('*').forEach((node) => {
+        try {
+          node.scrollLeft = 0;
+          node.scrollTop = 0;
+          if (node.style) {
+            node.style.transform = 'none';
+            node.style.translate = 'none';
+          }
+        } catch (_) {}
+      });
+
+      clone.querySelectorAll('.table-wrap, .tableWrap').forEach((node) => {
+        node.style.overflow = 'visible';
+        node.style.maxHeight = 'none';
+        node.style.height = 'auto';
+        node.style.width = '100%';
+        node.style.maxWidth = 'none';
         node.scrollLeft = 0;
         node.scrollTop = 0;
-        if (node.style) {
-          node.style.transform = 'none';
-          node.style.translate = 'none';
-        }
-      } catch (_) {}
-    });
+      });
 
-    clone.querySelectorAll('.table-wrap, .tableWrap').forEach((node) => {
-      node.style.overflow = 'visible';
-      node.style.maxHeight = 'none';
-      node.style.height = 'auto';
-      node.style.width = '100%';
-      node.style.maxWidth = 'none';
-      node.scrollLeft = 0;
-      node.scrollTop = 0;
-    });
+      clone.querySelector('#tablaContainer')?.classList.add('pdf-registro-table');
+      clone.querySelectorAll('.ficha-actions, .tabs, button').forEach((node) => node.remove());
 
-    clone.querySelector('#tablaContainer')?.classList.add('pdf-registro-table');
-    clone.querySelectorAll('.ficha-actions, .tabs, button').forEach((node) => node.remove());
+      if (sections.saldos === false) clone.querySelector('#fichaSummaryBlock')?.remove();
+      if (sections.programacion === false) clone.querySelector('#programacionStudentView')?.remove();
+      if (sections.registro === false) clone.querySelector('#tablaContainer')?.remove();
 
-    if (sections.saldos === false) {
-      clone.querySelector('#fichaSummaryBlock')?.remove();
+      stage.innerHTML = `
+        <div class=”pdf-export-page”>
+          <header class=”pdf-export-head”>
+            <div>
+              <div class=”pdf-export-brand”>Musicala · RIP 2026</div>
+              <h1>${escapeHTML(title)}</h1>
+              <p>${escapeHTML(subtitle)}</p>
+            </div>
+            <div class=”pdf-export-meta”>
+              <span>Exportado</span>
+              <strong>${escapeHTML(exportDate)}</strong>
+            </div>
+          </header>
+        </div>
+      `;
+
+      const page = stage.querySelector('.pdf-export-page');
+      Object.assign(page.style, {
+        width: `${PDF_EXPORT_WIDTH}px`,
+        minWidth: `${PDF_EXPORT_WIDTH}px`,
+        maxWidth: 'none',
+        overflow: 'visible',
+        background: '#ffffff'
+      });
+      page.appendChild(clone);
+      sourcePage = page;
     }
-    if (sections.programacion === false) {
-      clone.querySelector('#programacionStudentView')?.remove();
-    }
-    if (sections.registro === false) {
-      clone.querySelector('#tablaContainer')?.remove();
-    }
 
-    stage.innerHTML = `
-      <div class="pdf-export-page">
-        <header class="pdf-export-head">
-          <div>
-            <div class="pdf-export-brand">Musicala · RIP 2026</div>
-            <h1>${escapeHTML(title)}</h1>
-            <p>${escapeHTML(subtitle)}</p>
-          </div>
-          <div class="pdf-export-meta">
-            <span>Exportado</span>
-            <strong>${escapeHTML(exportDate)}</strong>
-          </div>
-        </header>
-      </div>
-    `;
-
-    const page = stage.querySelector('.pdf-export-page');
-    Object.assign(page.style, {
-      width: `${PDF_EXPORT_WIDTH}px`,
-      minWidth: `${PDF_EXPORT_WIDTH}px`,
-      maxWidth: 'none',
-      overflow: 'visible'
-    });
-    page.appendChild(clone);
+    if (sourcePage) {
+      Object.assign(sourcePage.style, {
+        width: `${PDF_EXPORT_WIDTH}px`,
+        minWidth: `${PDF_EXPORT_WIDTH}px`,
+        maxWidth: 'none',
+        overflow: 'visible',
+        background: '#ffffff'
+      });
+    }
 
     document.body.appendChild(stage);
 
@@ -1811,7 +2026,7 @@
       if (document.fonts?.ready) await document.fonts.ready;
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
-      const source = stage.querySelector('.pdf-export-page');
+      const source = sourcePage || stage.querySelector('.pdf-export-page') || stage;
       const captureWidth = Math.ceil(Math.max(PDF_EXPORT_WIDTH, source.scrollWidth, source.offsetWidth));
       const captureHeight = Math.ceil(Math.max(source.scrollHeight, source.offsetHeight)) + 12;
 
@@ -1834,8 +2049,9 @@
         windowHeight: captureHeight
       });
 
+      const pdfOrientation = isFicha ? 'portrait' : 'landscape';
       const pdf = new JsPDFCtor({
-        orientation: 'landscape',
+        orientation: pdfOrientation,
         unit: 'mm',
         format: 'letter',
         compress: false
@@ -1876,7 +2092,7 @@
           currentSliceHeight
         );
 
-        if (pageIndex > 0) pdf.addPage('letter', 'landscape');
+        if (pageIndex > 0) pdf.addPage('letter', pdfOrientation);
 
         const imgData = pageCanvas.toDataURL('image/png');
         const sliceHeightMm = currentSliceHeight * innerWidth / canvas.width;

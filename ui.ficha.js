@@ -228,7 +228,7 @@
     return hasPago ? 'Pago' : 'Clase';
   }
 
-  function renderTable2026(ctx, rows) {
+  function renderTable2026(ctx, rows, cycleBaseRows = rows) {
     const { el } = ctx;
     if (!el.tableBody) return;
 
@@ -315,7 +315,7 @@
         overLimit
       });
     };
-    const bottomToTop = rows
+    const bottomToTop = (cycleBaseRows || rows || [])
       .map((r, i) => ({ r, i }))
       .sort((a, b) => {
         const ta = getChronoKey(a.r, a.i);
@@ -546,6 +546,10 @@
     show(el.fichaSummaryBlock);
     show(el.tablaContainer);
     show(el.programacionStudentView);
+    el.filtersCard?.classList.add('filters-card--ficha');
+    if (el.fStudent) el.fStudent.value = state.currentStudentName || '';
+    RIPUI.table?.renderProfesorOptions?.(ctx, state.registro || [], state.currentStudentKey || '');
+    RIPUI.table?.renderServiceList?.(ctx, state, state.registro || [], { keepSearch: false, estudianteKey: state.currentStudentKey || '' });
 
     if (el.programacionEmbed) el.programacionEmbed.innerHTML = '';
   }
@@ -1330,6 +1334,7 @@
     openStudentFromSearch,
     openStudentYear,
     loadStudentByYear,
+    renderTable2026,
     // Limpia caches en memoria y TSV para el refresh nuclear
     clearCaches() {
       historyCache.clear();

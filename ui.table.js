@@ -320,8 +320,11 @@
   function readFilters(ctx, state) {
     const { el } = ctx;
 
+    const isFichaMode = !!state.currentStudentKey && ctx.el.fichaView && ctx.el.fichaView.style.display !== 'none';
     const typedName = el.fStudent ? (el.fStudent.value || '') : '';
-    const estudianteKey = findStudentKeyByName(getCurrentYearStudents(state), typedName);
+    const estudianteKey = isFichaMode
+      ? state.currentStudentKey
+      : findStudentKeyByName(getCurrentYearStudents(state), typedName);
 
     const profesor = el.fProfesor ? (el.fProfesor.value || '') : '';
     const uiTipo = el.fTipo ? (el.fTipo.value || '') : '';
@@ -404,26 +407,40 @@
     const filters = readFilters(ctx, state);
     const rows = RIPCore.applyFilters(state.registro, filters);
     state.filteredRows = rows;
-    renderTable(ctx, rows);
+
+    const isFichaMode = !!state.currentStudentKey && ctx.el.fichaView && ctx.el.fichaView.style.display !== 'none';
+    if (isFichaMode && window.RIPUI?.ficha?.renderTable2026) {
+      const baseRows = ctx.__fichaEditMode
+        ? (ctx.__fichaRowsWorking || []).filter((r) => !r.__deleted)
+        : (window.RIPCore?.getStudentFicha?.(state.registro || [], state.currentStudentKey)?.rows || rows);
+      window.RIPUI.ficha.renderTable2026(ctx, rows, baseRows);
+    } else {
+      renderTable(ctx, rows);
+    }
+
     setStatus(ctx, `Mostrando ${rows.length} registro(s)`);
     return rows;
   }
-
   function resetFilters(ctx, state) {
     const { el } = ctx;
-    if (el.fStudent)  el.fStudent.value  = '';
+    const isFichaMode = !!state.currentStudentKey && ctx.el.fichaView && ctx.el.fichaView.style.display !== 'none';
+    const fichaStudent = isFichaMode
+      ? (state.currentStudentName || (state.allStudents || []).find((s) => s.key === state.currentStudentKey)?.name || '')
+      : '';
+
+    if (el.fStudent)  el.fStudent.value  = fichaStudent;
     if (el.fProfesor) el.fProfesor.value = '';
     if (el.fTipo)     el.fTipo.value     = '';
     if (el.fDesde)    el.fDesde.value    = '';
     if (el.fHasta)    el.fHasta.value    = '';
 
-    // Restaurar listas completas (sin filtro de estudiante)
+    // Restaurar listas, conservando el estudiante activo cuando estamos en ficha
     clearServicios(ctx, state);
-    renderProfesorOptions(ctx, state.registro, '');
-    renderServiceList(ctx, state, state.registro, { keepSearch: false, estudianteKey: '' });
+    renderProfesorOptions(ctx, state.registro, isFichaMode ? state.currentStudentKey : '');
+    renderServiceList(ctx, state, state.registro, { keepSearch: false, estudianteKey: isFichaMode ? state.currentStudentKey : '' });
 
     applyAndRender(ctx, state);
-    setStatus(ctx, 'Filtros limpiados.');
+    setStatus(ctx, isFichaMode ? 'Filtros limpiados para este estudiante.' : 'Filtros limpiados.');
     renderStudentDatalist(ctx, getSearchStudents(state), '');
   }
 
