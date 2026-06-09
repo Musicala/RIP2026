@@ -1211,6 +1211,12 @@ tr.row-debt td:nth-child(2) {
   opacity: .45;
   cursor: not-allowed;
 }
+.pdf-check--sub {
+  margin-top: 4px !important;
+  margin-left: 22px;
+  font-size: 13px;
+  color: var(--muted);
+}
 
 #ripDateModal.rip-modal-in .rip-modal-box {
   transform: translateY(0) scale(1);
@@ -1802,3 +1808,43 @@ tr.urgency-info:hover td { background: rgba(37,99,235,.09) !important; }
 .pdf-ft-table-wrap .pdf-export-clone .pdf-registro-table .tbl td:nth-child(7) { width: 14% !important; }
 .pdf-ft-table-wrap .pdf-export-clone .pdf-registro-table .tbl th:nth-child(11),
 .pdf-ft-table-wrap .pdf-export-clone .pdf-registro-table .tbl td:nth-child(11) { width: 14% !important; }
+
+/* ─── Kpi aliases ─── */
+.kpi-card.ok   { border-left: 3px solid var(--ok); }
+.kpi-card.warn { border-left: 3px solid var(--danger); }
+.kpi-card.info { border-left: 3px solid var(--info); }
+.kpi-card .kpi-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.kpi-card .kpi-val   { margin-top: 4px; font-size: 26px; font-weight: 900; color: var(--navy); letter-spacing: -.03em; }
+
+/* ─── Trial list view ─── */
+.trial-conv-badge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.trial-conv-pct   { font-size: 18px; font-weight: 800; padding: 2px 10px; border-radius: 20px; }
+.trial-conv-pct.ok   { background: rgba(5,150,105,.12); color: #059669; }
+.trial-conv-pct.warn { background: rgba(217,119,6,.12);  color: #b45309; }
+.trial-conv-pct.err  { background: rgba(220,38,38,.12);  color: #dc2626; }
+.trial-conv-detail { font-size: 13px; color: var(--muted); }
+.trial-row:hover { background: #f8faff; }
+.trial-converted td:first-child { border-left: 3px solid var(--ok); }
+.pilltag.muted { color: var(--muted); background: var(--panel-2, #f1f5f9); border-color: var(--bd); }
+
+/* ─── Modal: Clase especial ─── */
+.rip-ce-box { width: min(480px, calc(100vw - 32px)); }
+.rip-ce-tipo-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.rip-ce-tab {
+  flex: 1; padding: 9px 14px; border-radius: var(--r-md);
+  border: 1.5px solid var(--bd); background: var(--panel);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s;
+}
+.rip-ce-tab.active {
+  border-color: var(--navy); background: rgba(26,59,110,.07); color: var(--navy);
+}
+.rip-ce-tab:hover:not(.active) { background: var(--panel-2, #f1f5f9); }
+.rip-ce-form { display: flex; flex-direction: column; gap: 10px; }
+.rip-ce-row  { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 8px; }
+.rip-ce-label { font-size: 12px; font-weight: 700; color: var(--muted); text-align: right; }
+.rip-ce-input {
+  padding: 7px 10px; border: 1.5px solid var(--bd); border-radius: var(--r-sm);
+  font-size: 13px; font-family: inherit; background: var(--panel); color: var(--ink);
+  transition: border-color .15s;
+}
+.rip-ce-input:focus { outline: none; border-color: var(--navy); }

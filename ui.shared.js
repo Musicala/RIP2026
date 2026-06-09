@@ -171,6 +171,11 @@
       clientesBody: $('clientesBody'),
       dashboardClasView: $('dashboardClasView'),
       dashboardSaldoView: $('dashboardSaldoView'),
+      trialListView: $('trialListView'),
+      trialListBody: $('trialListBody'),
+      trialKpis: $('trialKpis'),
+      trialConversionBadge: $('trialConversionBadge'),
+      btnTrialListBack: $('btnTrialListBack'),
       dashboardProgView: $('dashboardProgView'),
       registroCalendarView: $('registroCalendarView'),
       fichaView: $('fichaView'),
@@ -245,7 +250,8 @@
       btnFichaEditMode: $('btnFichaEditMode'),
       btnFichaSaveEdits: $('btnFichaSaveEdits'),
       btnFichaCancelEdits: $('btnFichaCancelEdits'),
-      btnVolverDash: $('btnVolverDash')
+      btnVolverDash: $('btnVolverDash'),
+      btnClaseEspecial: $('btnClaseEspecial')
     };
 
     return { el };

@@ -1268,9 +1268,11 @@
   function appendTrialContinuityKpis() {
     if (!ctx.el.dashGridClas) return;
     const groups = buildTrialContinuityGroups();
+    const total = groups.sin.length + groups.con.length;
+    const pct = total > 0 ? Math.round((groups.con.length / total) * 100) : 0;
     const cards = [
-      ['Prueba / cortes�a sin continuidad', groups.sin.length, 'No volvieron despues de CP/CC', 'sin'],
-      ['Prueba / cortes�a con continuidad', groups.con.length, 'Volvieron despues de CP/CC', 'con']
+      ['Prueba / cortesía sin continuidad', groups.sin.length, 'No volvieron después de CP/CC', 'sin'],
+      ['Prueba / cortesía con continuidad', groups.con.length, 'Volvieron después de CP/CC', 'con']
     ];
     ctx.el.dashGridClas.insertAdjacentHTML('beforeend', cards.map(([title, value, subtitle, key]) => `
       <button class="pocket ${key === 'con' ? 'ok' : 'warn'}" type="button" data-trial-continuity="${escapeHTML(key)}">
@@ -1282,6 +1284,19 @@
         <div class="mini">${escapeHTML(subtitle)}</div>
       </button>
     `).join(''));
+
+    // Tarjeta de conversión + acceso a la lista completa
+    ctx.el.dashGridClas.insertAdjacentHTML('beforeend', `
+      <button class="pocket info" type="button" data-trial-open-list>
+        <div class="pocket-top">
+          <h3>Tasa de conversión CP/CC</h3>
+          <span class="pilltag info">Conversión</span>
+        </div>
+        <div class="big">${pct}%</div>
+        <div class="mini">${groups.con.length} de ${total} con prueba convirtieron</div>
+      </button>
+    `);
+
     ctx.el.dashGridClas.querySelectorAll('[data-trial-continuity]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const key = btn.getAttribute('data-trial-continuity') || '';
@@ -1289,7 +1304,88 @@
         else openTrialContinuityList('Prueba / cortesia sin continuidad', groups.sin);
       });
     });
+    ctx.el.dashGridClas.querySelector('[data-trial-open-list]')?.addEventListener('click', () => {
+      openTrialListView();
+    });
   }
+
+  // =========================
+  // Vista: Lista de clases de prueba / cortesía
+  // =========================
+  function openTrialListView() {
+    hide(ctx.el.dashboardClasView);
+    hide(ctx.el.dashboardSaldoView);
+    hide(ctx.el.fichaView);
+    show(ctx.el.trialListView);
+    renderTrialListView();
+  }
+
+  function renderTrialListView() {
+    const groups = buildTrialContinuityGroups();
+    const total = groups.sin.length + groups.con.length;
+    const pct = total > 0 ? Math.round((groups.con.length / total) * 100) : 0;
+
+    if (ctx.el.trialConversionBadge) {
+      const cls = pct >= 50 ? 'ok' : pct >= 25 ? 'warn' : 'err';
+      ctx.el.trialConversionBadge.innerHTML = `
+        <span class="trial-conv-pct ${cls}">${pct}% conversión</span>
+        <span class="trial-conv-detail">${groups.con.length} de ${total} convirtieron</span>
+      `;
+    }
+
+    if (ctx.el.trialKpis) {
+      ctx.el.trialKpis.innerHTML = `
+        <div class="kpi-card ok"><div class="kpi-label">Con continuidad</div><div class="kpi-val">${groups.con.length}</div></div>
+        <div class="kpi-card warn"><div class="kpi-label">Sin continuidad</div><div class="kpi-val">${groups.sin.length}</div></div>
+        <div class="kpi-card info"><div class="kpi-label">Total CP/CC</div><div class="kpi-val">${total}</div></div>
+        <div class="kpi-card ${pct >= 50 ? 'ok' : 'warn'}"><div class="kpi-label">Tasa conversión</div><div class="kpi-val">${pct}%</div></div>
+      `;
+    }
+
+    if (!ctx.el.trialListBody) return;
+    const trialRows = (state.registro || []).filter(r => isTrialOrCourtesyRow(r));
+    const convertedKeys = new Set(groups.con.map(g => g.key));
+    const sorted = [...trialRows].sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
+
+    if (sorted.length === 0) {
+      ctx.el.trialListBody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No hay clases de prueba o cortesía registradas.</td></tr>';
+      return;
+    }
+
+    ctx.el.trialListBody.innerHTML = sorted.map(r => {
+      const key = r.estudianteKey || norm(r.estudiante);
+      const converted = convertedKeys.has(key);
+      const esCortesia = /cortesia|gratis|obsequio/i.test(`${r.servicio || ''} ${r.comentario || ''} ${r.clasif || ''}`);
+      const tipoLabel = esCortesia
+        ? '<span class="pilltag info">CC Cortesía</span>'
+        : '<span class="pilltag warn">CP Prueba</span>';
+      const convLabel = converted
+        ? '<span class="pilltag ok">✅ Convirtió</span>'
+        : '<span class="pilltag muted">⏳ Pendiente</span>';
+      return `
+        <tr class="trial-row${converted ? ' trial-converted' : ''}"
+            data-student-key="${escapeHTML(key)}" style="cursor:pointer" title="Ver ficha">
+          <td>${escapeHTML(r.fecha || r.fechaRaw || '')}</td>
+          <td><strong>${escapeHTML(r.estudiante || key)}</strong></td>
+          <td>${tipoLabel}</td>
+          <td>${escapeHTML(r.servicio || '')}</td>
+          <td>${escapeHTML(r.profesor || '')}</td>
+          <td>${convLabel}</td>
+        </tr>
+      `;
+    }).join('');
+
+    ctx.el.trialListBody.querySelectorAll('.trial-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const key = row.getAttribute('data-student-key');
+        if (!key) return;
+        hide(ctx.el.trialListView);
+        showFichaContainer();
+        openStudentFicha(key, { focusProgramacion: false });
+      });
+    });
+  }
+
   function renderReviewToday() {
     if (!ctx.el.reviewTodayBody) return;
     const clas = RIPCore.buildClasificacionDashboard(state.allStudents || []);
@@ -1843,6 +1939,7 @@
     }
 
     const showSaldos = sections.saldos !== false;
+    const showPaquetes = showSaldos && sections.paquetes !== false;
     const showRegistro = sections.registro !== false;
 
     return `
@@ -1865,7 +1962,7 @@
             </div>
           </div>
           ${saldoChipsHTML ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Saldos por servicio</div><div class="pdf-ft-chips">${saldoChipsHTML}</div></div>` : ''}
-          ${pkgs.length ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Paquetes de clases</div><div class="pdf-ft-packages">${packagesHTML}</div></div>` : ''}
+          ${showPaquetes && pkgs.length ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Paquetes de clases</div><div class="pdf-ft-packages">${packagesHTML}</div></div>` : ''}
           ` : ''}
           ${!showSaldos && pkgs.length ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Paquetes de clases</div><div class="pdf-ft-packages">${packagesHTML}</div></div>` : ''}
           ${showRegistro ? `<div class="pdf-ft-section"><div class="pdf-ft-section-head">Registro de clases y pagos</div><div class="pdf-ft-table-wrap">${tableCloneHTML}</div></div>` : ''}
@@ -2154,6 +2251,10 @@
             <input type="checkbox" data-pdf-section="saldos" ${hasSaldos ? 'checked' : 'disabled'}>
             <span>Saldos / resumen</span>
           </label>
+          <label class="pdf-check pdf-check--sub ${hasSaldos ? '' : 'is-disabled'}" id="pdfChkPaquetesLabel">
+            <input type="checkbox" data-pdf-section="paquetes" ${hasSaldos ? 'checked' : 'disabled'}>
+            <span>↳ Paquetes de clases</span>
+          </label>
           <label class="pdf-check ${hasProgramacion ? '' : 'is-disabled'}">
             <input type="checkbox" data-pdf-section="programacion" ${hasProgramacion ? 'checked' : 'disabled'}>
             <span>Programación</span>
@@ -2170,6 +2271,19 @@
       </div>
     `;
 
+    // Si se desmarca "Saldos", deshabilitar automáticamente "Paquetes de clases"
+    const chkSaldos = modal.querySelector('[data-pdf-section="saldos"]');
+    const chkPaquetes = modal.querySelector('[data-pdf-section="paquetes"]');
+    const lblPaquetes = modal.querySelector('#pdfChkPaquetesLabel');
+    if (chkSaldos && chkPaquetes) {
+      chkSaldos.addEventListener('change', () => {
+        chkPaquetes.disabled = !chkSaldos.checked;
+        if (!chkSaldos.checked) chkPaquetes.checked = false;
+        else chkPaquetes.checked = true;
+        if (lblPaquetes) lblPaquetes.classList.toggle('is-disabled', !chkSaldos.checked);
+      });
+    }
+
     const close = () => modal.remove();
     modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
     modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
@@ -2177,6 +2291,7 @@
     modal.querySelector('[data-pdf-export]')?.addEventListener('click', () => {
       const sections = {
         saldos: !!modal.querySelector('[data-pdf-section="saldos"]')?.checked,
+        paquetes: !!modal.querySelector('[data-pdf-section="paquetes"]')?.checked,
         programacion: !!modal.querySelector('[data-pdf-section="programacion"]')?.checked,
         registro: !!modal.querySelector('[data-pdf-section="registro"]')?.checked
       };
@@ -2253,6 +2368,7 @@
     show(ctx.el.tablaContainer);
 
     show(ctx.el.btnPDF);
+    show(ctx.el.btnClaseEspecial);
     show(ctx.el.btnVolverDash);
 
     if (RIPUI.table?.applyAndRender) {
@@ -2453,6 +2569,117 @@
       const url = buildStudentUrl(MORE_INFO_URL, name);
       window.open(url, '_blank', 'noopener,noreferrer');
     });
+
+    // Volver desde lista de pruebas
+    ctx.el.btnTrialListBack?.addEventListener('click', () => {
+      hide(ctx.el.trialListView);
+      show(ctx.el.dashboardClasView);
+    });
+
+    // Clase especial (cortesía / prueba) desde la ficha
+    ctx.el.btnClaseEspecial?.addEventListener('click', () => {
+      const name = getCurrentStudentName();
+      const key = state.currentStudentKey;
+      if (!name && !key) {
+        toast(ctx.el.toastWrap, 'Primero selecciona un estudiante.', 'warn');
+        return;
+      }
+      openClaseEspecialModal(key || name, name || key);
+    });
+  }
+
+  // =========================
+  // Modal: Clase especial (cortesía / prueba)
+  // =========================
+  function openClaseEspecialModal(studentKey, studentName) {
+    const prev = document.getElementById('ripClaseEspecialModal');
+    if (prev) prev.remove();
+
+    const today = new Date();
+    const todayStr = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0')
+    ].join('-');
+
+    const modal = document.createElement('div');
+    modal.id = 'ripClaseEspecialModal';
+    modal.className = 'rip-pdf-modal';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-ce-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">🎁 Clase de cortesía · <strong>${escapeHTML(studentName)}</strong></span>
+          <button class="rip-modal-close" type="button">×</button>
+        </div>
+        <div class="rip-modal-body">
+          <div class="rip-ce-form">
+            <div class="rip-ce-row">
+              <label class="rip-ce-label">Fecha</label>
+              <input class="rip-ce-input" id="ceInputFecha" type="date" value="${todayStr}">
+            </div>
+          </div>
+          <p class="rip-modal-hint" style="margin-top:12px">
+            Crea un <strong>Pago $0 · CC Cortesía</strong> para <strong>${escapeHTML(studentName)}</strong>.
+            La clase se registra normalmente después y redime este crédito.
+          </p>
+        </div>
+        <div class="rip-modal-actions">
+          <button class="btn ghost" type="button" data-ce-cancel>Cancelar</button>
+          <button class="btn primary" type="button" data-ce-save>🎁 Registrar cortesía</button>
+        </div>
+      </div>
+    `;
+
+    const close = () => modal.remove();
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('[data-ce-cancel]')?.addEventListener('click', close);
+
+    modal.querySelector('[data-ce-save]')?.addEventListener('click', async () => {
+      const fecha = modal.querySelector('#ceInputFecha')?.value?.trim();
+      if (!fecha) {
+        toast(ctx.el.toastWrap, 'Ingresa una fecha.', 'warn');
+        return;
+      }
+
+      const row = {
+        tipo: 'Pago',
+        estudiante: studentName,
+        estudianteKey: studentKey,
+        fecha,
+        hora: '',
+        servicio: 'Clase de cortesía CC',
+        profesor: '',
+        pago: '0',
+        comentario: 'Cortesía CC',
+        clasif: 'CC de Clase de cortesia',
+        clasifPago: 'CC de Clase de cortesia'
+      };
+
+      const saveBtn = modal.querySelector('[data-ce-save]');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Guardando…';
+
+      try {
+        await RIPRepository.addRegistroRow(row);
+        close();
+        toast(ctx.el.toastWrap, `Cortesía registrada para ${studentName}.`, 'ok');
+        setTimeout(() => {
+          if (state.currentStudentKey === studentKey && RIPUI.ficha?.openFichaByKey) {
+            RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
+          }
+        }, 800);
+      } catch (err) {
+        console.error(err);
+        toast(ctx.el.toastWrap, 'No se pudo registrar. Intenta de nuevo.', 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = '🎁 Registrar cortesía';
+      }
+    });
+
+    document.body.appendChild(modal);
+    modal.querySelector('#ceInputFecha')?.focus();
   }
 
   // =========================

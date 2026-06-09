@@ -245,6 +245,36 @@
   </section>
 
 
+  <!-- ─── Vista: Lista de clases de prueba / cortesía ─── -->
+  <section class="card" id="trialListView" style="display:none">
+    <div class="card-title">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3>Clases de prueba y cortesía</h3>
+        <div id="trialConversionBadge" class="trial-conv-badge"></div>
+      </div>
+      <p class="muted">Registro de todas las clases de prueba (CP) y cortesías (CC) dadas.</p>
+    </div>
+    <div class="kpis" id="trialKpis"></div>
+    <div id="trialListWrap" class="table-wrap" style="margin-top:12px">
+      <table class="tbl" id="trialListTable">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Estudiante</th>
+            <th>Tipo</th>
+            <th>Servicio</th>
+            <th>Profesor</th>
+            <th>Conversión</th>
+          </tr>
+        </thead>
+        <tbody id="trialListBody"></tbody>
+      </table>
+    </div>
+    <div class="ficha-actions" style="margin-top:12px">
+      <button class="btn ghost" id="btnTrialListBack">← Volver</button>
+    </div>
+  </section>
+
   <!-- ─── Dashboard Saldos ─── -->
   <section class="card" id="dashboardSaldoView" style="display:none">
     <div class="card-title">
@@ -501,6 +531,7 @@
       <button class="btn" id="btnFichaEditMode">✏️ Modo edición</button>
       <button class="btn primary" id="btnFichaSaveEdits" style="display:none">💾 Guardar cambios</button>
       <button class="btn ghost" id="btnFichaCancelEdits" style="display:none">Cancelar</button>
+      <button class="btn" id="btnClaseEspecial" style="display:none">🎁 Clase especial</button>
       <button class="btn" id="btnPDF" style="display:none">📄 Descargar PDF</button>
       <button class="btn ghost" id="btnVolverDash" style="display:none">← Dashboard</button>
     </div>

@@ -944,6 +944,7 @@
     toggleEditButtons(ctx, false);
 
     show(el.btnPDF);
+    show(el.btnClaseEspecial);
     show(el.btnVolverDash);
 
     const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
@@ -973,6 +974,7 @@
 
     const { el } = ctx;
     show(el.btnPDF);
+    show(el.btnClaseEspecial);
     show(el.btnVolverDash);
 
     const years = getAvailableYearsForEntry(entry, state);
