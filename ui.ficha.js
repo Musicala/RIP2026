@@ -270,7 +270,7 @@
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
       if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
-      if (key === 'ms sp') return 'ms g';
+      if (key === 'tv' || key === 'taller' || key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
       return key;
     };
     const getPackageKey = (r) => {

@@ -171,6 +171,7 @@
     if (isPago) {
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
+      if (test(s, /vacacional/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'TV' };
       if (!s) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
       if (test(s, /matr[ií]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
       if (test(s, /virtual.*personalizado|personalizado.*virtual/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MV P' };

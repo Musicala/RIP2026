@@ -89,6 +89,7 @@
     if (tipo === 'pago') {
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
+      if (s.includes('vacacional')) return { clasif: 'Pago', clasifPago: 'TV' };
       if (s.includes('matricula')) return { clasif: 'Pago', clasifPago: 'Pago' };
       if (s.includes('virtual') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MV P' };
       if (s.includes('hogar') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MH P' };
@@ -179,7 +180,7 @@
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
       if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
-      if (key === 'ms sp') return 'ms g';
+      if (key === 'tv' || key === 'taller' || key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
       return key;
     };
     const isPago = (row) => {
