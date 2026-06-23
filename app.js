@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
   app.js — RIP 2026 App (Wiring) — v4 optimizado
   - Boot progresivo real: 2026 fast -> tabla usable -> programación -> análisis
   - Índice global liviano de estudiantes (2023/2024/2025/2026) lazy / background
@@ -56,6 +56,8 @@
     filteredRows: [],
     clientesB2C: [],
     clientesLoaded: false,
+    primeraVez: [],
+    primeraVezLoaded: false,
     selectedServicios: new Set(),
     currentStudentKey: '',
     currentStudentName: '',
@@ -312,6 +314,7 @@
     hide(ctx.el.reviewTodayView);
     hide(ctx.el.searchView);
     hide(ctx.el.clientesView);
+    hide(ctx.el.primeraVezView);
     hide(ctx.el.dashboardClasView);
     hide(ctx.el.dashboardSaldoView);
     hide(ctx.el.dashboardProgView);
@@ -346,6 +349,12 @@
       return;
     }
 
+    if (mode === 'primeraVez') {
+      ctx.el.dashTitle.textContent = 'Primera vez';
+      ctx.el.dashSub.textContent = 'Registro de cancelaciones perdonadas por primera vez.';
+      return;
+    }
+
     if (mode === 'kpis') {
       ctx.el.dashTitle.textContent = 'KPIs';
       ctx.el.dashSub.textContent = 'Numeros generales de estudiantes, saldos y programacion.';
@@ -376,6 +385,7 @@
     ctx.el.viewTabProg?.classList.toggle('active', mode === 'prog');
     ctx.el.viewTabSaldo?.classList.toggle('active', mode === 'saldo');
     ctx.el.viewTabRegistro?.classList.toggle('active', mode === 'registro');
+    ctx.el.viewTabPrimeraVez?.classList.toggle('active', mode === 'primeraVez');
     ctx.el.viewTabClientes?.classList.toggle('active', mode === 'clientes');
     ctx.el.viewTabKpis?.classList.toggle('active', mode === 'kpis');
 
@@ -401,6 +411,8 @@
     state.filteredRows = [];
     state.clientesB2C = [];
     state.clientesLoaded = false;
+    state.primeraVez = [];
+    state.primeraVezLoaded = false;
     state.selectedServicios = new Set();
     state.currentStudentKey = '';
     state.currentStudentName = '';
@@ -886,6 +898,220 @@
     }
   }
 
+  const PRIMERA_VEZ_MOTIVOS = ['Enfermedad', 'Descuido', 'Olvido', 'Familiar', 'Transporte', 'Otro'];
+
+  function getPrimeraVezForStudent(studentNameOrKey) {
+    const key = norm(studentNameOrKey);
+    if (!key) return null;
+    return (state.primeraVez || []).find(row => norm(row.estudianteKey || row.estudiante) === key || norm(row.estudiante) === key) || null;
+  }
+
+  function filterPrimeraVez() {
+    const q = norm(ctx.el.primeraVezSearch?.value || '');
+    const motivo = String(ctx.el.primeraVezMotivoFilter?.value || '').trim();
+    return [...(state.primeraVez || [])]
+      .filter(row => {
+        if (motivo && String(row.motivo || '') !== motivo) return false;
+        if (!q) return true;
+        return norm(`${row.estudiante || ''} ${row.motivo || ''} ${row.detalle || ''}`).includes(q);
+      })
+      .sort((a, b) => (Number(b.fechaClaseTs) || 0) - (Number(a.fechaClaseTs) || 0));
+  }
+
+  function fillPrimeraVezMotivos() {
+    if (!ctx.el.primeraVezMotivoFilter) return;
+    const current = ctx.el.primeraVezMotivoFilter.value || '';
+    const motives = Array.from(new Set([...PRIMERA_VEZ_MOTIVOS, ...(state.primeraVez || []).map(r => r.motivo).filter(Boolean)]));
+    ctx.el.primeraVezMotivoFilter.innerHTML = '<option value="">Todos</option>' +
+      motives.map(m => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join('');
+    ctx.el.primeraVezMotivoFilter.value = motives.includes(current) ? current : '';
+  }
+
+  function renderPrimeraVezView() {
+    if (!ctx.el.primeraVezBody) return;
+    fillPrimeraVezMotivos();
+    const rows = filterPrimeraVez();
+    setText(ctx.el.primeraVezStatus, state.primeraVezLoaded
+      ? `${rows.length} de ${(state.primeraVez || []).length} registros`
+      : 'Cargando registros...');
+
+    const byMotivo = new Map();
+    for (const row of state.primeraVez || []) {
+      const key = row.motivo || 'Sin motivo';
+      byMotivo.set(key, (byMotivo.get(key) || 0) + 1);
+    }
+    if (ctx.el.primeraVezKpis) {
+      const total = (state.primeraVez || []).length;
+      const motivoCards = Array.from(byMotivo.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([label, count]) => `<div class="kpi-card"><div class="v">${count}</div><div class="t">${escapeHTML(label)}</div></div>`)
+        .join('');
+      ctx.el.primeraVezKpis.innerHTML = `<div class="kpi-card"><div class="v">${total}</div><div class="t">Total perdonadas</div></div>${motivoCards}`;
+    }
+
+    if (!rows.length) {
+      ctx.el.primeraVezBody.innerHTML = `<tr><td colspan="6" class="empty-td">${state.primeraVezLoaded ? 'No hay registros para mostrar.' : 'Cargando registros...'}</td></tr>`;
+      return;
+    }
+
+    ctx.el.primeraVezBody.innerHTML = rows.map(row => `
+      <tr>
+        <td>${escapeHTML(row.fechaClase || '-')}</td>
+        <td>${escapeHTML(row.estudiante || '-')}</td>
+        <td>${escapeHTML(row.motivo || '-')}</td>
+        <td>${escapeHTML(row.detalle || '-')}</td>
+        <td>${escapeHTML(row.fechaRegistro || '-')}</td>
+        <td>
+          <button class="btn small" type="button" data-pv-edit="${escapeHTML(row.id || '')}">Editar</button>
+          <button class="btn small ghost" type="button" data-pv-del="${escapeHTML(row.id || '')}">Eliminar</button>
+        </td>
+      </tr>
+    `).join('');
+
+    ctx.el.primeraVezBody.querySelectorAll('[data-pv-edit]').forEach(btn => {
+      btn.addEventListener('click', () => openPrimeraVezModal({ recordId: btn.getAttribute('data-pv-edit') }));
+    });
+    ctx.el.primeraVezBody.querySelectorAll('[data-pv-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-pv-del');
+        if (!id || !confirm('Eliminar este registro de primera vez?')) return;
+        await RIPRepository.deletePrimeraVez(id);
+        state.primeraVez = (state.primeraVez || []).filter(r => r.id !== id);
+        renderPrimeraVezView();
+        toast(ctx.el.toastWrap, 'Registro eliminado.', 'ok');
+      });
+    });
+  }
+
+  async function loadPrimeraVez(force = false) {
+    if (state.primeraVezLoaded && !force) {
+      renderPrimeraVezView();
+      return state.primeraVez;
+    }
+    setText(ctx.el.primeraVezStatus, 'Cargando registros...');
+    try {
+      state.primeraVez = await RIPRepository.loadPrimeraVez();
+      state.primeraVezLoaded = true;
+      renderPrimeraVezView();
+      updatePrimeraVezFichaButton();
+      return state.primeraVez;
+    } catch (err) {
+      console.error(err);
+      state.primeraVezLoaded = false;
+      setText(ctx.el.primeraVezStatus, 'No se pudieron cargar los registros.');
+      if (ctx.el.primeraVezBody) {
+        ctx.el.primeraVezBody.innerHTML = '<tr><td colspan="6" class="empty-td">No se pudieron cargar los registros.</td></tr>';
+      }
+      return [];
+    }
+  }
+
+  function updatePrimeraVezFichaButton() {
+    if (!ctx.el.btnPrimeraVezFicha) return;
+    const name = getCurrentStudentName();
+    const existing = getPrimeraVezForStudent(name || state.currentStudentKey);
+    ctx.el.btnPrimeraVezFicha.textContent = existing
+      ? `Primera vez registrada (${existing.motivo || 'sin motivo'})`
+      : 'Registrar primera vez';
+    ctx.el.btnPrimeraVezFicha.classList.toggle('ghost', !!existing);
+    ctx.el.btnPrimeraVezFicha.title = existing
+      ? `Registrada el ${existing.fechaClase || '-'}`
+      : 'Registrar perdon de primera vez';
+    setText(
+      ctx.el.fichaPrimeraVez,
+      existing ? `${existing.fechaClase || '-'} · ${existing.motivo || 'Sin motivo'}` : '—'
+    );
+  }
+
+  function openPrimeraVezModal(opts = {}) {
+    const record = opts.recordId ? (state.primeraVez || []).find(r => r.id === opts.recordId) : null;
+    const studentName = opts.studentName || record?.estudiante || getCurrentStudentName() || '';
+    const existing = !record ? getPrimeraVezForStudent(studentName) : null;
+    const modal = document.createElement('div');
+    modal.id = 'ripPrimeraVezModal';
+    modal.className = 'rip-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    const motives = Array.from(new Set([...PRIMERA_VEZ_MOTIVOS, record?.motivo].filter(Boolean)));
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-editor-box" style="width:min(760px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto;">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">${record ? 'Editar primera vez' : 'Registrar primera vez'}</span>
+          <button class="rip-modal-close" type="button" aria-label="Cerrar">x</button>
+        </div>
+        <div class="rip-modal-body rip-editor-body">
+          ${existing ? `<div class="empty-td" style="text-align:left;margin-bottom:12px">Este estudiante ya tiene primera vez registrada el ${escapeHTML(existing.fechaClase || '-')}: ${escapeHTML(existing.motivo || '-')}.</div>` : ''}
+          <div class="ripedit-grid">
+            <label class="ripedit-field" style="grid-column:1/-1">
+              <span class="ripedit-label">Estudiante</span>
+              <input id="pvEstudiante" class="control" list="nombresLista" value="${escapeHTML(studentName)}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Fecha de clase</span>
+              <input id="pvFechaClase" class="control" type="date" value="${escapeHTML(record?.fechaClase || toISODate(new Date()))}">
+            </label>
+            <label class="ripedit-field">
+              <span class="ripedit-label">Motivo</span>
+              <select id="pvMotivo" class="control">
+                <option value="">Seleccionar...</option>
+                ${motives.map(m => `<option value="${escapeHTML(m)}" ${record?.motivo === m ? 'selected' : ''}>${escapeHTML(m)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="ripedit-field" style="grid-column:1/-1">
+              <span class="ripedit-label">Detalle</span>
+              <textarea id="pvDetalle" class="control" rows="4" placeholder="Ej: avisaron 1 hora antes por fiebre...">${escapeHTML(record?.detalle || '')}</textarea>
+            </label>
+          </div>
+          <p class="rip-modal-hint">Politica: si cancelan con menos de 3 horas pierden la clase; esta es la unica primera vez perdonada.</p>
+          <div id="pvStatus" class="status"></div>
+        </div>
+        <div class="rip-modal-foot">
+          <button class="btn ghost rip-modal-cancel" type="button">Cancelar</button>
+          <button class="btn primary rip-modal-save" type="button">${record ? 'Guardar cambios' : 'Guardar primera vez'}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => modal.classList.add('rip-modal-in'));
+    const close = () => {
+      modal.classList.remove('rip-modal-in');
+      setTimeout(() => modal.remove(), 160);
+    };
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-cancel')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-save')?.addEventListener('click', async () => {
+      const data = {
+        estudiante: modal.querySelector('#pvEstudiante')?.value || '',
+        fechaClase: modal.querySelector('#pvFechaClase')?.value || '',
+        motivo: modal.querySelector('#pvMotivo')?.value || '',
+        detalle: modal.querySelector('#pvDetalle')?.value || ''
+      };
+      const duplicate = !record ? getPrimeraVezForStudent(data.estudiante) : null;
+      if (duplicate && !confirm('Este estudiante ya tiene primera vez registrada. Guardar otra de todos modos?')) return;
+      try {
+        setText(modal.querySelector('#pvStatus'), 'Guardando...');
+        const saved = record
+          ? await RIPRepository.updatePrimeraVez(record.id, data)
+          : await RIPRepository.addPrimeraVez(data);
+        if (record) state.primeraVez = (state.primeraVez || []).map(r => r.id === saved.id ? saved : r);
+        else state.primeraVez = [saved, ...(state.primeraVez || [])];
+        state.primeraVezLoaded = true;
+        renderPrimeraVezView();
+        updatePrimeraVezFichaButton();
+        toast(ctx.el.toastWrap, 'Primera vez guardada.', 'ok');
+        close();
+      } catch (err) {
+        console.error(err);
+        setText(modal.querySelector('#pvStatus'), 'No se pudo guardar.');
+        toast(ctx.el.toastWrap, err?.message || 'No se pudo guardar.', 'warn');
+      }
+    });
+    modal.querySelector('#pvEstudiante')?.focus();
+  }
+
   // =========================
   // Navegación de vistas
   // =========================
@@ -902,6 +1128,10 @@
     if (state.dashMode === 'clientes') {
       show(ctx.el.clientesView);
       loadClientesB2C(false);
+    }
+    if (state.dashMode === 'primeraVez') {
+      show(ctx.el.primeraVezView);
+      loadPrimeraVez(false);
     }
     if (state.dashMode === 'clas') show(ctx.el.dashboardClasView);
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
@@ -1634,6 +1864,8 @@
     if (searchEntry && RIPUI.ficha?.openStudentFromSearch) {
       await RIPUI.ficha.openStudentFromSearch(ctx, state, searchEntry);
       showFichaContainer();
+      show(ctx.el.btnPrimeraVezFicha);
+      updatePrimeraVezFichaButton();
       return;
     }
 
@@ -1647,10 +1879,13 @@
     setText(ctx.el.fichaUltPago, '—');
     setText(ctx.el.fichaUltPagoValor, '—');
     setText(ctx.el.fichaTotalPagos, '—');
+    setText(ctx.el.fichaPrimeraVez, '—');
     setText(ctx.el.fichaProxPago, '—');
     setHTML(ctx.el.fichaSaldosMini, '');
     show(ctx.el.fichaSummaryBlock);
     show(ctx.el.programacionStudentView);
+    show(ctx.el.btnPrimeraVezFicha);
+    updatePrimeraVezFichaButton();
 
     hide(ctx.el.tablaContainer);
 
@@ -1669,6 +1904,8 @@
 
     RIPUI.ficha.openFichaByKey(ctx, state, studentKey);
     showFichaContainer();
+    show(ctx.el.btnPrimeraVezFicha);
+    updatePrimeraVezFichaButton();
 
     const studentName = getCurrentStudentName();
     state.prog.currentStudentName = studentName;
@@ -1857,6 +2094,7 @@
       { label: 'Último pago',   value: element.querySelector('#fichaUltPago')?.textContent?.trim() || '—' },
       { label: 'Valor pago',    value: element.querySelector('#fichaUltPagoValor')?.textContent?.trim() || '—' },
       { label: 'Total pagos',   value: element.querySelector('#fichaTotalPagos')?.textContent?.trim() || '—' },
+      { label: 'Primera vez',   value: element.querySelector('#fichaPrimeraVez')?.textContent?.trim() || '—' },
     ];
 
     const saldoChipsHTML = [...(element.querySelector('#fichaSaldosMini')?.querySelectorAll('.saldo-chip') || [])]
@@ -2361,6 +2599,7 @@
     setText(ctx.el.fichaFecha, '—');
     setText(ctx.el.fichaUltPago, '—');
     setText(ctx.el.fichaProxPago, '—');
+    setText(ctx.el.fichaPrimeraVez, '—');
     setHTML(ctx.el.fichaSaldosMini, '');
 
     hide(ctx.el.programacionStudentView);
@@ -2369,6 +2608,7 @@
 
     show(ctx.el.btnPDF);
     show(ctx.el.btnClaseEspecial);
+    hide(ctx.el.btnPrimeraVezFicha);
     show(ctx.el.btnVolverDash);
 
     if (RIPUI.table?.applyAndRender) {
@@ -2386,6 +2626,7 @@
     ctx.el.viewTabProg?.addEventListener('click', () => showDashboard('prog'));
     ctx.el.viewTabSaldo?.addEventListener('click', () => showDashboard('saldo'));
     ctx.el.viewTabRegistro?.addEventListener('click', () => showDashboard('registro'));
+    ctx.el.viewTabPrimeraVez?.addEventListener('click', () => showDashboard('primeraVez'));
     ctx.el.viewTabClientes?.addEventListener('click', () => showDashboard('clientes'));
     ctx.el.viewTabKpis?.addEventListener('click', () => showDashboard('kpis'));
 
@@ -2419,6 +2660,10 @@
     });
     ctx.el.clientesSearch?.addEventListener('input', renderClientesView);
     ctx.el.btnClientesRefresh?.addEventListener('click', () => loadClientesB2C(true));
+    ctx.el.primeraVezSearch?.addEventListener('input', renderPrimeraVezView);
+    ctx.el.primeraVezMotivoFilter?.addEventListener('change', renderPrimeraVezView);
+    ctx.el.btnPrimeraVezRefresh?.addEventListener('click', () => loadPrimeraVez(true));
+    ctx.el.btnPrimeraVezNew?.addEventListener('click', () => openPrimeraVezModal());
     ctx.el.registroCalPrev?.addEventListener('click', () => {
       state.registroCalendar.month -= 1;
       if (state.registroCalendar.month < 0) {
@@ -2586,6 +2831,15 @@
       }
       openClaseEspecialModal(key || name, name || key);
     });
+
+    ctx.el.btnPrimeraVezFicha?.addEventListener('click', () => {
+      const name = getCurrentStudentName();
+      if (!name) {
+        toast(ctx.el.toastWrap, 'Primero selecciona un estudiante.', 'warn');
+        return;
+      }
+      openPrimeraVezModal({ studentName: name });
+    });
   }
 
   // =========================
@@ -2721,8 +2975,10 @@
       // ─── FASE 2: Programación + análisis completo en paralelo ──────────────
       const [pack] = await Promise.allSettled([
         RIPCore.loadAll({ force: !!force, includeHistorical: false }),
-        loadProgramacionSummary().catch(e => console.warn('Programación:', e))
+        loadProgramacionSummary().catch(e => console.warn('Programación:', e)),
+        loadPrimeraVez(true).catch(e => console.warn('Primera vez:', e))
       ]);
+      updatePrimeraVezFichaButton();
 
       let fullPack = null;
       if (pack.status === 'fulfilled' && pack.value) {

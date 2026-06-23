@@ -359,6 +359,30 @@
     return hasPago ? 'Pago' : 'Clase';
   }
 
+  function isClaseRow(r) {
+    return norm(inferTipoLabel(r)) === 'clase';
+  }
+
+  function getDuplicateClassKey(r) {
+    if (!isClaseRow(r)) return '';
+    return [
+      norm(r.estudianteKey || r.estudiante),
+      norm(r.fechaRaw || r.fecha),
+      norm(r.hora),
+      norm(r.profesor)
+    ].join('|');
+  }
+
+  function getDuplicateClassCounts(rows) {
+    const counts = new Map();
+    for (const r of rows || []) {
+      const key = getDuplicateClassKey(r);
+      if (!key || key.split('|').some(part => !part)) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
+  }
+
   function renderTable(ctx, rows) {
     const { el } = ctx;
     if (!el.tableBody) return;
@@ -369,18 +393,24 @@
       return;
     }
 
+    const duplicateClassCounts = getDuplicateClassCounts(rows);
     const html = rows
       .slice(0, 1400)
       .map((r) => {
         const tipo = inferTipoLabel(r);
-        const mov = Number(r.movimiento) || 0;
+        const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
         const movText = `${mov > 0 ? '+' : ''}${fmtMoney(mov)}`;
+        const duplicateCount = Number(r?.duplicateClassCount) || duplicateClassCounts.get(getDuplicateClassKey(r)) || 0;
+        const isDuplicate = !!r?.isDuplicateClass || duplicateCount > 1;
+        const duplicateBadge = isDuplicate
+          ? ` <span class="tag duplicate" title="Clase repetida: mismo estudiante, dia, hora y docente">${r?.duplicateReview ? 'Duplicada por revisar' : `Repetida x${duplicateCount}`}</span>`
+          : '';
 
         return `
-          <tr>
+          <tr class="${isDuplicate ? 'row-duplicate' : ''}">
             <td>${escapeHTML(r.estudiante)}</td>
-            <td>${escapeHTML(tipo)}</td>
+            <td>${escapeHTML(tipo)}${duplicateBadge}</td>
             <td>${escapeHTML(r.fechaRaw)}</td>
             <td>${escapeHTML(r.hora)}</td>
             <td>${escapeHTML(r.servicio)}</td>
@@ -549,3 +579,7 @@
 
   RIPUI.table = { init, applyAndRender, resetFilters, readFilters, renderProfesorOptions, renderServiceList, renderStudentDatalist };
 })();
+
+
+
+

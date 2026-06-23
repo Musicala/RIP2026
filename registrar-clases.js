@@ -30,6 +30,7 @@
   let duplicateRows = [];
   let invalidRows = [];
   let existingHashes = new Set();
+  let existingClassKeys = new Set();
   let existingDates = new Set();
   let officialStudentsByEmail = new Map();
   let officialStudentsLoaded = false;
@@ -105,6 +106,7 @@
     ]);
     buildLocalStudentIndex(registro, students, programacion);
     existingHashes = new Set(registro.map(r => r.recordHash).filter(Boolean));
+    existingClassKeys = new Set(registro.map(duplicateClassKey).filter(Boolean));
     const classDates = registro
       .filter(r => norm(r.tipo) === 'clase')
       .map(r => r.fecha || r.fechaRaw)
@@ -439,6 +441,10 @@
     };
   }
 
+  function duplicateClassKey(row) {
+    return window.RIPCalculations?.buildDuplicateClassKeyFromData?.(row) || '';
+  }
+
   function validate(normalized) {
     const issues = [];
     if (officialStudentsError) issues.push('sin validar estudiantes activos');
@@ -452,6 +458,7 @@
 
   function applyDedupe() {
     const seen = new Map();
+    const seenClassKeys = new Map();
     uploadRows = [];
     duplicateRows = [];
     invalidRows = [];
@@ -459,23 +466,25 @@
 
     for (const row of rawRows) {
       const item = { ...row, status: 'ok', label: row.officialMatchStatus === 'matched' ? 'Correo OK' : 'Nombre Wix', reason: '' };
+      const classKey = duplicateClassKey(row);
       if (row.validation && row.validation.length) {
         item.status = 'bad';
         item.label = 'Incompleta';
         item.reason = row.validation.join(', ');
         invalidRows.push(item);
-      } else if (seen.has(row.recordHash)) {
+      } else if (seen.has(row.recordHash) || (classKey && seenClassKeys.has(classKey))) {
         item.status = 'warn';
         item.label = 'Duplicada CSV';
-        item.reason = `Repetida de la fila ${seen.get(row.recordHash) + 1}`;
+        item.reason = `Repetida de la fila ${(seen.get(row.recordHash) ?? seenClassKeys.get(classKey)) + 1}`;
         duplicateRows.push(item);
-      } else if (existingHashes.has(row.recordHash)) {
+      } else if (existingHashes.has(row.recordHash) || (classKey && existingClassKeys.has(classKey))) {
         item.status = 'warn';
         item.label = 'Ya existe';
         item.reason = 'Ya esta subida en RIP/Firebase';
         duplicateRows.push(item);
       } else {
         seen.set(row.recordHash, row.sourceIndex);
+        if (classKey) seenClassKeys.set(classKey, row.sourceIndex);
         uploadRows.push(row);
       }
       previewRows.push(item);
@@ -525,15 +534,26 @@
       await refreshExisting();
       const batch = [...uploadRows];
       for (const row of batch) {
-        if (existingHashes.has(row.recordHash)) {
+        const classKey = duplicateClassKey(row);
+        if (existingHashes.has(row.recordHash) || (classKey && existingClassKeys.has(classKey))) {
           skipped++;
           continue;
         }
-        await saveLocalEmailLink(row);
-        const saved = await window.RIPRepository.addRegistroRow(row);
-        existingHashes.add(saved.recordHash);
-        if (shouldCountClassDate(saved.fecha || saved.fechaRaw)) existingDates.add(saved.fecha || saved.fechaRaw);
-        inserted++;
+        try {
+          await saveLocalEmailLink(row);
+          const saved = await window.RIPRepository.addRegistroRow(row);
+          existingHashes.add(saved.recordHash);
+          if (classKey) existingClassKeys.add(classKey);
+          if (shouldCountClassDate(saved.fecha || saved.fechaRaw)) existingDates.add(saved.fecha || saved.fechaRaw);
+          inserted++;
+        } catch (err) {
+          if (String(err?.message || err).includes('ya esta registrada')) {
+            skipped++;
+            existingClassKeys.add(classKey);
+            continue;
+          }
+          throw err;
+        }
       }
       showUploadSuccess(inserted, skipped);
       applyDedupe();

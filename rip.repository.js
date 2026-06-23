@@ -51,13 +51,14 @@
 
   async function loadRegistro() {
     const rows = await loadCollection('registro', 'fechaTs');
-    return rows.map((r) => normalizeRegistro(r));
+    return C().markDuplicateClasses(rows.map((r) => normalizeRegistro(r)));
   }
 
   async function loadStudents() { return loadCollection('students'); }
   async function loadProgramacion() { return loadCollection('programacion'); }
   async function loadComputed() { return loadCollection('studentComputed'); }
   async function loadClientesB2C() { return loadCollection('clientesB2C', 'fechaTs'); }
+  async function loadPrimeraVez() { return loadCollection('primeraVez', 'fechaClaseTs'); }
 
   async function loadPaymentMeta() {
     const [students, registro] = await Promise.all([loadStudents(), loadRegistro()]);
@@ -138,6 +139,23 @@
     return out;
   }
 
+  async function assertNoDuplicateClass(env, row) {
+    const calc = C();
+    const key = calc.buildDuplicateClassKeyFromData?.(row) || '';
+    if (!key) return;
+    const { collection, getDocs, query, where } = env.fs;
+    const snap = await getDocs(query(
+      collection(env.db, 'registro'),
+      where('estudianteKey', '==', row.estudianteKey),
+      where('fecha', '==', row.fecha)
+    ));
+    const duplicate = snap.docs.some(docSnap => {
+      const existing = normalizeRegistro({ id: docSnap.id, ...docSnap.data() });
+      return calc.buildDuplicateClassKeyFromData?.(existing) === key;
+    });
+    if (duplicate) throw new Error('Esta clase ya esta registrada para este estudiante, fecha, hora y docente.');
+  }
+
   async function addRegistroRow(data) {
     const env = await fb();
     const { collection, addDoc } = env.fs;
@@ -146,6 +164,7 @@
     row.updatedAt = stamp(env.fs);
     row.createdBy = userEmail(env);
     row.updatedBy = userEmail(env);
+    await assertNoDuplicateClass(env, row);
     await upsertStudent(env, row);
     const ref = await addDoc(collection(env.db, 'registro'), row);
     await recalculateStudent(row.estudianteKey);
@@ -350,6 +369,86 @@
     return { ok: true };
   }
 
+  function normalizePrimeraVez(data) {
+    const calc = C();
+    const fechaClase = String(data.fechaClase || data.fecha || '').trim();
+    const fechaRegistro = String(data.fechaRegistro || calc.toISODate(new Date())).trim();
+    const estudiante = String(data.estudiante || data.name || '').trim();
+    return {
+      estudiante,
+      estudianteKey: calc.norm(estudiante),
+      fechaClase,
+      fechaClaseTs: calc.parseDate(fechaClase)?.getTime() || 0,
+      fechaRegistro,
+      fechaRegistroTs: calc.parseDate(fechaRegistro)?.getTime() || 0,
+      motivo: String(data.motivo || '').trim(),
+      detalle: String(data.detalle || data.comentario || '').trim(),
+      politica: 'Primera vez perdonada por cancelacion con menos de 3 horas',
+      source: 'firebase',
+      importedFrom: data.importedFrom || 'RIP Primera vez'
+    };
+  }
+
+  async function addPrimeraVez(data) {
+    const env = await fb();
+    const { collection, addDoc } = env.fs;
+    const row = normalizePrimeraVez(data);
+    if (!row.estudiante) throw new Error('Falta estudiante.');
+    if (!row.fechaClase) throw new Error('Falta fecha de clase.');
+    if (!row.motivo) throw new Error('Falta motivo.');
+    row.createdAt = stamp(env.fs);
+    row.updatedAt = stamp(env.fs);
+    row.createdBy = userEmail(env);
+    row.updatedBy = userEmail(env);
+    await setStudentFromName(env, row.estudiante);
+    const ref = await addDoc(collection(env.db, 'primeraVez'), row);
+    await logAudit('primeraVez', ref.id, 'create', null, row);
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'create', id: ref.id, studentId: row.estudianteKey });
+    return { id: ref.id, ...row };
+  }
+
+  async function updatePrimeraVez(recordId, data) {
+    const env = await fb();
+    const { doc, getDoc, setDoc } = env.fs;
+    const ref = doc(env.db, 'primeraVez', recordId);
+    const beforeSnap = await getDoc(ref);
+    const before = beforeSnap.exists() ? beforeSnap.data() : {};
+    const row = normalizePrimeraVez({ ...before, ...data });
+    row.updatedAt = stamp(env.fs);
+    row.updatedBy = userEmail(env);
+    await setStudentFromName(env, row.estudiante);
+    await setDoc(ref, row, { merge: true });
+    await logAudit('primeraVez', recordId, 'update', before, row);
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'update', id: recordId, studentId: row.estudianteKey });
+    return { id: recordId, ...row };
+  }
+
+  async function deletePrimeraVez(recordId) {
+    const env = await fb();
+    const { doc, getDoc, deleteDoc } = env.fs;
+    const ref = doc(env.db, 'primeraVez', recordId);
+    const beforeSnap = await getDoc(ref);
+    const before = beforeSnap.exists() ? beforeSnap.data() : null;
+    await deleteDoc(ref);
+    await logAudit('primeraVez', recordId, 'delete', before, null);
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'delete', id: recordId, studentId: before?.estudianteKey || '' });
+    return { ok: true };
+  }
+
+  async function setStudentFromName(env, estudiante) {
+    const calc = C();
+    const key = calc.norm(estudiante);
+    if (!key) return;
+    const { doc, setDoc } = env.fs;
+    await setDoc(doc(env.db, 'students', key), {
+      name: estudiante,
+      nameKey: key,
+      updatedAt: stamp(env.fs),
+      updatedBy: userEmail(env),
+      createdBy: userEmail(env)
+    }, { merge: true });
+  }
+
   async function loadStudentSchedule(studentIdOrName) {
     const env = await fb();
     const key = C().norm(studentIdOrName);
@@ -388,8 +487,9 @@
 
   window.RIPRepository = {
     loadRegistro, loadStudents, loadProgramacion, loadComputed,
-    loadClientesB2C,
+    loadClientesB2C, loadPrimeraVez,
     addRegistroRow, updateRegistroRow, deleteRegistroRow,
+    addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,
     loadStudentSchedule, saveSchedule, saveScheduleFrom,
     recalculateStudent, recalculateAllStudents, logAudit,

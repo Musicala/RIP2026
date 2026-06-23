@@ -121,6 +121,7 @@
       viewTabProg: $('viewTabProg'),
       viewTabSaldo: $('viewTabSaldo'),
       viewTabRegistro: $('viewTabRegistro'),
+      viewTabPrimeraVez: $('viewTabPrimeraVez'),
       viewTabClientes: $('viewTabClientes'),
       viewTabKpis: $('viewTabKpis'),
       dashTabClas: $('dashTabClas'),
@@ -169,6 +170,14 @@
       btnClientesRefresh: $('btnClientesRefresh'),
       clientesStatus: $('clientesStatus'),
       clientesBody: $('clientesBody'),
+      primeraVezView: $('primeraVezView'),
+      primeraVezSearch: $('primeraVezSearch'),
+      primeraVezMotivoFilter: $('primeraVezMotivoFilter'),
+      btnPrimeraVezNew: $('btnPrimeraVezNew'),
+      btnPrimeraVezRefresh: $('btnPrimeraVezRefresh'),
+      primeraVezStatus: $('primeraVezStatus'),
+      primeraVezKpis: $('primeraVezKpis'),
+      primeraVezBody: $('primeraVezBody'),
       dashboardClasView: $('dashboardClasView'),
       dashboardSaldoView: $('dashboardSaldoView'),
       trialListView: $('trialListView'),
@@ -222,8 +231,10 @@
       fichaUltPago: $('fichaUltPago'),
       fichaUltPagoValor: $('fichaUltPagoValor'),
       fichaTotalPagos: $('fichaTotalPagos'),
+      fichaPrimeraVez: $('fichaPrimeraVez'),
       fichaProxPago: $('fichaProxPago'),
       fichaSaldosMini: $('fichaSaldosMini'),
+      btnFichaDeleteDuplicates: $('btnFichaDeleteDuplicates'),
 
       // Programación dentro de ficha
       programacionStudentView: $('programacionStudentView'),
@@ -251,7 +262,8 @@
       btnFichaSaveEdits: $('btnFichaSaveEdits'),
       btnFichaCancelEdits: $('btnFichaCancelEdits'),
       btnVolverDash: $('btnVolverDash'),
-      btnClaseEspecial: $('btnClaseEspecial')
+      btnClaseEspecial: $('btnClaseEspecial'),
+      btnPrimeraVezFicha: $('btnPrimeraVezFicha')
     };
 
     return { el };

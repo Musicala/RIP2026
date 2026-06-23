@@ -298,7 +298,53 @@
   // Render lista intermedia (SIN destruir la tabla)
   // bdEligible = true → muestra botón "Base de datos" para inactivos/pausa
   // =========================
-  function renderStudentList(ctx, title, items, onPickStudent, { bdEligible = false } = {}) {
+  function getDuplicateReviewRowsForItems(ctx, items) {
+    const wanted = new Set((items || []).map(s => s.key || norm(s.name)).filter(Boolean));
+    const rows = window.RIPCalculations?.markDuplicateClasses
+      ? window.RIPCalculations.markDuplicateClasses(ctx?.state?.registro || [])
+      : (ctx?.state?.registro || []);
+    return rows.filter(r => r?.duplicateReview && wanted.has(r.estudianteKey || norm(r.estudiante)));
+  }
+
+  async function verifyAndDeleteDuplicateRows(ctx, title, items, onPickStudent, options) {
+    const rows = getDuplicateReviewRowsForItems(ctx, items);
+    const deletable = rows.filter(r => r.id);
+    const missingId = rows.length - deletable.length;
+    if (!rows.length) {
+      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay duplicadas por eliminar.', 'info');
+      return;
+    }
+    if (!window.RIPRepository?.deleteRegistroRow) {
+      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay conexi�n de edici�n para eliminar registros.', 'warn');
+      return;
+    }
+    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y se dejan para revision manual.` : ''} �Continuar?`;
+    if (!deletable.length || !confirm(msg)) return;
+    window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'Eliminando duplicadas...', 'info');
+    let deleted = 0;
+    for (const row of deletable) {
+      await window.RIPRepository.deleteRegistroRow(row.id);
+      deleted++;
+    }
+    const deletedIds = new Set(deletable.map(r => r.id));
+    const remaining = (ctx?.state?.registro || []).filter(r => !deletedIds.has(r.id));
+    if (ctx?.state) {
+      ctx.state.registro = window.RIPCalculations?.markDuplicateClasses ? window.RIPCalculations.markDuplicateClasses(remaining) : remaining;
+    }
+    try { window.RIPCore?.clearCaches?.(); } catch (_) {}
+    try { window.RIPApp?.clearAppCaches?.(); } catch (_) {}
+    window.RIPUI?.table?.applyAndRender?.(ctx, ctx?.state || {});
+    window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'Duplicadas eliminadas: ' + deleted, 'ok');
+    const refreshedItems = (items || []).map(s => {
+      const count = getDuplicateReviewRowsForItems(ctx, [s]).length;
+      return { ...s, duplicateCount: count };
+    }).filter(s => (s.duplicateCount || 0) > 0);
+    renderStudentList(ctx, title, refreshedItems, onPickStudent, options);
+  }
+
+  function renderStudentList(ctx, title, items, onPickStudent, options = {}) {
+    const { bdEligible = false } = options || {};
+    const isDuplicateList = norm(title).includes('clases duplicadas');
     const { el } = ctx;
     if (!el.fichaView || !el.tableBody) return;
 
@@ -324,12 +370,14 @@
           `Selecciona un estudiante para abrir su ficha &nbsp;·&nbsp; ` +
           `<button type="button" id="btnCargarBD" class="btn small ghost" style="vertical-align:middle;">` +
           `🗄️ Cargar base de datos</button>`;
+      } else if (isDuplicateList) {
+        el.fichaSub.innerHTML = 'Revisa los estudiantes y elimina solo las filas marcadas como duplicadas &nbsp;�&nbsp; <button type="button" id="btnDeleteDuplicateClasses" class="btn small danger" style="vertical-align:middle;">Verificar y eliminar duplicadas</button>';
       } else {
         el.fichaSub.textContent = 'Selecciona un estudiante para abrir su ficha';
       }
     }
 
-    const isSaldoList = (items || []).some(s => typeof s.saldo === 'number');
+    const isSaldoList = isDuplicateList || (items || []).some(s => typeof s.saldo === 'number');
     const tableHead = el.tablaContainer?.querySelector('thead');
 
     if (bdEligible) {
@@ -371,6 +419,7 @@
         });
       });
       wireBDLookup(el);
+      el.fichaSub?.querySelector('#btnDeleteDuplicateClasses')?.addEventListener('click', () => verifyAndDeleteDuplicateRows(ctx, title, items, onPickStudent, options));
       return;
     }
 
@@ -382,6 +431,7 @@
             <th>Estado</th>
             <th>Estudiante</th>
             <th>Saldo pendiente</th>
+            ${isDuplicateList ? '<th>Duplicadas</th>' : ''}
             <th>Ultima clase</th>
             <th>Programacion</th>
             <th></th>
@@ -393,11 +443,12 @@
           <td><span class="pill soft">${escapeHTML(saldoStatusText(s))}</span></td>
           <td style="font-weight:800">${escapeHTML(s.name)}</td>
           <td style="font-weight:800">${escapeHTML(`${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`)}</td>
+          ${isDuplicateList ? `<td><span class="tag duplicate">${Number(s.duplicateCount) || 0}</span></td>` : ''}
           <td>${escapeHTML(saldoLastClassDate(ctx, s) || '—')}</td>
           <td>${escapeHTML(saldoProgramacionText(ctx, s))}</td>
           <td><button class="btn small primary" type="button" data-skey="${escapeHTML(s.key || '')}" data-sname="${escapeHTML(s.name || '')}">Abrir</button></td>
         </tr>
-      `).join('') || `<tr><td colspan="6" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
+      `).join('') || `<tr><td colspan="${isDuplicateList ? 7 : 6}" class="empty-td">No hay estudiantes en este grupo.</td></tr>`;
       el.tableBody.querySelectorAll('[data-skey]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const skey = btn.getAttribute('data-skey') || '';
@@ -405,6 +456,7 @@
           onPickStudent(skey, sname);
         });
       });
+      el.fichaSub?.querySelector('#btnDeleteDuplicateClasses')?.addEventListener('click', () => verifyAndDeleteDuplicateRows(ctx, title, items, onPickStudent, options));
       return;
     }
 
@@ -669,6 +721,13 @@
         value: `${cats.lesDebemos.length}`,
         tone: 'ok',
         icon: '🔺'
+      }) +
+      cardHTML({
+        title: 'Clases duplicadas',
+        subtitle: 'No afectan saldo, revisar registro',
+        value: `${cats.duplicadas?.length || 0}`,
+        tone: 'warn',
+        icon: '!'
       });
 
     if (el.dashKpisSaldo) {
@@ -694,6 +753,7 @@
         const t = c.getAttribute('data-title') || '';
         if (t.startsWith('Deben')) onOpenList('Deben (saldo < 0)', cats.deben, { bdEligible: false });
         else if (t.startsWith('Se acabó')) onOpenList('Se acabó (saldo = 0)', cats.seAcabo, { bdEligible: false });
+        else if (t.startsWith('Clases duplicadas')) onOpenList('Clases duplicadas por revisar', cats.duplicadas || [], { bdEligible: false });
         else onOpenList('Les debemos / Clases activas (saldo > 0)', cats.lesDebemos, { bdEligible: false });
       });
     });
@@ -715,3 +775,4 @@
     restoreRegistroTableHead
   };
 })();
+

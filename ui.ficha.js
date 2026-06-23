@@ -333,7 +333,7 @@
 
     for (const r of bottomToTop) {
       const matricula = isMatriculaPago(r);
-      const mov = Number(r.movimiento) || 0;
+      const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
       const rid = getRowId(r);
       const packageKey = getPackageKey(r);
 
@@ -423,13 +423,19 @@
       }
     }
 
+    const duplicateClassCounts = getDuplicateClassCounts(rows);
     const html = rows
       .slice(0, 1800)
       .map((r) => {
         const tipo = inferTipoLabel(r);
-        const mov = Number(r.movimiento) || 0;
+        const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
         const movText = `${mov > 0 ? '+' : ''}${fmtMoney(mov)}`;
+        const duplicateCount = Number(r?.duplicateClassCount) || duplicateClassCounts.get(getDuplicateClassKey(r)) || 0;
+        const isDuplicate = !!r?.isDuplicateClass || duplicateCount > 1;
+        const duplicateBadge = isDuplicate
+          ? ` <span class="tag duplicate" title="Clase repetida: mismo estudiante, dia, hora y docente">${r?.duplicateReview ? 'Duplicada por revisar' : `Repetida x${duplicateCount}`}</span>`
+          : '';
         const rid = getRowId(r);
         const cycleIdxRaw = Number(cycleById.get(rid));
         const cycleMeta = cycleMetaById.get(rid) || null;
@@ -455,7 +461,7 @@
             : cycleMeta?.kind === 'pago'
               ? `${specialCode} activado · ${cycleMeta.total || mov} clase(s)`
               : `${specialCode}`;
-        const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}`;
+        const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}${duplicateBadge}`;
         const debtClass = isClaseRow(r) && mov < 0 && (!cycleMeta || cycleMeta.kind === 'unpaid' || cycleMeta.overLimit) ? 'row-debt' : '';
         const actionKey = getEditableRowKey(r);
         const canPersistRow = !!actionKey;
@@ -464,7 +470,7 @@
           : '';
 
         return `
-          <tr class="${debtClass}">
+          <tr class="${[debtClass, isDuplicate ? 'row-duplicate' : ''].filter(Boolean).join(' ')}">
             <td>${escapeHTML(r.estudiante)}</td>
             <td>${tipoWithDot}</td>
             <td>${escapeHTML(r.fechaRaw)}</td>
@@ -483,6 +489,13 @@
       .join('');
 
     el.tableBody.innerHTML = html;
+    if (ctx?.el?.btnFichaDeleteDuplicates) {
+      const duplicateCount = (rows || []).filter(r => r?.duplicateReview).length;
+      ctx.el.btnFichaDeleteDuplicates.style.display = duplicateCount > 0 ? '' : 'none';
+      ctx.el.btnFichaDeleteDuplicates.textContent = duplicateCount > 0
+        ? `Verificar y eliminar duplicadas (${duplicateCount})`
+        : 'Verificar y eliminar duplicadas';
+    }
     if (editable) bindEditRowActions(ctx);
   }
 
@@ -566,8 +579,9 @@
 
   function isMatriculaPago(r) {
     if (!isPagoRow(r)) return false;
-    const txt = `${r?.servicio || ''} ${r?.pago || ''} ${r?.comentario || ''}`.toLowerCase();
-    return /matr[ií]cula/.test(txt);
+    const raw = `${r?.servicio || ''} ${r?.pago || ''} ${r?.comentario || ''} ${r?.clasifPago || ''} ${r?.clasif || ''}`;
+    const txt = raw.toLowerCase();
+    return /matr[ií]cula/.test(txt) || /\bME\b/i.test(raw);
   }
 
   function isClaseRow(r) {
@@ -575,6 +589,26 @@
     if (tipo === 'clase') return true;
     if (tipo === 'pago') return false;
     return !String(r?.pago || '').trim();
+  }
+
+  function getDuplicateClassKey(r) {
+    if (!isClaseRow(r)) return '';
+    return [
+      norm(r.estudianteKey || r.estudiante),
+      norm(r.fechaRaw || r.fecha),
+      norm(r.hora),
+      norm(r.profesor)
+    ].join('|');
+  }
+
+  function getDuplicateClassCounts(rows) {
+    const counts = new Map();
+    for (const r of rows || []) {
+      const key = getDuplicateClassKey(r);
+      if (!key || key.split('|').some(part => !part)) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    return counts;
   }
 
   function getLastPagoRow(rows) {
@@ -610,7 +644,7 @@
     let saldoTotal = 0;
 
     for (const r of rows || []) {
-      const mov = Number(r?.movimiento) || 0;
+      const mov = Number(r?.movimientoSaldo ?? r?.movimiento) || 0;
       saldoTotal += mov;
 
       const cat = getCategoryKey(r);
@@ -644,12 +678,18 @@
       }
     }
 
+    const duplicateReviewCount = (rows || []).filter(r => r?.duplicateReview).length;
+
     const items = Array.from(totals.entries())
       .map(([label, value]) => ({ label, value }))
       .filter(item => Math.abs(Number(item.value) || 0) > 0.0001);
 
     if (settledTrialClasses > 0) {
       items.push({ label: 'Clase de prueba saldada', value: 0 });
+    }
+
+    if (duplicateReviewCount > 0) {
+      items.push({ label: 'Clases duplicadas por revisar', value: 0, count: duplicateReviewCount });
     }
 
     items.sort((a, b) => {
@@ -694,6 +734,21 @@
     };
   }
 
+  function getPrimeraVezForStudent(ctx, student) {
+    const key = norm(student?.key || student?.name || '');
+    if (!key) return null;
+    return (ctx?.state?.primeraVez || [])
+      .filter(row => norm(row?.estudianteKey || row?.estudiante) === key || norm(row?.estudiante) === key)
+      .sort((a, b) => (Number(b?.fechaClaseTs) || 0) - (Number(a?.fechaClaseTs) || 0))[0] || null;
+  }
+
+  function primeraVezText(record) {
+    if (!record) return '—';
+    const fecha = record.fechaClase || '—';
+    const motivo = record.motivo || 'Sin motivo';
+    return `${fecha} · ${motivo}`;
+  }
+
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
     const rows = ficha?.rows || [];
@@ -725,6 +780,7 @@
     );
     setText(el.fichaUltPagoValor, pagosStats.lastPagoValor ? fmtMoney(pagosStats.lastPagoValor) : '—');
     setText(el.fichaTotalPagos, pagosStats.totalPagos ? fmtMoney(pagosStats.totalPagos) : '—');
+    setText(el.fichaPrimeraVez, primeraVezText(getPrimeraVezForStudent(ctx, student)));
 
     // Status badge
     if (el.fichaStatusBadge) {
@@ -756,7 +812,8 @@
         const v = item.value;
         const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero';
         const sign = v > 0 ? '+' : '';
-        return `<span class="saldo-chip ${cls}">${escapeHTML(String(item.label || '').trim())} <b>${sign}${v}</b></span>`;
+        const extra = item.count ? ` <b>${item.count}</b>` : ` <b>${sign}${v}</b>`;
+        return `<span class="saldo-chip ${cls} ${item.count ? 'warn' : ''}">${escapeHTML(String(item.label || '').trim())}${extra}</span>`;
       }).join('');
       el.fichaSaldosMini.innerHTML = chipsHTML;
     }
@@ -775,6 +832,7 @@
     setText(el.fichaUltPago, '—');
     setText(el.fichaUltPagoValor, '—');
     setText(el.fichaTotalPagos, '—');
+    setText(el.fichaPrimeraVez, '—');
     setText(el.fichaProxPago, '—');
 
     if (el.fichaSaldosMini) {
@@ -945,6 +1003,7 @@
 
     show(el.btnPDF);
     show(el.btnClaseEspecial);
+    show(el.btnPrimeraVezFicha);
     show(el.btnVolverDash);
 
     const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
@@ -975,6 +1034,7 @@
     const { el } = ctx;
     show(el.btnPDF);
     show(el.btnClaseEspecial);
+    show(el.btnPrimeraVezFicha);
     show(el.btnVolverDash);
 
     const years = getAvailableYearsForEntry(entry, state);
@@ -1280,7 +1340,7 @@
     });
 
     const others = (state.registro || []).filter((r) => r.estudianteKey !== state.currentStudentKey);
-    state.registro = others.concat(cleaned);
+    state.registro = window.RIPCalculations?.markDuplicateClasses ? window.RIPCalculations.markDuplicateClasses(others.concat(cleaned)) : others.concat(cleaned);
 
     ctx.__fichaRowsBase = cleaned.map(cloneRow);
     ctx.__fichaRowsWorking = cleaned.map(cloneRow);
@@ -1293,6 +1353,32 @@
 
     refreshEditableFicha(ctx, state);
     toast(ctx.el.toastWrap, 'Cambios guardados', 'ok');
+  }
+
+  async function deleteDuplicateReviewRows(ctx, state) {
+    const ficha = RIPCore.getStudentFicha(state.registro || [], state.currentStudentKey);
+    const rows = (ficha.rows || []).filter(r => r?.duplicateReview);
+    const deletable = rows.filter(r => String(r?.id || '').trim());
+    const missingId = rows.length - deletable.length;
+    if (!rows.length) {
+      toast(ctx.el.toastWrap, 'No hay duplicadas por eliminar.', 'info');
+      return;
+    }
+    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y quedan para revision manual.` : ''} �Continuar?`;
+    if (!deletable.length || !confirm(msg)) return;
+    toast(ctx.el.toastWrap, 'Eliminando duplicadas...', 'info');
+    for (const row of deletable) {
+      const rowRef = assertEditableRowReference(row, 'Eliminar duplicada');
+      const res = await apiCallEditor({ action: 'deleteRow', ...rowRef });
+      if (!res?.ok) throw new Error(res?.error || ('Error eliminando ' + (row.id || row.rowNum || 'fila')));
+    }
+    const deletedIds = new Set(deletable.map(r => String(r.id)));
+    state.registro = (state.registro || []).filter(r => !deletedIds.has(String(r.id)));
+    state.registro = window.RIPCalculations?.markDuplicateClasses ? window.RIPCalculations.markDuplicateClasses(state.registro) : state.registro;
+    try { window.RIPCore?.clearCaches?.(); } catch (_) {}
+    try { window.RIPApp?.clearAppCaches?.(); } catch (_) {}
+    refreshEditableFicha(ctx, state);
+    toast(ctx.el.toastWrap, `Duplicadas eliminadas: ${deletable.length}`, 'ok');
   }
 
   function bindFichaEditButtons(ctx, state) {
@@ -1328,6 +1414,15 @@
         toast(ctx.el.toastWrap, 'No se pudo guardar: ' + (err.message || err), 'warn');
       }
     });
+
+    ctx.el.btnFichaDeleteDuplicates?.addEventListener('click', async () => {
+      try {
+        await deleteDuplicateReviewRows(ctx, state);
+      } catch (err) {
+        console.error(err);
+        toast(ctx.el.toastWrap, 'No se pudieron eliminar duplicadas: ' + (err.message || err), 'warn');
+      }
+    });
   }  // =========================
   // Export
   // =========================
@@ -1344,3 +1439,6 @@
     }
   };
 })();
+
+
+

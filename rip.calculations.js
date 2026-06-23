@@ -90,6 +90,7 @@
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
       if (s.includes('vacacional')) return { clasif: 'Pago', clasifPago: 'TV' };
+      if (/\bme\b/i.test(servicio)) return { clasif: 'Pago', clasifPago: 'Matricula' };
       if (s.includes('matricula')) return { clasif: 'Pago', clasifPago: 'Pago' };
       if (s.includes('virtual') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MV P' };
       if (s.includes('hogar') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MH P' };
@@ -116,6 +117,26 @@
   function buildClassUniqueId(row) {
     if (norm(row?.tipo) !== 'clase') return '';
     return [row?.fecha || row?.fechaRaw || '', norm(row?.servicio), norm(row?.hora), norm(row?.profesor)].join('|');
+  }
+
+  function buildDuplicateClassKey(row) {
+    if (norm(row?.tipo) !== 'clase') return '';
+    return [
+      norm(row?.estudianteKey || row?.estudiante),
+      norm(row?.fecha || row?.fechaRaw),
+      norm(row?.hora),
+      norm(row?.profesor)
+    ].join('|');
+  }
+
+  function buildDuplicateClassKeyFromData(data) {
+    const base = {
+      ...data,
+      estudianteKey: data?.estudianteKey || norm(data?.estudiante),
+      fecha: data?.fecha || data?.fechaRaw,
+      fechaRaw: data?.fechaRaw || data?.fecha
+    };
+    return buildDuplicateClassKey(base);
   }
 
   function isTrialCP(row) {
@@ -172,8 +193,34 @@
     }));
   }
 
+  function markDuplicateClasses(records) {
+    const counts = new Map();
+    const firstByKey = new Map();
+    const rowKey = (row, index) => String(row?.id || row?.recordHash || row?.rowNum || row?.__rowNum || index);
+    for (const [index, row] of (records || []).entries()) {
+      const key = buildDuplicateClassKey(row);
+      if (!key || key.split('|').some(part => !part)) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      if (!firstByKey.has(key)) firstByKey.set(key, rowKey(row, index));
+    }
+    return (records || []).map((row, index) => {
+      const key = buildDuplicateClassKey(row);
+      const duplicateCount = key ? (counts.get(key) || 0) : 0;
+      const isDuplicateClass = duplicateCount > 1;
+      const duplicateReview = isDuplicateClass && rowKey(row, index) !== firstByKey.get(key);
+      return {
+        ...row,
+        duplicateClassKey: key,
+        duplicateClassCount: duplicateCount,
+        isDuplicateClass,
+        duplicateReview,
+        movimientoSaldo: duplicateReview ? 0 : (Number(row?.movimiento) || 0)
+      };
+    });
+  }
+
   function calculateStudentBalance(records) {
-    return (records || []).reduce((sum, row) => sum + (Number(row.movimiento) || 0), 0);
+    return markDuplicateClasses(records).reduce((sum, row) => sum + (Number(row.movimientoSaldo) || 0), 0);
   }
 
   function getStudentClassLimit(records) {
@@ -190,8 +237,13 @@
       return !!String(row?.pago || '').trim();
     };
     const packageKey = (row) => normalizePackageKey(isPago(row) ? row?.clasifPago : row?.clasif);
-    const isMatricula = (row) => isPago(row) && norm(`${row?.servicio || ''} ${row?.clasifPago || ''} ${row?.clasif || ''}`).includes('matricula');
-    const rows = [...(records || [])].sort((a, b) => {
+    const isMatricula = (row) => {
+      if (!isPago(row)) return false;
+      const raw = `${row?.servicio || ''} ${row?.clasifPago || ''} ${row?.clasif || ''}`;
+      const txt = norm(raw);
+      return txt.includes('matricula') || /\bME\b/i.test(raw);
+    };
+    const rows = markDuplicateClasses(records).sort((a, b) => {
       const ta = Number(a?.fechaTs) || 0;
       const tb = Number(b?.fechaTs) || 0;
       if (ta !== tb) return ta - tb;
@@ -209,7 +261,8 @@
     };
 
     for (const row of rows) {
-      const mov = Number(row?.movimiento) || 0;
+      if (row?.duplicateReview) continue;
+      const mov = Number(row?.movimientoSaldo ?? row?.movimiento) || 0;
       const key = packageKey(row);
       if (!isMatricula(row) && isPago(row) && mov > 0 && mov <= 24) {
         const pack = { total: Math.round(mov), remaining: Math.round(mov) };
@@ -277,7 +330,7 @@
   }
 
   function calculateStudentFicha(records) {
-    const rows = [...(records || [])].sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
+    const rows = markDuplicateClasses(records).sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
     const saldo = calculateStudentBalance(rows);
     const clases = rows.filter(r => norm(r.tipo) === 'clase');
     const pagos = rows.filter(r => norm(r.tipo) === 'pago' || String(r.pago || '').trim());
@@ -318,7 +371,8 @@
   window.RIPCalculations = {
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
-    buildClassUniqueId, buildRecordHash, markFirstOccurrence, countClassParticipants,
+    buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,
+    markDuplicateClasses,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
     getStudentClassLimit, calculateProgramacionStatus, recalculateStudentFromRecords,
     recalculateAllStudents

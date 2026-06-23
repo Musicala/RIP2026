@@ -215,6 +215,49 @@
     }
     return 0;
   };
+  const isClaseRow = (row) => {
+    const t = norm(row?.tipo);
+    if (t === 'clase') return true;
+    if (t === 'pago') return false;
+    return !hasText(row?.pago);
+  };
+  const duplicateClassKey = (row) => {
+    if (!isClaseRow(row)) return '';
+    return [
+      norm(row?.estudianteKey || row?.estudiante),
+      norm(row?.fecha || row?.fechaRaw),
+      norm(row?.hora),
+      norm(row?.profesor)
+    ].join('|');
+  };
+  const markDuplicateClasses = (rows) => {
+    if (window.RIPCalculations?.markDuplicateClasses) {
+      return window.RIPCalculations.markDuplicateClasses(rows || []);
+    }
+    const counts = new Map();
+    const firstByKey = new Map();
+    const rowKey = (row, index) => String(row?.id || row?.recordHash || row?.rowNum || row?.__rowNum || index);
+    for (const [index, row] of (rows || []).entries()) {
+      const key = duplicateClassKey(row);
+      if (!key || key.split('|').some(part => !part)) continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      if (!firstByKey.has(key)) firstByKey.set(key, rowKey(row, index));
+    }
+    return (rows || []).map((row, index) => {
+      const key = duplicateClassKey(row);
+      const duplicateCount = key ? (counts.get(key) || 0) : 0;
+      const duplicateReview = duplicateCount > 1 && rowKey(row, index) !== firstByKey.get(key);
+      return {
+        ...row,
+        duplicateClassKey: key,
+        duplicateClassCount: duplicateCount,
+        isDuplicateClass: duplicateCount > 1,
+        duplicateReview,
+        movimientoSaldo: duplicateReview ? 0 : (Number(row?.movimiento) || 0)
+      };
+    });
+  };
+
   const classifyByDaysSinceLastClass = (days, forceActivo = false) => {
     if (forceActivo) return 'Activo';
     if (!Number.isFinite(days)) return 'Inactivo sin info';
@@ -278,7 +321,8 @@
       if (key) set.set(key, s.name || key);
       if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
     }
-    for (const r of registro || []) {
+    const registroRows = markDuplicateClasses(registro || []);
+    for (const r of registroRows) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
     }
     for (const p of programacion || []) {
@@ -288,7 +332,7 @@
     }
 
     const lastClassTsByStudent = new Map();
-    for (const r of registro || []) {
+    for (const r of registroRows) {
       if (!r?.estudianteKey) continue;
       const tipo = norm(r?.tipo || '');
       if (tipo !== 'clase') continue;
@@ -319,11 +363,11 @@
     }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
     return {
-      registro,
+      registro: registroRows,
       allStudents,
       searchStudents: allStudents,
       paramsMap,
-      programacion: { dashboard: buildProgramacionDashboard(programacion, allStudents, registro), today: new Date().toISOString().slice(0, 10) },
+      programacion: { dashboard: buildProgramacionDashboard(programacion, allStudents, registroRows), today: new Date().toISOString().slice(0, 10) },
       computed,
       meta: { source: 'firebase' }
     };
@@ -524,7 +568,7 @@
 
     if (canUseCache && isFresh(meta.registroFastStamp)) {
       const fastPack = readCache(RIPCore.CONFIG.CACHE_KEYS.registroFast);
-      if (fastPack && Array.isArray(fastPack.rows)) return fastPack;
+      if (fastPack && Array.isArray(fastPack.rows)) return { ...fastPack, rows: markDuplicateClasses(fastPack.rows) };
     }
 
     const t = await fetchText(RIPCore.CONFIG.TSV_REGISTRO_URL);
@@ -588,7 +632,8 @@
       .map(([key, name]) => ({ key, name, paramClasif: '' }))
       .sort((a, b) => a.name.localeCompare(b.name, 'es'));
 
-    const fastPack = { rows, allStudents };
+    const markedRows = markDuplicateClasses(rows);
+    const fastPack = { rows: markedRows, allStudents };
     writeCache(RIPCore.CONFIG.CACHE_KEYS.registroFast, fastPack);
     meta.registroFastStamp = now();
     writeCacheMeta(meta);
@@ -681,7 +726,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
         };
       });
 
-      registroPack = { rows };
+      registroPack = { rows: markDuplicateClasses(rows) };
       writeCache(RIPCore.CONFIG.CACHE_KEYS.registro, registroPack);
       meta.registroStamp = now();
       writeCacheMeta(meta);
@@ -717,7 +762,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     }
 
     // Derivados
-    const registro = registroPack.rows || [];
+    const registro = markDuplicateClasses(registroPack.rows || []);
     let paramsMap = paramsPack.map || new Map();
     if (!(paramsMap instanceof Map)) {
       const rebuilt = new Map();
@@ -731,11 +776,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
     // Todos los estudiantes únicos del registro, ordenados
     const set = new Map(); // key -> display
-    for (const r of registro) {
+    for (const r of markDuplicateClasses(registro || [])) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
     }
     const lastClassTsByStudent = new Map();
-    for (const r of registro) {
+    for (const r of markDuplicateClasses(registro || [])) {
       if (!r?.estudianteKey) continue;
       const tipo = norm(r?.tipo || '');
       const isClase = (tipo === 'clase') || (tipo !== 'pago' && !String(r?.pago || '').trim());
@@ -826,9 +871,9 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   RIPCore.sumMovimientoByStudent = (registro) => {
     const sums = new Map(); // key -> sum
-    for (const r of registro) {
+    for (const r of markDuplicateClasses(registro || [])) {
       if (!r.estudianteKey) continue;
-      sums.set(r.estudianteKey, (sums.get(r.estudianteKey) || 0) + (r.movimiento || 0));
+      sums.set(r.estudianteKey, (sums.get(r.estudianteKey) || 0) + (Number(r.movimientoSaldo ?? r.movimiento) || 0));
     }
     return sums;
   };
@@ -850,15 +895,22 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   RIPCore.buildSaldosDashboard = (students, registro) => {
     const sums = RIPCore.sumMovimientoByStudent(registro);
+    const duplicateCounts = new Map();
+    for (const r of markDuplicateClasses(registro || [])) {
+      if (r?.duplicateReview && r.estudianteKey) duplicateCounts.set(r.estudianteKey, (duplicateCounts.get(r.estudianteKey) || 0) + 1);
+    }
     const cats = {
       deben: [],
       seAcabo: [],
-      lesDebemos: []
+      lesDebemos: [],
+      duplicadas: []
     };
 
     for (const s of students) {
       const total = sums.get(s.key) || 0;
       const item = { ...s, saldo: total };
+      const duplicateCount = duplicateCounts.get(s.key) || 0;
+      if (duplicateCount > 0) cats.duplicadas.push({ ...item, duplicateCount });
 
       if (total < 0) cats.deben.push(item);
       else if (total === 0) cats.seAcabo.push(item);
@@ -869,6 +921,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     cats.deben.sort((a, b) => a.saldo - b.saldo);
     cats.lesDebemos.sort((a, b) => b.saldo - a.saldo);
     cats.seAcabo.sort(sortByActiveRecent);
+    cats.duplicadas.sort((a, b) => (b.duplicateCount || 0) - (a.duplicateCount || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'es'));
 
     return cats;
   };
@@ -878,7 +931,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     // Lazy compute fechaTs para fast-pack (solo para este estudiante)
-    const subset = registro.filter((r) => r.estudianteKey === studentKey);
+    const subset = markDuplicateClasses(registro || []).filter((r) => r.estudianteKey === studentKey);
     for (const r of subset) {
       if (!r.fechaTs) {
         const d = parseDate(r.fechaRaw);
@@ -887,7 +940,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     }
     const rows = subset.sort((a, b) => (b.fechaTs || 0) - (a.fechaTs || 0));
 
-    const saldo = rows.reduce((acc, r) => acc + (r.movimiento || 0), 0);
+    const saldo = rows.reduce((acc, r) => acc + (Number(r.movimientoSaldo ?? r.movimiento) || 0), 0);
 
     // pivot por (Clasificación, Clasificación de pagos)
     const pivot = new Map(); // "a||b" -> sum
@@ -895,7 +948,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
       const a = (r.clasif || '').trim() || 'Sin clasificar';
       const b = (r.clasifPago || '').trim() || 'Sin clasif. pago';
       const k = `${a}||${b}`;
-      pivot.set(k, (pivot.get(k) || 0) + (r.movimiento || 0));
+      pivot.set(k, (pivot.get(k) || 0) + (Number(r.movimientoSaldo ?? r.movimiento) || 0));
     }
 
     const pivotItems = Array.from(pivot.entries())
@@ -982,3 +1035,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   window.RIPCore = RIPCore;
 })();
+
+
+
+

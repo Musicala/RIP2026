@@ -65,7 +65,9 @@
   }
 
   function isMatriculaPago(row) {
-    return isPagoRow(row) && norm(`${row?.servicio || ''} ${row?.clasifPago || ''} ${row?.clasif || ''}`).includes('matricula');
+    if (!isPagoRow(row)) return false;
+    const raw = `${row?.servicio || ''} ${row?.clasifPago || ''} ${row?.clasif || ''}`;
+    return norm(raw).includes('matricula') || /\bME\b/i.test(raw);
   }
 
   function getChronoRows(rows) {
@@ -85,7 +87,8 @@
     const key = norm(studentName);
     if (!key || !all.length) return DEFAULT_CLASS_LIMIT;
 
-    const rows = getChronoRows(all.filter(r => norm(r?.estudiante) === key || norm(r?.estudianteKey) === key));
+    const sourceRows = window.RIPCalculations?.markDuplicateClasses ? window.RIPCalculations.markDuplicateClasses(all) : all;
+    const rows = getChronoRows(sourceRows.filter(r => norm(r?.estudiante) === key || norm(r?.estudianteKey) === key));
     let lastPackageTotal = 0;
     const activeByKey = new Map();
     const pendingPackagesByKey = new Map();
@@ -101,7 +104,8 @@
     };
 
     for (const row of rows) {
-      const mov = Number(row?.movimiento) || 0;
+      if (row?.duplicateReview) continue;
+      const mov = Number(row?.movimientoSaldo ?? row?.movimiento) || 0;
       const packageKey = getPackageKey(row);
       if (!isMatriculaPago(row) && isPagoRow(row) && mov > 0) {
         const total = parsePackageSize(row);
@@ -1334,3 +1338,4 @@
 
   window.RIPProgramacion = RIPProgramacion;
 })();
+

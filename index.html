@@ -65,6 +65,7 @@
       <button id="viewTabProg" class="tab">Programación</button>
       <button id="viewTabSaldo" class="tab">Saldos</button>
       <button id="viewTabRegistro" class="tab">Registro</button>
+      <button id="viewTabPrimeraVez" class="tab">Primera vez</button>
       <button id="viewTabClientes" class="tab">Clientes</button>
       <button id="viewTabKpis" class="tab">KPIs</button>
     </div>
@@ -138,6 +139,14 @@
       <div class="hero-card-body">
         <div class="hero-card-title">KPIs</div>
         <div class="hero-card-sub">Métricas de negocio</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--registro" data-hero-tab="viewTabPrimeraVez">
+      <div class="hero-card-icon">1</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Primera vez</div>
+        <div class="hero-card-sub">Cancelaciones perdonadas</div>
       </div>
     </button>
 
@@ -242,6 +251,48 @@
       <p class="muted" id="dashSubClas">Click en cualquier tarjeta para ver la lista.</p>
     </div>
     <div class="grid" id="dashGridClas"></div>
+  </section>
+
+  <section class="card" id="primeraVezView" style="display:none">
+    <div class="card-title">
+      <h3>Primera vez</h3>
+      <p class="muted">Registro de clases perdonadas por cancelacion fuera de politica.</p>
+    </div>
+    <div class="filters-grid">
+      <div class="fgrp fgrp-student">
+        <div class="flabel">Estudiante o motivo</div>
+        <input id="primeraVezSearch" class="fctrl" placeholder="Buscar..." autocomplete="off"/>
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Motivo</div>
+        <select id="primeraVezMotivoFilter" class="fctrl">
+          <option value="">Todos</option>
+        </select>
+      </div>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnPrimeraVezNew">Registrar primera vez</button>
+      <button class="btn ghost" id="btnPrimeraVezRefresh">Actualizar</button>
+      <span class="status" id="primeraVezStatus">Cargando registros...</span>
+    </div>
+    <div class="kpis" id="primeraVezKpis" style="margin-top:14px"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Fecha clase</th>
+            <th>Estudiante</th>
+            <th>Motivo</th>
+            <th>Detalle</th>
+            <th>Registrado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="primeraVezBody">
+          <tr><td colspan="6" class="empty-td">Cargando registros...</td></tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 
 
@@ -392,6 +443,10 @@
           <span class="ficha-stat-label">Total pagos</span>
           <span id="fichaTotalPagos" class="ficha-stat-value">—</span>
         </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Primera vez</span>
+          <span id="fichaPrimeraVez" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
       </div>
 
     </div>
@@ -532,6 +587,8 @@
       <button class="btn primary" id="btnFichaSaveEdits" style="display:none">💾 Guardar cambios</button>
       <button class="btn ghost" id="btnFichaCancelEdits" style="display:none">Cancelar</button>
       <button class="btn" id="btnClaseEspecial" style="display:none">🎁 Clase especial</button>
+      <button class="btn" id="btnPrimeraVezFicha" style="display:none">Primera vez</button>
+      <button class="btn ghost danger" id="btnFichaDeleteDuplicates" style="display:none">Verificar y eliminar duplicadas</button>
       <button class="btn" id="btnPDF" style="display:none">📄 Descargar PDF</button>
       <button class="btn ghost" id="btnVolverDash" style="display:none">← Dashboard</button>
     </div>
