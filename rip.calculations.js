@@ -66,6 +66,7 @@
     if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
     if (tipo === 'pago') {
+      if (isMusigymSubscription(row)) return 0;
       if (/\bME\b/i.test(servicio)) return 0;
       if (/\b(prueba|individual)\b/i.test(servicio)) return 1;
       if (/\bCP\b/i.test(servicio)) return 1;
@@ -87,6 +88,7 @@
     if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
     if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
+      if (s.includes('musigym')) return { clasif: 'Pago', clasifPago: 'Musigym' };
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
       if (s.includes('vacacional')) return { clasif: 'Pago', clasifPago: 'TV' };
@@ -105,7 +107,7 @@
     if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
     if (s.includes('vacacional')) return { clasif: 'TV', clasifPago: '' };
     if (s.includes('spaces')) return { clasif: 'Spaces', clasifPago: '' };
-    if (s.includes('musigym')) return { clasif: 'MG', clasifPago: '' };
+    if (s.includes('musigym')) return { clasif: 'Musigym', clasifPago: '' };
     if (/\bcf\b/i.test(servicio)) return { clasif: 'CF', clasifPago: '' };
     if (/\bmv\b/i.test(servicio)) return { clasif: 'MV P', clasifPago: '' };
     if (/\bmh\b/i.test(servicio)) return { clasif: 'MH P', clasifPago: '' };
@@ -161,6 +163,17 @@
 
   function isTrialOrCourtesy(row) {
     return isTrial(row) || isCourtesy(row);
+  }
+
+  function isMusigymRow(row) {
+    const txt = norm(`${row?.servicio || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    return txt.includes('musigym');
+  }
+
+  function isMusigymSubscription(row) {
+    if (!isMusigymRow(row)) return false;
+    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasifPago || ''}`);
+    return txt.includes('1 mes') || txt.includes('un mes') || txt.includes('mensual') || txt.includes('suscripcion');
   }
 
   function buildRecordHash(row) {
@@ -219,8 +232,63 @@
     });
   }
 
+  function addMonths(date, months) {
+    const d = new Date(date.getTime());
+    const day = d.getDate();
+    d.setMonth(d.getMonth() + months);
+    if (d.getDate() !== day) d.setDate(0);
+    return d;
+  }
+
+  function markMusigymSubscriptions(records) {
+    const rows = markDuplicateClasses(records || []);
+    const subscriptionsByStudent = new Map();
+    const getStudentKey = (row) => row?.estudianteKey || norm(row?.estudiante);
+    const getDate = (row) => {
+      const ts = Number(row?.fechaTs) || 0;
+      if (ts) return new Date(ts);
+      return parseDate(row?.fecha || row?.fechaRaw);
+    };
+
+    for (const row of rows) {
+      const tipo = norm(row?.tipo);
+      if (tipo !== 'pago' || !isMusigymSubscription(row)) continue;
+      const start = getDate(row);
+      const studentKey = getStudentKey(row);
+      if (!start || !studentKey) continue;
+      if (!subscriptionsByStudent.has(studentKey)) subscriptionsByStudent.set(studentKey, []);
+      const subscriptions = subscriptionsByStudent.get(studentKey);
+      const code = `Musigym ${subscriptions.length + 1}`;
+      subscriptions.push({
+        start: new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime(),
+        end: addMonths(new Date(start.getFullYear(), start.getMonth(), start.getDate()), 1).getTime(),
+        label: code
+      });
+    }
+
+    if (!subscriptionsByStudent.size) return rows;
+
+    return rows.map((row) => {
+      if (row?.duplicateReview || norm(row?.tipo) !== 'clase' || !isMusigymRow(row)) return row;
+      const studentKey = getStudentKey(row);
+      const subscriptions = subscriptionsByStudent.get(studentKey) || [];
+      if (!subscriptions.length) return row;
+      const classDate = getDate(row);
+      if (!classDate) return row;
+      const classTs = new Date(classDate.getFullYear(), classDate.getMonth(), classDate.getDate()).getTime();
+      const active = subscriptions.find((sub) => classTs >= sub.start && classTs < sub.end);
+      if (!active) return row;
+      return {
+        ...row,
+        movimientoSaldo: 0,
+        musigymSubscriptionRedeemed: true,
+        musigymSubscriptionLabel: active.label
+      };
+    });
+  }
+
   function calculateStudentBalance(records) {
-    return markDuplicateClasses(records).reduce((sum, row) => sum + (Number(row.movimientoSaldo) || 0), 0);
+    return markMusigymSubscriptions(records).reduce((sum, row) => sum + (Number(row.movimientoSaldo) || 0), 0);
   }
 
   function getStudentClassLimit(records) {
@@ -243,7 +311,7 @@
       const txt = norm(raw);
       return txt.includes('matricula') || /\bME\b/i.test(raw);
     };
-    const rows = markDuplicateClasses(records).sort((a, b) => {
+    const rows = markMusigymSubscriptions(records).sort((a, b) => {
       const ta = Number(a?.fechaTs) || 0;
       const tb = Number(b?.fechaTs) || 0;
       if (ta !== tb) return ta - tb;
@@ -330,7 +398,7 @@
   }
 
   function calculateStudentFicha(records) {
-    const rows = markDuplicateClasses(records).sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
+    const rows = markMusigymSubscriptions(records).sort((a, b) => (Number(b.fechaTs) || 0) - (Number(a.fechaTs) || 0));
     const saldo = calculateStudentBalance(rows);
     const clases = rows.filter(r => norm(r.tipo) === 'clase');
     const pagos = rows.filter(r => norm(r.tipo) === 'pago' || String(r.pago || '').trim());
@@ -372,7 +440,7 @@
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,
-    markDuplicateClasses,
+    markDuplicateClasses, markMusigymSubscriptions, isMusigymRow, isMusigymSubscription,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
     getStudentClassLimit, calculateProgramacionStatus, recalculateStudentFromRecords,
     recalculateAllStudents

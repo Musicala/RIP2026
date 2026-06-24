@@ -231,6 +231,8 @@
   function renderTable2026(ctx, rows, cycleBaseRows = rows) {
     const { el } = ctx;
     if (!el.tableBody) return;
+    rows = window.RIPCalculations?.markMusigymSubscriptions ? window.RIPCalculations.markMusigymSubscriptions(rows || []) : rows;
+    cycleBaseRows = window.RIPCalculations?.markMusigymSubscriptions ? window.RIPCalculations.markMusigymSubscriptions(cycleBaseRows || rows || []) : cycleBaseRows;
 
     const editable = !!ctx.__fichaEditMode;
     const theadRow = document.querySelector('#tablaContainer thead tr');
@@ -336,6 +338,31 @@
       const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
       const rid = getRowId(r);
       const packageKey = getPackageKey(r);
+
+      if (r?.musigymSubscriptionRedeemed && isClaseRow(r)) {
+        cycleById.set(rid, Math.max(cycle, 0));
+        cycleMetaById.set(rid, {
+          kind: 'musigym-subscription',
+          cycle: Math.max(cycle, 0),
+          code: r.musigymSubscriptionLabel || 'Musigym',
+          total: 0
+        });
+        continue;
+      }
+
+      if (!matricula && isPagoRow(r) && window.RIPCalculations?.isMusigymSubscription?.(r)) {
+        cycle += 1;
+        const code = `Musigym ${cycle + 1}`;
+        cycleById.set(rid, cycle);
+        cycleMetaById.set(rid, {
+          kind: 'musigym-pago',
+          cycle,
+          total: 0,
+          code,
+          key: packageKey
+        });
+        continue;
+      }
 
       if (!matricula && isPagoRow(r) && mov > 0) {
         cycle += 1;
@@ -447,6 +474,10 @@
           ? 'M'
           : cycleMeta?.kind === 'unpaid'
             ? '!'
+          : cycleMeta?.kind === 'musigym-pago'
+            ? specialCode
+          : cycleMeta?.kind === 'musigym-subscription'
+            ? specialCode
           : cycleMeta?.kind === 'clase'
             ? (cycleMeta.overLimit ? '!' : `${specialCode} ${cycleMeta.classNo}/${cycleMeta.total || '?'}`)
             : cycleMeta?.kind === 'pago'
@@ -456,6 +487,10 @@
           ? 'Matrícula (sin conteo)'
           : cycleMeta?.kind === 'unpaid'
             ? 'Clase pendiente de pago'
+          : cycleMeta?.kind === 'musigym-pago'
+            ? `${specialCode} activado`
+          : cycleMeta?.kind === 'musigym-subscription'
+            ? `${specialCode} redimido`
           : cycleMeta?.kind === 'clase'
             ? (cycleMeta.overLimit ? `${specialCode} · clases agotadas` : `${specialCode} redimido · clase ${cycleMeta.classNo} de ${cycleMeta.total || '?'}`)
             : cycleMeta?.kind === 'pago'
@@ -640,6 +675,7 @@
   }
 
   function buildSaldoBreakdown(rows) {
+    rows = window.RIPCalculations?.markMusigymSubscriptions ? window.RIPCalculations.markMusigymSubscriptions(rows || []) : rows;
     const totals = new Map();
     let saldoTotal = 0;
 

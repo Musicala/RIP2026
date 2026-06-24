@@ -169,6 +169,7 @@
     if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
     if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
+      if (test(s, /musigym/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Musigym' };
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
       if (test(s, /vacacional/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'TV' };
@@ -186,7 +187,7 @@
     if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
     if (test(s, /vacacional/i)) return { clasifAuto: 'TV', clasifPagoAuto: '' };
     if (test(s, /spaces/i)) return { clasifAuto: 'Spaces', clasifPagoAuto: '' };
-    if (test(s, /musigym/i)) return { clasifAuto: 'MG', clasifPagoAuto: '' };
+    if (test(s, /musigym/i)) return { clasifAuto: 'Musigym', clasifPagoAuto: '' };
     if (test(s, /\bcf\b/i)) return { clasifAuto: 'CF', clasifPagoAuto: '' };
     if (test(s, /\bmv\b/i)) return { clasifAuto: 'MV P', clasifPagoAuto: '' };
     if (test(s, /\bmh\b/i)) return { clasifAuto: 'MH P', clasifPagoAuto: '' };
@@ -208,6 +209,7 @@
     if (isCourtesyText(servicio, comentario)) return 0;
     if (/^clase$/i.test(tipo)) return -1;
     if (/^pago$/i.test(tipo)) {
+      if (/musigym/i.test(servicio) && /\b(1\s*mes|un\s*mes|mensual|suscripci[oó]n)\b/i.test(servicio + ' ' + comentario)) return 0;
       if (isTrialText(servicio, comentario) || /\bindividual\b/i.test(servicio)) return 1;
       if (/\bCP\b/i.test(servicio)) return 1;
       const m = servicio.match(/(?:\bP\s*|Paquete\s*(?:de\s*)?)(\d+)/i);
@@ -256,6 +258,13 @@
         movimientoSaldo: duplicateReview ? 0 : (Number(row?.movimiento) || 0)
       };
     });
+  };
+
+  const markMusigymSubscriptions = (rows) => {
+    if (window.RIPCalculations?.markMusigymSubscriptions) {
+      return window.RIPCalculations.markMusigymSubscriptions(rows || []);
+    }
+    return markDuplicateClasses(rows || []);
   };
 
   const classifyByDaysSinceLastClass = (days, forceActivo = false) => {
@@ -776,11 +785,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
     // Todos los estudiantes Ãºnicos del registro, ordenados
     const set = new Map(); // key -> display
-    for (const r of markDuplicateClasses(registro || [])) {
+    for (const r of markMusigymSubscriptions(registro || [])) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
     }
     const lastClassTsByStudent = new Map();
-    for (const r of markDuplicateClasses(registro || [])) {
+    for (const r of markMusigymSubscriptions(registro || [])) {
       if (!r?.estudianteKey) continue;
       const tipo = norm(r?.tipo || '');
       const isClase = (tipo === 'clase') || (tipo !== 'pago' && !String(r?.pago || '').trim());
@@ -871,7 +880,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   RIPCore.sumMovimientoByStudent = (registro) => {
     const sums = new Map(); // key -> sum
-    for (const r of markDuplicateClasses(registro || [])) {
+    for (const r of markMusigymSubscriptions(registro || [])) {
       if (!r.estudianteKey) continue;
       sums.set(r.estudianteKey, (sums.get(r.estudianteKey) || 0) + (Number(r.movimientoSaldo ?? r.movimiento) || 0));
     }
@@ -896,7 +905,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   RIPCore.buildSaldosDashboard = (students, registro) => {
     const sums = RIPCore.sumMovimientoByStudent(registro);
     const duplicateCounts = new Map();
-    for (const r of markDuplicateClasses(registro || [])) {
+    for (const r of markMusigymSubscriptions(registro || [])) {
       if (r?.duplicateReview && r.estudianteKey) duplicateCounts.set(r.estudianteKey, (duplicateCounts.get(r.estudianteKey) || 0) + 1);
     }
     const cats = {
@@ -931,7 +940,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     // Lazy compute fechaTs para fast-pack (solo para este estudiante)
-    const subset = markDuplicateClasses(registro || []).filter((r) => r.estudianteKey === studentKey);
+    const subset = markMusigymSubscriptions(registro || []).filter((r) => r.estudianteKey === studentKey);
     for (const r of subset) {
       if (!r.fechaTs) {
         const d = parseDate(r.fechaRaw);
