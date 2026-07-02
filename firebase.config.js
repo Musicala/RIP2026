@@ -6,7 +6,6 @@
     'catalina.medina.leal@gmail.com',
     'alekcaballeromusic@gmail.com',
     'imusicala@gmail.com',
-    'adminmusicala@gmail.com',
     'musicalaasesor@gmail.com'
   ];
 

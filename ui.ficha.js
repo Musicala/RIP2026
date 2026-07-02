@@ -28,7 +28,11 @@
   // =========================
   // Config años / TSV / columnas
   // =========================
-  const TSV_URLS = {};
+  const TSV_URLS = {
+    "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
+    "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
+    "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
+  };
 
   const COLMAP = {
     "2023": { fecha: 1, nombre: 2, servicio: 4, hora: 7, pago: null, profesor: null },
@@ -1475,6 +1479,7 @@
     }
   };
 })();
+
 
 
 

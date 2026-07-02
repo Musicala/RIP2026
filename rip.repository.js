@@ -3,6 +3,7 @@
   'use strict';
 
   const C = () => window.RIPCalculations;
+  const PAYMENT_METHODS = ['Bancolombia M', 'Nequi M', 'Bold', 'Bold CF', 'Davivienda M', 'Efectivo', 'Daviplata C', 'Fesicol', 'Mercadopago', 'Addi'];
   async function fb() { return window.RIPFirebase.ready; }
   function stamp(fs) { return fs.serverTimestamp(); }
   function userEmail(env) { return env.user?.email || ''; }
@@ -79,7 +80,7 @@
       estudiantes: Array.from(studentSet).sort((a, b) => a.localeCompare(b, 'es')),
       servicios: services.map(name => ({ name, prices: {} })),
       tiposEstudiante: ['Antiguos/Convenios', 'Nuevos'],
-      mediosPago: ['Bancolombia M', 'Nequi M', 'Bold', 'Davivienda M', 'Efectivo', 'Daviplata C', 'Fesicol', 'Mercadopago', 'Addi']
+      mediosPago: PAYMENT_METHODS
     };
   }
 

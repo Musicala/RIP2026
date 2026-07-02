@@ -36,7 +36,11 @@
   const PRICE_CACHE_KEY = 'rip2026_prices_meta_v1';
   const PRICE_CACHE_TTL = 6 * 60 * 60 * 1000;
 
-  init();
+  init().catch((err) => {
+    console.error('No se pudo iniciar registro de pagos Firebase', err);
+    setStatus('No se pudo cargar Firebase para registrar pagos.');
+    toast(err?.message || 'No se pudo cargar el registro de pagos.', 'warn');
+  });
 
   async function init() {
     addUser();
@@ -44,6 +48,9 @@
     els.fechaPago.value = todayISO();
     setStatus('Conectando con Firebase...');
     await window.RIPFirebase.ready;
+    if (!window.RIPRepository?.loadPaymentMeta || !window.RIPRepository?.savePaymentTransaction) {
+      throw new Error('El registro de pagos necesita RIPRepository/Firebase para cargar y guardar datos.');
+    }
     const [baseMeta, priceMeta] = await Promise.all([
       window.RIPRepository.loadPaymentMeta(),
       loadPricesMetaCached()

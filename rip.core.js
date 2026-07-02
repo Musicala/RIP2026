@@ -36,7 +36,11 @@
       params: 'rip2026_cache_params_v2',
       meta: 'rip2026_cache_meta_v2'
     },
-    HIST_LAST_CLASS_TSV_URLS: {}
+    HIST_LAST_CLASS_TSV_URLS: {
+      "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
+      "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
+      "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
+    }
   };
 
   // =========================
@@ -1044,6 +1048,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   window.RIPCore = RIPCore;
 })();
+
 
 
 
