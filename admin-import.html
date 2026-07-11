@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RIP 2026 - Importador</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <div class="card-title">
+        <h3>Importador inicial</h3>
+        <p class="muted">Pega JSON o CSV exportado desde Excel. Se guardan solo datos base en Firestore.</p>
+      </div>
+      <div class="filters-actions">
+        <input id="csvFile" class="control" type="file" accept=".csv,text/csv" style="max-width:420px">
+        <button class="btn" id="btnLoadCsvFile">Cargar archivo CSV</button>
+      </div>
+      <textarea id="importText" class="control" rows="14" style="width:100%;box-sizing:border-box"></textarea>
+      <div class="filters-actions">
+        <button class="btn primary" id="btnImportJson">Importar JSON</button>
+        <button class="btn" id="btnImportCsv">Importar CSV</button>
+        <button class="btn" id="btnImportProgramacionCsv">Importar Programación CSV</button>
+        <button class="btn" id="btnImportClientesCsv">Importar Clientes B2C CSV</button>
+        <span class="status" id="importStatus">Listo</span>
+      </div>
+    </section>
+  </main>
+  <script src="./firebase.config.js"></script>
+  <script src="./rip.calculations.js"></script>
+  <script src="./firebase.auth.js"></script>
+  <script src="./rip.repository.js"></script>
+  <script src="./rip.identity.js"></script>
+  <script src="./rip.importer.js"></script>
+  <script>
+    const text = document.getElementById('importText');
+    const status = document.getElementById('importStatus');
+    const csvFile = document.getElementById('csvFile');
+    async function run(kind) {
+      status.textContent = 'Importando...';
+      try {
+        const res = kind === 'json'
+          ? await window.RIPImporter.importFromJSON(JSON.parse(text.value))
+          : kind === 'programacion'
+            ? await window.RIPImporter.importProgramacionFromCSV(text.value)
+            : kind === 'clientes'
+              ? await window.RIPImporter.importClientesFromCSV(text.value)
+            : await window.RIPImporter.importFromCSV(text.value);
+        status.textContent = res.kind === 'programacion'
+          ? `OK: ${res.schedules} programaciones subidas, ${res.skipped} filas sin fecha/estudiante omitidas.`
+          : res.kind === 'clientesB2C'
+            ? `OK: ${res.created} clientes B2C subidos, ${res.skipped} filas omitidas.`
+          : `OK: ${res.created} creados, ${res.skipped} duplicados omitidos.`;
+      } catch (err) {
+        console.error(err);
+        status.textContent = 'Error: ' + (err.message || err);
+      }
+    }
+    document.getElementById('btnLoadCsvFile').addEventListener('click', async () => {
+      const file = csvFile.files && csvFile.files[0];
+      if (!file) {
+        status.textContent = 'Selecciona un archivo CSV primero.';
+        return;
+      }
+      status.textContent = 'Leyendo archivo...';
+      try {
+        text.value = await file.text();
+        status.textContent = `Archivo cargado: ${file.name}`;
+      } catch (err) {
+        status.textContent = 'Error leyendo CSV: ' + (err.message || err);
+      }
+    });
+    document.getElementById('btnImportJson').addEventListener('click', () => run('json'));
+    document.getElementById('btnImportCsv').addEventListener('click', () => run('csv'));
+    document.getElementById('btnImportProgramacionCsv').addEventListener('click', () => run('programacion'));
+    document.getElementById('btnImportClientesCsv').addEventListener('click', () => run('clientes'));
+  </script>
+</body>
+</html>

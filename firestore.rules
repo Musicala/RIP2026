@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// Reglas de rip-musicala.
+//
+// Modelo de acceso: RIP es una herramienta interna operada exclusivamente
+// por el personal del allowlist (4 correos). No hay acceso de estudiantes,
+// docentes externos ni lecturas públicas.
+//
+// Decisión documentada (integración studentId, 2026-07):
+// - La inmutabilidad de studentId se aplica en las FRONTERAS del ecosistema:
+//   * bitacoras-de-clase/firestore.rules bloquea cambios de studentId y del
+//     mapa `rip` desde cualquier cliente;
+//   * las Cloud Functions (syncStudentIdentity / syncStudentStatus) solo
+//     escriben los campos de su propiedad.
+// - Dentro de RIP, durante la transición, el personal SÍ necesita reescribir
+//   studentId en registros (fusión de estudiantes homónimos y upgrade de
+//   nameKey → studentId canónico). Endurecer eso aquí rompería la migración;
+//   se revisará al cerrarla (ver ARCHITECTURE.md / MIGRATION.md en el repo
+//   de Bitácoras).
+// - Toda escritura queda auditada en `auditLog` por la propia app.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAllowed() {
+      return request.auth != null
+        && request.auth.token.email in [
+          "catalina.medina.leal@gmail.com",
+          "alekcaballeromusic@gmail.com",
+          "imusicala@gmail.com",
+          "musicalaasesor@gmail.com"
+        ];
+    }
+
+    // Nota: `sync_logs` lo escriben los backends via Admin SDK. Como las
+    // reglas con match superpuesto se combinan con OR, un match restrictivo
+    // aparte no lo protegería del catch-all; se mantiene bajo el mismo
+    // allowlist del personal.
+    match /{document=**} {
+      allow read, write: if isAllowed();
+    }
+  }
+}

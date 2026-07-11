@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="color-scheme" content="light"/>
+<meta name="theme-color" content="#1A3B6E"/>
+
+<title>RIP 2026 · Musicala</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<link rel="stylesheet" href="./styles.css?v=2026.progcolors1"/>
+
+</head>
+
+<body>
+
+<!-- ═══════════════════════════════════════════
+     TOPBAR
+════════════════════════════════════════════ -->
+<header class="topbar">
+
+  <!-- Row 1: Brand + acciones -->
+  <div class="topbar-row">
+
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M9 18V5l12-2v13" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <circle cx="6" cy="18" r="3" fill="white"/>
+          <circle cx="18" cy="16" r="3" fill="white"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">RIP 2026</div>
+        <div class="brand-sub">Musicala · Registro integral de pagos</div>
+      </div>
+    </div>
+
+    <div class="top-actions">
+
+      <button class="btn ghost" id="btnPago">💳 Pago</button>
+      <button class="btn ghost" id="btnClases">📝 Clases</button>
+      <button class="btn ghost" id="btnVerBase">🗄️ Base de datos</button>
+      <button class="btn ghost" id="btnRefreshProg">📅 Prog.</button>
+      <button class="btn ghost" id="btnSyncSettings">⚙ Config.</button>
+      <button class="btn primary" id="btnRefresh">↻ Actualizar</button>
+      <button class="btn ghost" id="btnTop2025" style="display:none">🗂️ 2025</button>
+
+      <span class="pill" id="badgeMode">Firebase</span>
+      <span class="pill soft" id="badgeCount">0 registros</span>
+
+    </div>
+
+  </div>
+
+  <!-- Row 2: Dashboard tabs -->
+  <div class="dashTabs-row">
+    <div class="dashTabs">
+      <button id="viewTabReview" class="tab active">Revisar Hoy</button>
+      <button id="viewTabSearch" class="tab">Buscar</button>
+      <button id="viewTabProg" class="tab">Programación</button>
+      <button id="viewTabSaldo" class="tab">Saldos</button>
+      <button id="viewTabRegistro" class="tab">Registro</button>
+      <button id="viewTabPrimeraVez" class="tab">Primera vez</button>
+      <button id="viewTabClientes" class="tab">Clientes</button>
+      <button id="viewTabKpis" class="tab">KPIs</button>
+    </div>
+  </div>
+
+  <!-- Row 3: Título dinámico -->
+  <div class="dash-heading">
+    <h2 id="dashTitle">Revisar Hoy</h2>
+    <p id="dashSub">Lo urgente primero: por revisar, saldos, programación y registro.</p>
+  </div>
+
+</header>
+
+
+<!-- ═══════════════════════════════════════════
+     HERO NAV
+════════════════════════════════════════════ -->
+<section class="hero-nav" id="heroNav">
+  <div class="hero-nav-inner">
+
+    <button class="hero-card hero-card--urgent" data-hero-tab="viewTabReview">
+      <div class="hero-card-icon">🚨</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Revisar Hoy</div>
+        <div class="hero-card-sub">Urgentes por atender</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--search" data-hero-tab="viewTabSearch">
+      <div class="hero-card-icon">🔍</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Buscar</div>
+        <div class="hero-card-sub">Ficha de estudiante</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--prog" data-hero-tab="viewTabProg">
+      <div class="hero-card-icon">📅</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Programación</div>
+        <div class="hero-card-sub">Clases y calendarios</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--saldo" data-hero-tab="viewTabSaldo">
+      <div class="hero-card-icon">💰</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Saldos</div>
+        <div class="hero-card-sub">Deben · Se acabó · A favor</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--registro" data-hero-tab="viewTabRegistro">
+      <div class="hero-card-icon">📋</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Registro</div>
+        <div class="hero-card-sub">Clasificación y tabla</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--clientes" data-hero-tab="viewTabClientes">
+      <div class="hero-card-icon">👥</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Clientes</div>
+        <div class="hero-card-sub">Pagos B2C</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--kpis" data-hero-tab="viewTabKpis">
+      <div class="hero-card-icon">📊</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">KPIs</div>
+        <div class="hero-card-sub">Métricas de negocio</div>
+      </div>
+    </button>
+
+    <button class="hero-card hero-card--registro" data-hero-tab="viewTabPrimeraVez">
+      <div class="hero-card-icon">1</div>
+      <div class="hero-card-body">
+        <div class="hero-card-title">Primera vez</div>
+        <div class="hero-card-sub">Cancelaciones perdonadas</div>
+      </div>
+    </button>
+
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════
+     MAIN
+════════════════════════════════════════════ -->
+<main class="page">
+
+  <section class="tabs">
+    <div class="tabs-spacer"></div>
+    <button class="btn small ghost" id="btnBackToDash" title="Volver" style="display:none">← Volver</button>
+  </section>
+
+  <section class="card" id="reviewTodayView">
+    <div class="card-title">
+      <h3>Revisar Hoy</h3>
+      <p class="muted">Prioridades operativas organizadas para revisar una por una.</p>
+    </div>
+    <div class="kpis-3" id="reviewKpiGrid"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Prioridad</th>
+            <th>Estudiante</th>
+            <th>Motivo</th>
+            <th>Tiempo / saldo</th>
+            <th>Ultimo registro</th>
+            <th>Programacion</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="reviewTodayBody">
+          <tr><td colspan="7" class="empty-td">Cargando pendientes...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="searchView" style="display:none">
+    <div class="card-title">
+      <h3>Buscar estudiante</h3>
+      <p class="muted">Para responder rápido por clases, saldo, paquete y programación.</p>
+    </div>
+    <div class="fgrp fgrp-student">
+      <div class="flabel">👤 Estudiante</div>
+      <input id="quickStudentSearch" class="fctrl" list="nombresLista"
+             placeholder="Escribe un nombre..." autocomplete="off"/>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnQuickSearch">Abrir ficha</button>
+      <span class="status" id="quickSearchStatus">Busca por nombre.</span>
+    </div>
+  </section>
+
+
+  <!-- ─── Dashboard Clasificación ─── -->
+  <section class="card" id="clientesView" style="display:none">
+    <div class="card-title">
+      <h3>Clientes / pagos B2C</h3>
+      <p class="muted">Transacciones completas del registro de pagos en Firestore.</p>
+    </div>
+    <div class="filters-grid">
+      <div class="fgrp fgrp-student">
+        <div class="flabel">Cliente, estudiante o servicio</div>
+        <input id="clientesSearch" class="fctrl"
+               placeholder="Buscar en pagos..." autocomplete="off"/>
+      </div>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnClientesRefresh">Actualizar clientes</button>
+      <span class="status" id="clientesStatus">Cargando pagos...</span>
+    </div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Usuarios</th>
+            <th>Servicios</th>
+            <th>Total</th>
+            <th>Medio</th>
+            <th>Ajustes</th>
+            <th>FEVM</th>
+            <th>ID</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="clientesBody">
+          <tr><td colspan="9" class="empty-td">Cargando pagos...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="dashboardClasView">
+    <div class="card-title">
+      <h3 id="dashClasTitle">Dashboard de estudiantes</h3>
+      <p class="muted" id="dashSubClas">Click en cualquier tarjeta para ver la lista.</p>
+    </div>
+    <div class="grid" id="dashGridClas"></div>
+  </section>
+
+  <section class="card" id="primeraVezView" style="display:none">
+    <div class="card-title">
+      <h3>Primera vez</h3>
+      <p class="muted">Registro de clases perdonadas por cancelacion fuera de politica.</p>
+    </div>
+    <div class="filters-grid">
+      <div class="fgrp fgrp-student">
+        <div class="flabel">Estudiante o motivo</div>
+        <input id="primeraVezSearch" class="fctrl" placeholder="Buscar..." autocomplete="off"/>
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Motivo</div>
+        <select id="primeraVezMotivoFilter" class="fctrl">
+          <option value="">Todos</option>
+        </select>
+      </div>
+    </div>
+    <div class="filters-actions">
+      <button class="btn primary" id="btnPrimeraVezNew">Registrar primera vez</button>
+      <button class="btn ghost" id="btnPrimeraVezRefresh">Actualizar</button>
+      <span class="status" id="primeraVezStatus">Cargando registros...</span>
+    </div>
+    <div class="kpis" id="primeraVezKpis" style="margin-top:14px"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Fecha clase</th>
+            <th>Estudiante</th>
+            <th>Motivo</th>
+            <th>Detalle</th>
+            <th>Registrado</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="primeraVezBody">
+          <tr><td colspan="6" class="empty-td">Cargando registros...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <!-- ─── Vista: Lista de clases de prueba / cortesía ─── -->
+  <section class="card" id="trialListView" style="display:none">
+    <div class="card-title">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h3>Clases de prueba y cortesía</h3>
+        <div id="trialConversionBadge" class="trial-conv-badge"></div>
+      </div>
+      <p class="muted">Registro de todas las clases de prueba (CP) y cortesías (CC) dadas.</p>
+    </div>
+    <div class="kpis" id="trialKpis"></div>
+    <div id="trialListWrap" class="table-wrap" style="margin-top:12px">
+      <table class="tbl" id="trialListTable">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Estudiante</th>
+            <th>Tipo</th>
+            <th>Servicio</th>
+            <th>Profesor</th>
+            <th>Conversión</th>
+          </tr>
+        </thead>
+        <tbody id="trialListBody"></tbody>
+      </table>
+    </div>
+    <div class="ficha-actions" style="margin-top:12px">
+      <button class="btn ghost" id="btnTrialListBack">← Volver</button>
+    </div>
+  </section>
+
+  <!-- ─── Dashboard Saldos ─── -->
+  <section class="card" id="dashboardSaldoView" style="display:none">
+    <div class="card-title">
+      <h3>Dashboard de saldos</h3>
+      <p class="muted" id="dashSubSaldo">Basado en SUM(Movimiento) por estudiante.</p>
+    </div>
+    <div class="kpis" id="dashKpisSaldo"></div>
+    <div class="grid" id="dashGridSaldo"></div>
+  </section>
+
+
+  <!-- ─── Dashboard Programación ─── -->
+  <section class="card" id="registroCalendarView" style="display:none">
+    <div class="card-title">
+      <h3>Calendario de registro</h3>
+      <p class="muted" id="registroCalendarSub">Dias pendientes por subir al RIP.</p>
+    </div>
+    <div class="calendar-controls registro-calendar-controls">
+      <button class="btn ghost calendar-nav-btn" id="registroCalPrev" type="button" aria-label="Mes anterior">&#8249;</button>
+      <div class="calendar-nav-title" id="registroCalTitle">Mes actual</div>
+      <button class="btn ghost calendar-nav-btn" id="registroCalNext" type="button" aria-label="Mes siguiente">&#8250;</button>
+    </div>
+    <div class="calendar-legend">
+      <span><i class="legend-dot ok"></i>Subido</span>
+      <span><i class="legend-dot missing"></i>Falta</span>
+      <span><i class="legend-dot skip"></i>No cuenta</span>
+    </div>
+    <div class="registro-calendar-layout">
+      <div id="registroCalendarGrid" class="calendar-year registro-calendar-grid"></div>
+      <div class="registro-day-panel">
+        <h4 id="registroDayTitle">Selecciona un dia</h4>
+        <div id="registroDayBody" class="muted">Veras las clases registradas o si falta subir ese dia.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="dashboardProgView" style="display:none">
+    <div class="card-title">
+      <h3>Dashboard de programación</h3>
+      <p class="muted" id="dashSubProg">KPIs de programación. Click para ver lista o abrir estudiante.</p>
+    </div>
+
+    <div class="kpis-3" id="progKpiGrid">
+      <button class="kpi kpi-btn" id="progCardNoSchedule" data-group="none">
+        <div class="n" id="progKpiNone">0</div>
+        <div class="t">Sin programación</div>
+      </button>
+      <button class="kpi kpi-btn" id="progCardPartial" data-group="partial">
+        <div class="n" id="progKpiPartial">0</div>
+        <div class="t">Por completar</div>
+      </button>
+      <button class="kpi kpi-btn" id="progCardComplete" data-group="complete">
+        <div class="n" id="progKpiComplete">0</div>
+        <div class="t">Completos</div>
+      </button>
+    </div>
+
+    <div class="table-wrap" id="progTableWrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Estudiante</th>
+            <th>Estado</th>
+            <th>Próxima</th>
+            <th>Programadas</th>
+            <th>Futuras</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="progTableBody">
+          <tr><td colspan="6" class="empty-td">Cargando programación…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <!-- ─── Ficha / Vista estudiante ─── -->
+  <section class="card" id="fichaView" style="display:none">
+
+    <div class="card-title">
+      <h3 id="fichaTitle">Ficha</h3>
+      <p class="muted" id="fichaSub">Resumen + registro</p>
+    </div>
+
+    <!-- Resumen sheet (mostrado solo en modo ficha) -->
+    <div id="fichaSummaryBlock" class="ficha-card" style="display:none">
+
+      <div class="ficha-card-header">
+        <div class="ficha-name-row">
+          <span id="fichaStudent" class="ficha-student-name">—</span>
+          <span id="fichaStatusBadge" class="ficha-status-badge">—</span>
+        </div>
+        <div id="fichaSaldosMini" class="ficha-saldos-row"></div>
+      </div>
+
+      <div class="ficha-stats-grid">
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Última clase</span>
+          <span id="fichaFecha" class="ficha-stat-value">—</span>
+        </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Próxima clase</span>
+          <span id="fichaProxPago" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Último pago</span>
+          <span id="fichaUltPago" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
+        <div class="ficha-stat ficha-stat--money">
+          <span class="ficha-stat-label">Valor pago</span>
+          <span id="fichaUltPagoValor" class="ficha-stat-value">—</span>
+        </div>
+        <div class="ficha-stat ficha-stat--money">
+          <span class="ficha-stat-label">Total pagos</span>
+          <span id="fichaTotalPagos" class="ficha-stat-value">—</span>
+        </div>
+        <div class="ficha-stat">
+          <span class="ficha-stat-label">Primera vez</span>
+          <span id="fichaPrimeraVez" class="ficha-stat-value ficha-stat-small">—</span>
+        </div>
+      </div>
+
+      <div id="fichaServiciosBlock" class="ficha-interest-block"></div>
+
+    </div>
+
+    <!-- Programación individual -->
+    <section id="programacionStudentView" style="display:none; margin-top:20px;">
+
+      <div class="card-title">
+        <h3>Programación del estudiante</h3>
+        <p class="muted">Resumen individual + acciones rápidas</p>
+      </div>
+
+      <div class="sheet-like">
+        <div class="sheet-row sheet-head">
+          <div class="cell strong">Estudiante</div>
+          <div class="cell" id="progStudentName">—</div>
+          <div class="cell strong">Próxima</div>
+          <div class="cell" id="progStudentNext">—</div>
+        </div>
+        <div class="sheet-row">
+          <div class="cell strong">Futuras</div>
+          <div class="cell" id="progStudentFuture">—</div>
+          <div class="cell strong">Estado</div>
+          <div class="cell" id="progStudentAlert">—</div>
+        </div>
+      </div>
+
+      <div class="ficha-actions">
+        <button class="btn primary" id="btnOpenProg">📅 Programar</button>
+        <button class="btn ghost" id="btnOpenReprog">🔄 Reprogramar</button>
+        <button class="btn" id="btnBackToRipTable">← Ver tabla RIP</button>
+      </div>
+
+      <div class="card" style="margin-top:16px; box-shadow:none; border-color: var(--bd);">
+        <div class="card-title">
+          <h3>Fechas programadas</h3>
+          <p class="muted">Click en cualquier casilla para editar la clase</p>
+        </div>
+        <div id="progStudentDates" class="detailDates gridDates"></div>
+      </div>
+
+      <div id="programacionEmbed"></div>
+
+    </section>
+
+    <!-- Filtros registro -->
+    <section class="card" id="filtersCard">
+
+      <div class="fgrp fgrp-student">
+        <div class="flabel">👤 Estudiante</div>
+        <input id="fStudent" class="fctrl" list="nombresLista"
+               placeholder="Escribe un nombre…" autocomplete="off"/>
+        <datalist id="nombresLista"></datalist>
+      </div>
+
+      <div class="filters-grid">
+
+        <div class="fgrp">
+          <div class="flabel">
+            🎛️ Servicio
+            <span class="fcount" id="fServiceCount">0</span>
+          </div>
+          <div class="multi" id="serviceMulti">
+            <button type="button" class="multi-btn" id="serviceBtn">Selecciona servicio(s) ▾</button>
+            <div class="multi-pop" id="servicePop" aria-hidden="true">
+              <div class="multi-search">
+                <input id="serviceSearch" class="multi-search-input" type="text" placeholder="Buscar servicio..."/>
+                <button class="btn small ghost" id="serviceClear">Limpiar</button>
+              </div>
+              <div class="multi-list" id="serviceList"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">🏫 Profesor</div>
+          <select id="fProfesor" class="fctrl">
+            <option value="">Todos</option>
+          </select>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">🏷️ Tipo</div>
+          <select id="fTipo" class="fctrl">
+            <option value="">Todos</option>
+            <option value="Clase">Clase</option>
+            <option value="Pago">Pago</option>
+          </select>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">📅 Desde</div>
+          <input id="fDesde" class="fctrl" type="date"/>
+        </div>
+
+        <div class="fgrp">
+          <div class="flabel">📅 Hasta</div>
+          <input id="fHasta" class="fctrl" type="date"/>
+        </div>
+
+      </div>
+
+      <div class="filters-actions">
+        <button class="btn primary" id="btnPDFTop">📄 PDF</button>
+        <button class="btn" id="btnApply">♻️ Aplicar</button>
+        <button class="btn ghost" id="btnReset">🧼 Limpiar</button>
+        <span class="status" id="status">Cargando…</span>
+      </div>
+
+    </section>
+
+    <!-- Tabla RIP -->
+    <div class="table-wrap" id="tablaContainer">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>Estudiante</th>
+            <th>Tipo</th>
+            <th>Fecha</th>
+            <th>Hora</th>
+            <th>Servicio</th>
+            <th>Profesor</th>
+            <th>Pago</th>
+            <th>Comentario</th>
+            <th>Clasificación</th>
+            <th>Clasif. pagos</th>
+            <th>Movimiento</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="ficha-actions">
+      <button class="btn" id="btnOpenMainFicha">🧾 Ficha principal</button>
+      <button class="btn ghost" id="btnOpenMoreInfo">🔗 Más info</button>
+      <button class="btn" id="btnFichaEditMode">✏️ Modo edición</button>
+      <button class="btn primary" id="btnFichaSaveEdits" style="display:none">💾 Guardar cambios</button>
+      <button class="btn ghost" id="btnFichaCancelEdits" style="display:none">Cancelar</button>
+      <button class="btn" id="btnClaseEspecial" style="display:none">🎁 Clase especial</button>
+      <button class="btn" id="btnPrimeraVezFicha" style="display:none">Primera vez</button>
+      <button class="btn ghost" id="btnMergeStudent" style="display:none">Fusionar contacto</button>
+      <button class="btn ghost danger" id="btnFichaDeleteDuplicates" style="display:none">Verificar y eliminar duplicadas</button>
+      <button class="btn" id="btnPDF" style="display:none">📄 Descargar PDF</button>
+      <button class="btn ghost" id="btnVolverDash" style="display:none">← Dashboard</button>
+    </div>
+
+  </section>
+
+</main>
+
+
+<!-- Toast -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+
+<!-- Scripts -->
+<script src="./membrete_assets.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="./firebase.config.js?v=2026.firebase"></script>
+<script src="./rip.calculations.js?v=2026.progcomplete1"></script>
+<script src="./firebase.auth.js?v=2026.firebase"></script>
+<script src="./rip.repository.js?v=2026.studentid1"></script>
+<script src="./rip.identity.js?v=2026.studentid1"></script>
+<script src="./rip.core.js?v=2026.reviewlastclass1"></script>
+<script src="./ui.shared.js?v=2026.clientes1"></script>
+<script src="./ui.dashboard.js?v=2026.reviewlastclass1"></script>
+<script src="./ui.ficha.js?v=2026.cycles2"></script>
+<script src="./ui.table.js?v=2026.canonicalnames1"></script>
+<script src="./rip.programacion.js?v=2026.progcomplete1"></script>
+<script src="./app.js?v=2026.canonicalnames1"></script>
+<script src="./rip.sync.js?v=2026.sync1"></script>
+<script src="./ui.editor.js?v=2026.firebase"></script>
+<script>
+(function(){
+  document.querySelectorAll('[data-hero-tab]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var tabId = btn.getAttribute('data-hero-tab');
+      var tab = document.getElementById(tabId);
+      if(tab){ tab.click(); }
+      document.getElementById('heroNav').scrollIntoView({behavior:'smooth',block:'start'});
+      window.scrollBy(0, -200);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
