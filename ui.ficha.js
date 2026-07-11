@@ -780,10 +780,14 @@
   }
 
   function getPrimeraVezForStudent(ctx, student) {
-    const key = norm(student?.key || student?.name || '');
+    // student.key puede ser un studentId canónico: no se normaliza.
+    const key = String(student?.key || '').trim() || norm(student?.name || '');
     if (!key) return null;
+    const calc = window.RIPCalculations;
     return (ctx?.state?.primeraVez || [])
-      .filter(row => norm(row?.estudianteKey || row?.estudiante) === key || norm(row?.estudiante) === key)
+      .filter(row => (calc?.matchesStudentKey
+        ? calc.matchesStudentKey(row, key) || (student?.name && calc.matchesStudentKey(row, norm(student.name)))
+        : norm(row?.estudianteKey || row?.estudiante) === norm(key)))
       .sort((a, b) => (Number(b?.fechaClaseTs) || 0) - (Number(a?.fechaClaseTs) || 0))[0] || null;
   }
 
@@ -1478,7 +1482,7 @@
       toast(ctx.el.toastWrap, 'No hay duplicadas por eliminar.', 'info');
       return;
     }
-    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y quedan para revision manual.` : ''} �Continuar?`;
+    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y quedan para revision manual.` : ''} �Continuar?`;
     if (!deletable.length || !confirm(msg)) return;
     toast(ctx.el.toastWrap, 'Eliminando duplicadas...', 'info');
     for (const row of deletable) {
@@ -1579,13 +1583,49 @@
         toast(ctx.el.toastWrap, 'Elige un contacto duplicado diferente.', 'warn');
         return;
       }
-      const msg = `Fusionar "${source.name}" dentro de "${targetName}"? Esta accion mueve sus clases, pagos y programacion.`;
-      if (!confirm(msg)) return;
       const btn = modal.querySelector('[data-merge]');
       if (btn) btn.disabled = true;
+
+      // Previsualización sin escrituras: cuántos documentos se moverán y si
+      // la fusión une dos identidades canónicas distintas (requiere doble
+      // confirmación explícita).
+      let preview = null;
+      try {
+        setStatus('Calculando previsualización...');
+        preview = await window.RIPRepository.previewMergeStudents?.(source.key, targetKey, targetName);
+      } catch (previewErr) {
+        setStatus('No se pudo previsualizar.');
+        toast(ctx.el.toastWrap, previewErr?.message || 'No se pudo previsualizar la fusión.', 'warn');
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      const counts = preview?.counts || {};
+      const warnText = (preview?.warnings || []).length ? `\n\n${preview.warnings.join('\n')}` : '';
+      const msg = `Fusionar "${source.name}" dentro de "${targetName}"?\n` +
+        `Se moverán: ${counts.registro || 0} registro(s), ${counts.primeraVez || 0} primera(s) vez, ` +
+        `${counts.programacion || 0} programación(es).${warnText}`;
+      if (!confirm(msg)) {
+        setStatus('Fusión cancelada.');
+        if (btn) btn.disabled = false;
+        return;
+      }
+      let confirmDistinctCanonical = false;
+      if (preview?.requiresExplicitConfirmation) {
+        confirmDistinctCanonical = confirm(
+          'CONFIRMACIÓN ADICIONAL: origen y destino son DOS estudiantes con identidad oficial distinta. ' +
+          '¿Seguro que son la misma persona y quieres fusionarlos?'
+        );
+        if (!confirmDistinctCanonical) {
+          setStatus('Fusión cancelada.');
+          if (btn) btn.disabled = false;
+          return;
+        }
+      }
+
       setStatus('Fusionando...');
       try {
-        const result = await window.RIPRepository.mergeStudents(source.key, targetKey, targetName);
+        const result = await window.RIPRepository.mergeStudents(source.key, targetKey, targetName, { confirmDistinctCanonical });
         const [registro, students, programacion, primeraVez] = await Promise.all([
           window.RIPRepository.loadRegistro(),
           window.RIPRepository.loadStudents(),

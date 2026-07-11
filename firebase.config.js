@@ -42,4 +42,12 @@
     'personas', 'Personas'
   ];
   window.RIP_PRICES_TSV_URL = window.RIP_PRICES_TSV_URL || 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRw8VZmjjgmjRSeriTc2ITE1VtuwDtxCMntos5N8kljm0svs5nMe-nb07vJSx2L6vRo9iT_S7CCIEZe/pub?gid=1700804701&single=true&output=tsv';
+
+  /*
+    Modo estricto de identidad (activar DESPUÉS de correr las migraciones):
+    con true, RIP rechaza clases/pagos/primeraVez nuevos sin studentId
+    canónico (homónimos y estudiantes no inscritos exigen resolución manual).
+    Con false (transición actual) los guarda y los marca para revisión.
+  */
+  window.RIP_REQUIRE_STUDENT_ID = window.RIP_REQUIRE_STUDENT_ID || false;
 })();

@@ -303,7 +303,11 @@
     const rows = window.RIPCalculations?.markDuplicateClasses
       ? window.RIPCalculations.markDuplicateClasses(ctx?.state?.registro || [])
       : (ctx?.state?.registro || []);
-    return rows.filter(r => r?.duplicateReview && wanted.has(r.estudianteKey || norm(r.estudiante)));
+    return rows.filter(r => r?.duplicateReview && (
+      wanted.has(r.groupKey || '') ||
+      wanted.has(String(r.studentId || '').trim()) ||
+      wanted.has(r.estudianteKey || norm(r.estudiante))
+    ));
   }
 
   async function verifyAndDeleteDuplicateRows(ctx, title, items, onPickStudent, options) {
@@ -315,10 +319,10 @@
       return;
     }
     if (!window.RIPRepository?.deleteRegistroRow) {
-      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay conexión de edición para eliminar registros.', 'warn');
+      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay conexiï¿½n de ediciï¿½n para eliminar registros.', 'warn');
       return;
     }
-    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y se dejan para revision manual.` : ''} ¿Continuar?`;
+    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y se dejan para revision manual.` : ''} ï¿½Continuar?`;
     if (!deletable.length || !confirm(msg)) return;
     window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'Eliminando duplicadas...', 'info');
     let deleted = 0;
@@ -371,7 +375,7 @@
           `<button type="button" id="btnCargarBD" class="btn small ghost" style="vertical-align:middle;">` +
           `ğŸ—„ï¸ Cargar base de datos</button>`;
       } else if (isDuplicateList) {
-        el.fichaSub.innerHTML = 'Revisa los estudiantes y elimina solo las filas marcadas como duplicadas &nbsp;·&nbsp; <button type="button" id="btnDeleteDuplicateClasses" class="btn small danger" style="vertical-align:middle;">Verificar y eliminar duplicadas</button>';
+        el.fichaSub.innerHTML = 'Revisa los estudiantes y elimina solo las filas marcadas como duplicadas &nbsp;ï¿½&nbsp; <button type="button" id="btnDeleteDuplicateClasses" class="btn small danger" style="vertical-align:middle;">Verificar y eliminar duplicadas</button>';
       } else {
         el.fichaSub.textContent = 'Selecciona un estudiante para abrir su ficha';
       }

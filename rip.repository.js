@@ -133,23 +133,64 @@
     return C().norm(text);
   }
 
+  // Tras la migración se activa en firebase.config.js:
+  //   window.RIP_REQUIRE_STUDENT_ID = true
+  // y ya no se permiten registros nuevos sin studentId (la resolución de
+  // pendientes queda en la herramienta administrativa / migraciones).
+  function requireStudentId() {
+    return window.RIP_REQUIRE_STUDENT_ID === true;
+  }
+
   // Intenta completar row.studentId con el ID canónico del directorio local
   // (rip students, sincronizado desde estudiantes-musicala). Nunca adivina:
-  // si hay más de un candidato deja el campo vacío para revisión.
+  // con homónimos detiene el guardado para revisión manual (si el modo
+  // estricto está activo) o deja el caso marcado en el propio registro.
   async function attachStudentId(row) {
     if (!row || row.studentId) return row;
     const id = identity();
-    if (!id) return row;
+    if (!id) {
+      if (requireStudentId()) {
+        throw new Error('No está disponible el resolutor de identidad y el modo estricto exige studentId.');
+      }
+      return row;
+    }
+    let resolved = null;
     try {
-      const resolved = await id.resolveStudentId({
+      resolved = await id.resolveStudentId({
         name: row.estudiante,
         aliases: [row.estudianteKey].filter(Boolean)
       });
-      if (resolved.studentId && !resolved.ambiguous) {
-        row.studentId = resolved.studentId;
-        row.studentIdSource = resolved.source;
+    } catch (_err) {
+      if (requireStudentId()) {
+        throw new Error('No se pudo resolver la identidad del estudiante (índice no disponible).');
       }
-    } catch (_err) { /* sin índice disponible: se conserva el flujo actual */ }
+      return row;
+    }
+
+    if (resolved?.studentId && !resolved.ambiguous) {
+      row.studentId = resolved.studentId;
+      row.studentIdSource = resolved.source;
+      return row;
+    }
+
+    if (resolved?.ambiguous) {
+      row.studentIdReview = 'ambiguous';
+      console.warn('[RIP] Homónimos sin studentId: revisar manualmente.', row.estudiante, resolved.candidates);
+      if (requireStudentId()) {
+        throw new Error(
+          `"${row.estudiante}" tiene ${resolved.candidates.length} homónimos y no se puede asignar studentId automáticamente. ` +
+          'Resuélvelo manualmente antes de guardar.'
+        );
+      }
+      return row;
+    }
+
+    if (requireStudentId()) {
+      throw new Error(
+        `No se encontró studentId para "${row.estudiante}". Inscribe primero al estudiante en el Formulario ` +
+        'o resuélvelo desde la herramienta administrativa.'
+      );
+    }
     return row;
   }
 
@@ -290,24 +331,53 @@
     };
   }
 
+  /*
+    Directorio de estudiantes: las escrituras nuevas van a students/{studentId}.
+    students/{nameKey} NO recibe más operaciones normales: si existe, solo se
+    marca una vez como alias (legacyAliasOf + officialStudentId).
+    Sin studentId resoluble, se conserva el flujo heredado por nombre.
+  */
   async function upsertStudent(env, row) {
-    if (!row.estudianteKey) return;
-    const { doc, setDoc } = env.fs;
+    if (!row.estudianteKey && !String(row.studentId || '').trim()) return;
+    const { doc, getDoc, setDoc } = env.fs;
     const canonical = String(row.studentId || '').trim();
-    const payload = {
-      name: row.estudiante,
-      nameKey: row.estudianteKey,
-      updatedAt: stamp(env.fs),
-      updatedBy: userEmail(env),
-      createdBy: userEmail(env)
-    };
-    // El doc por nombre se conserva por compatibilidad, pero queda anotado
-    // con su studentId oficial para que el resolutor pueda mapearlo.
+
     if (canonical) {
-      payload.officialStudentId = canonical;
-      payload.studentId = canonical;
+      await setDoc(doc(env.db, 'students', canonical), {
+        studentId: canonical,
+        officialStudentId: canonical,
+        name: row.estudiante,
+        estudiante: row.estudiante,
+        nameKey: row.estudianteKey,
+        estudianteKey: row.estudianteKey,
+        schemaVersion: 2,
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env),
+        createdBy: userEmail(env)
+      }, { merge: true });
+
+      if (row.estudianteKey && row.estudianteKey !== canonical) {
+        const legacyRef = doc(env.db, 'students', row.estudianteKey);
+        const legacySnap = await getDoc(legacyRef);
+        if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
+          await setDoc(legacyRef, {
+            officialStudentId: canonical,
+            studentId: canonical,
+            legacyAliasOf: canonical,
+            updatedAt: stamp(env.fs),
+            updatedBy: userEmail(env)
+          }, { merge: true });
+        }
+      }
+    } else {
+      await setDoc(doc(env.db, 'students', row.estudianteKey), {
+        name: row.estudiante,
+        nameKey: row.estudianteKey,
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env),
+        createdBy: userEmail(env)
+      }, { merge: true });
     }
-    await setDoc(doc(env.db, 'students', row.estudianteKey), payload, { merge: true });
     clearCache('students');
     identity()?.invalidate?.();
   }
@@ -337,59 +407,102 @@
     }
   }
 
+  /*
+    Recalcula al estudiante y escribe el resultado bajo su studentId canónico.
+    Flujo: registro.studentId → agrupar por studentId → programacion/{studentId}
+    → studentComputed/{studentId}. Cuando existe un ID canónico NUNCA se
+    escribe studentComputed/{estudianteKey}: el doc legado queda marcado como
+    alias (legacyAliasOf) para que syncStudentStatus no publique dos veces.
+  */
   async function recalculateStudent(studentId) {
     const env = await fb();
     const { collection, doc, getDocs, query, where, getDoc, setDoc } = env.fs;
     const inputKey = keyFor(studentId);
     if (!inputKey) return null;
 
-    // Se buscan filas tanto por la llave heredada (nombre normalizado) como
-    // por studentId canónico, y se unen sin duplicar. Así el recálculo sirve
-    // antes y después de la migración de IDs.
-    const [byKeySnap, byIdSnap] = await Promise.all([
-      getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', inputKey))),
-      getDocs(query(collection(env.db, 'registro'), where('studentId', '==', inputKey)))
-    ]);
-    const rowsById = new Map();
-    byKeySnap.docs.forEach(d => rowsById.set(d.id, { id: d.id, ...d.data() }));
-    byIdSnap.docs.forEach(d => rowsById.set(d.id, { id: d.id, ...d.data() }));
-    const records = Array.from(rowsById.values());
-
-    const scheduleSnap = await getDoc(doc(env.db, 'programacion', inputKey));
-    const computed = C().recalculateStudentFromRecords(inputKey, records, scheduleSnap.exists() ? scheduleSnap.data() : null);
-
-    // canonicalStudentId: lo usa syncStudentStatus (rip-musicala) para saber
-    // bajo qué ID publicar el estado hacia Bitácoras. Sin él, el doc queda
-    // pendiente en sync_logs hasta que la migración lo resuelva.
+    // Resolver canónico y nameKey del estudiante.
     let canonical = isCanonicalId(inputKey) ? inputKey : '';
-    if (!canonical) {
-      const rowWithId = records.find(r => String(r.studentId || '').trim());
+    let nameKey = canonical ? '' : inputKey;
+    if (canonical) {
       try {
-        const resolved = await identity()?.resolveStudentId({
-          studentId: rowWithId ? rowWithId.studentId : '',
-          name: computed.estudiante,
-          aliases: [inputKey]
-        });
+        const index = await identity()?.ensureIndex();
+        nameKey = index?.byCanonicalId?.get(canonical)?.nameKey || '';
+      } catch (_err) { /* sin índice */ }
+    } else {
+      try {
+        const resolved = await identity()?.resolveStudentId({ name: inputKey, aliases: [inputKey] });
         if (resolved?.studentId && !resolved.ambiguous) canonical = resolved.studentId;
-      } catch (_err) { /* índice no disponible: se publica sin canónico */ }
+      } catch (_err) { /* sin índice: se recalcula bajo la llave heredada */ }
     }
 
-    await setDoc(doc(env.db, 'studentComputed', inputKey), {
+    // Filas por AMBAS llaves (histórico + canónico), unidas sin duplicar.
+    const rowQueries = [];
+    if (nameKey) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', nameKey))));
+    if (canonical) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('studentId', '==', canonical))));
+    if (!rowQueries.length) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', inputKey))));
+    const rowSnaps = await Promise.all(rowQueries);
+    const rowsById = new Map();
+    rowSnaps.forEach(snap => snap.docs.forEach(d => rowsById.set(d.id, { id: d.id, ...d.data() })));
+    const records = Array.from(rowsById.values());
+
+    // Programación: el doc canónico manda; el legado solo como respaldo.
+    let schedule = null;
+    if (canonical) {
+      const snap = await getDoc(doc(env.db, 'programacion', canonical));
+      if (snap.exists()) schedule = snap.data();
+    }
+    if (!schedule && nameKey) {
+      const snap = await getDoc(doc(env.db, 'programacion', nameKey));
+      if (snap.exists()) schedule = snap.data();
+    }
+
+    const computedKey = canonical || inputKey;
+    const computed = C().recalculateStudentFromRecords(computedKey, records, schedule);
+    const displayNameKey = nameKey || C().norm(computed.estudiante || '') || (isCanonicalId(inputKey) ? '' : inputKey);
+
+    await setDoc(doc(env.db, 'studentComputed', computedKey), {
       ...computed,
-      estudianteKey: C().norm(computed.estudiante || '') || (isCanonicalId(inputKey) ? '' : inputKey),
-      canonicalStudentId: canonical,
+      studentId: computedKey,
+      canonicalStudentId: canonical || '',
+      estudianteKey: displayNameKey,
       schemaVersion: 2,
       areaInteresActualizadaAt: stamp(env.fs),
       updatedAt: stamp(env.fs)
     }, { merge: true });
+
+    // Doc histórico por nombre: se conserva, marcado como alias, para que
+    // syncStudentStatus lo ignore y no haya doble publicación.
+    if (canonical && displayNameKey && displayNameKey !== canonical) {
+      const legacyRef = doc(env.db, 'studentComputed', displayNameKey);
+      const legacySnap = await getDoc(legacyRef);
+      if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
+        await setDoc(legacyRef, {
+          legacyAliasOf: canonical,
+          canonicalStudentId: canonical,
+          updatedAt: stamp(env.fs)
+        }, { merge: true });
+      }
+    }
+
     clearCache('studentComputed');
     return computed;
   }
 
   async function recalculateAllStudents() {
     const students = await loadStudents();
+    // Un estudiante = una llave: canónico si existe (evita recalcular dos
+    // veces cuando conviven el doc canónico y el legado por nombre).
+    const keys = new Set();
+    for (const s of students) {
+      const canonical = String(
+        s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || ''
+      ).trim();
+      const key = canonical || s.nameKey || s.id;
+      if (key) keys.add(key);
+    }
     const out = [];
-    for (const s of students) out.push(await recalculateStudent(s.nameKey || s.id));
+    for (const key of keys) out.push(await recalculateStudent(key));
     await logAudit('studentComputed', 'all', 'recalculate', null, { count: out.length });
     return out;
   }
@@ -426,7 +539,7 @@
     clearCache('registro');
     await recalculateStudent(row.estudianteKey);
     await logAudit('registro', ref.id, 'create', null, row);
-    notifyFirestoreChange({ entity: 'registro', action: 'create', id: ref.id, studentId: row.estudianteKey });
+    notifyFirestoreChange({ entity: 'registro', action: 'create', id: ref.id, studentId: row.studentId || row.estudianteKey });
     return { id: ref.id, ...row };
   }
 
@@ -453,7 +566,7 @@
         await logAudit('registro', ref.id, 'create', null, row);
         saved.push({ id: ref.id, ...row });
         if (row.estudianteKey) studentIds.add(row.estudianteKey);
-        notifyFirestoreChange({ entity: 'registro', action: 'create', id: ref.id, studentId: row.estudianteKey });
+        notifyFirestoreChange({ entity: 'registro', action: 'create', id: ref.id, studentId: row.studentId || row.estudianteKey });
       } catch (err) {
         if (String(err?.message || err).includes('ya esta registrada')) {
           skipped.push(row);
@@ -674,7 +787,7 @@
     clearCache('registro');
     await recalculateStudent(row.estudianteKey);
     await logAudit('registro', recordId, 'update', before, row);
-    notifyFirestoreChange({ entity: 'registro', action: 'update', id: recordId, studentId: row.estudianteKey });
+    notifyFirestoreChange({ entity: 'registro', action: 'update', id: recordId, studentId: row.studentId || row.estudianteKey });
     return { id: recordId, ...row };
   }
 
@@ -688,7 +801,7 @@
     clearCache('registro');
     if (before?.estudianteKey) await recalculateStudent(before.estudianteKey);
     await logAudit('registro', recordId, 'delete', before, null);
-    notifyFirestoreChange({ entity: 'registro', action: 'delete', id: recordId, studentId: before?.estudianteKey || '' });
+    notifyFirestoreChange({ entity: 'registro', action: 'delete', id: recordId, studentId: before?.studentId || before?.estudianteKey || '' });
     return { ok: true };
   }
 
@@ -729,7 +842,7 @@
     const ref = await addDoc(collection(env.db, 'primeraVez'), row);
     clearCache('primeraVez');
     await logAudit('primeraVez', ref.id, 'create', null, row);
-    notifyFirestoreChange({ entity: 'primeraVez', action: 'create', id: ref.id, studentId: row.estudianteKey });
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'create', id: ref.id, studentId: row.studentId || row.estudianteKey });
     return { id: ref.id, ...row };
   }
 
@@ -747,7 +860,7 @@
     await setDoc(ref, row, { merge: true });
     clearCache('primeraVez');
     await logAudit('primeraVez', recordId, 'update', before, row);
-    notifyFirestoreChange({ entity: 'primeraVez', action: 'update', id: recordId, studentId: row.estudianteKey });
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'update', id: recordId, studentId: row.studentId || row.estudianteKey });
     return { id: recordId, ...row };
   }
 
@@ -760,30 +873,20 @@
     await deleteDoc(ref);
     clearCache('primeraVez');
     await logAudit('primeraVez', recordId, 'delete', before, null);
-    notifyFirestoreChange({ entity: 'primeraVez', action: 'delete', id: recordId, studentId: before?.estudianteKey || '' });
+    notifyFirestoreChange({ entity: 'primeraVez', action: 'delete', id: recordId, studentId: before?.studentId || before?.estudianteKey || '' });
     return { ok: true };
   }
 
   async function setStudentFromName(env, estudiante, canonicalId = '') {
     const calc = C();
     const key = calc.norm(estudiante);
-    if (!key) return;
-    const { doc, setDoc } = env.fs;
-    const payload = {
-      name: estudiante,
-      nameKey: key,
-      updatedAt: stamp(env.fs),
-      updatedBy: userEmail(env),
-      createdBy: userEmail(env)
-    };
-    const canonical = String(canonicalId || '').trim();
-    if (canonical) {
-      payload.officialStudentId = canonical;
-      payload.studentId = canonical;
-    }
-    await setDoc(doc(env.db, 'students', key), payload, { merge: true });
-    clearCache('students');
-    identity()?.invalidate?.();
+    if (!key && !String(canonicalId || '').trim()) return;
+    // Mismo contrato que upsertStudent: canónico primario, nameKey solo alias.
+    await upsertStudent(env, {
+      estudiante,
+      estudianteKey: key,
+      studentId: String(canonicalId || '').trim()
+    });
   }
 
   /*
@@ -850,9 +953,11 @@
   async function saveSchedule(studentId, fechas) {
     const env = await fb();
     const resolved = await resolveScheduleDoc(env, studentId);
-    const key = resolved.docId;
+    // Toda programación nueva va al doc CANÓNICO cuando el estudiante ya
+    // tiene studentId; el doc por nombre queda solo como alias de lectura.
+    const key = resolved.canonical || resolved.docId;
     if (!key) throw new Error('Falta estudiante para guardar programación.');
-    const { doc, setDoc } = env.fs;
+    const { doc, getDoc, setDoc } = env.fs;
     const cleanFechas = Array.isArray(fechas) ? fechas.map(x => String(x || '').trim()).filter(Boolean).sort() : [];
     const after = {
       studentId: resolved.canonical || key,
@@ -865,6 +970,22 @@
       updatedBy: userEmail(env)
     };
     await setDoc(doc(env.db, 'programacion', key), after, { merge: true });
+
+    // Si existía el doc legado por nombre, se marca como alias (no se borra)
+    // para que dashboards y syncs usen solo el canónico de aquí en adelante.
+    if (resolved.canonical && resolved.nameKey && resolved.nameKey !== resolved.canonical) {
+      const legacyRef = doc(env.db, 'programacion', resolved.nameKey);
+      const legacySnap = await getDoc(legacyRef);
+      if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== resolved.canonical) {
+        await setDoc(legacyRef, {
+          legacyAliasOf: resolved.canonical,
+          canonicalStudentId: resolved.canonical,
+          updatedAt: stamp(env.fs),
+          updatedBy: userEmail(env)
+        }, { merge: true });
+      }
+    }
+
     clearCache('programacion');
     await recalculateStudent(key);
     await logAudit('programacion', key, 'update', null, after);
@@ -879,10 +1000,17 @@
     return saveSchedule(studentId, merged);
   }
 
-  async function mergeStudents(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName) {
+  /*
+    Plan de fusión compartido por la previsualización y la fusión real.
+    Reglas duras:
+    - un studentId canónico jamás se normaliza ni se confunde con nameKey;
+    - dos identidades canónicas DISTINTAS solo se fusionan con confirmación
+      explícita (options.confirmDistinctCanonical);
+    - nunca se fusiona por nombre cuando hay homónimos sin resolver.
+  */
+  async function buildMergePlan(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName) {
     const env = await fb();
     const calc = C();
-    // keyFor conserva los studentId canónicos tal cual (no aplica norm()).
     const sourceKey = keyFor(sourceStudentIdOrName);
     const targetKey = keyFor(targetStudentIdOrName);
     const targetName = String(targetDisplayName || targetStudentIdOrName || '').trim();
@@ -890,40 +1018,123 @@
     if (sourceKey === targetKey) throw new Error('El contacto origen y destino son el mismo.');
     if (!targetName) throw new Error('Falta el nombre del contacto que queda.');
 
-    // studentId canónico del contacto que queda: las filas fusionadas deben
-    // apuntar a ESTE id (nunca conservar el del contacto origen).
-    let targetCanonical = isCanonicalId(targetKey) ? targetKey : '';
-    if (!targetCanonical) {
+    const resolveCanonical = async (key, name) => {
+      if (isCanonicalId(key)) return key;
       try {
-        const resolved = await identity()?.resolveStudentId({ name: targetName, aliases: [targetKey] });
-        if (resolved?.studentId && !resolved.ambiguous) targetCanonical = resolved.studentId;
-      } catch (_err) { /* sin índice */ }
+        const resolved = await identity()?.resolveStudentId({ name: name || key, aliases: [key] });
+        if (resolved?.ambiguous) return { ambiguous: true, candidates: resolved.candidates };
+        return resolved?.studentId || '';
+      } catch (_err) { return ''; }
+    };
+
+    const targetResolved = await resolveCanonical(targetKey, targetName);
+    if (targetResolved && targetResolved.ambiguous) {
+      throw new Error('El contacto destino tiene homónimos sin resolver: asigna primero su studentId.');
+    }
+    const sourceResolved = await resolveCanonical(sourceKey, String(sourceStudentIdOrName || ''));
+    const targetCanonical = typeof targetResolved === 'string' ? targetResolved : '';
+    const sourceCanonical = typeof sourceResolved === 'string' ? sourceResolved : '';
+
+    const warnings = [];
+    if (sourceCanonical && targetCanonical && sourceCanonical !== targetCanonical) {
+      warnings.push(
+        'ATENCIÓN: origen y destino son DOS identidades canónicas distintas. ' +
+        'Fusionar reemplaza el studentId del origen por el del destino y requiere confirmación explícita.'
+      );
+    }
+    if (!targetCanonical) {
+      warnings.push('El destino aún no tiene studentId canónico: la fusión quedará por nombre (transición).');
+    }
+
+    const { collection, getDocs, getDoc, doc, query, where } = env.fs;
+    const registroSnaps = await Promise.all([
+      getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', sourceKey))),
+      sourceCanonical
+        ? getDocs(query(collection(env.db, 'registro'), where('studentId', '==', sourceCanonical)))
+        : Promise.resolve({ docs: [] })
+    ]);
+    const registroDocs = new Map();
+    registroSnaps.forEach(snap => (snap.docs || []).forEach(d => registroDocs.set(d.id, d)));
+
+    const primeraSnap = await getDocs(query(collection(env.db, 'primeraVez'), where('estudianteKey', '==', sourceKey)));
+    const sourceScheduleSnap = await getDoc(doc(env.db, 'programacion', sourceCanonical || sourceKey));
+    const sourceScheduleLegacySnap = sourceCanonical && sourceCanonical !== sourceKey
+      ? await getDoc(doc(env.db, 'programacion', sourceKey))
+      : null;
+
+    return {
+      env, calc,
+      sourceKey, targetKey, targetName,
+      sourceCanonical, targetCanonical,
+      warnings,
+      registroDocs,
+      primeraDocs: primeraSnap.docs,
+      sourceScheduleSnap: sourceScheduleSnap.exists() ? sourceScheduleSnap : (sourceScheduleLegacySnap?.exists() ? sourceScheduleLegacySnap : null),
+      counts: {
+        registro: registroDocs.size,
+        primeraVez: primeraSnap.size,
+        programacion: (sourceScheduleSnap.exists() || sourceScheduleLegacySnap?.exists()) ? 1 : 0
+      }
+    };
+  }
+
+  // Previsualización sin escrituras (dry-run de la fusión) para confirmar
+  // en la UI antes de ejecutar.
+  async function previewMergeStudents(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName) {
+    const plan = await buildMergePlan(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName);
+    return {
+      sourceKey: plan.sourceKey,
+      targetKey: plan.targetKey,
+      targetName: plan.targetName,
+      sourceCanonical: plan.sourceCanonical,
+      targetCanonical: plan.targetCanonical,
+      counts: plan.counts,
+      warnings: plan.warnings,
+      requiresExplicitConfirmation: Boolean(
+        plan.sourceCanonical && plan.targetCanonical && plan.sourceCanonical !== plan.targetCanonical
+      )
+    };
+  }
+
+  async function mergeStudents(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName, options = {}) {
+    const plan = await buildMergePlan(sourceStudentIdOrName, targetStudentIdOrName, targetDisplayName);
+    const { env, calc, sourceKey, targetKey, targetName, sourceCanonical, targetCanonical } = plan;
+
+    // Guarda: dos identidades canónicas distintas nunca se fusionan sin
+    // confirmación explícita del operador.
+    if (sourceCanonical && targetCanonical && sourceCanonical !== targetCanonical && options.confirmDistinctCanonical !== true) {
+      throw new Error(
+        'La fusión une dos identidades canónicas distintas. Revisa la previsualización y ' +
+        'vuelve a ejecutar con confirmación explícita (confirmDistinctCanonical).'
+      );
     }
 
     const { collection, doc, getDoc, getDocs, query, setDoc, deleteDoc, where } = env.fs;
-    const summary = { registro: 0, primeraVez: 0, clientesB2C: 0, programacion: 0, studentsDeleted: 0 };
+    const summary = { registro: 0, primeraVez: 0, clientesB2C: 0, programacion: 0, studentsDeleted: 0, studentsMarked: 0 };
 
-    const targetStudentRef = doc(env.db, 'students', targetKey);
+    // El doc destino se escribe bajo su llave CANÓNICA cuando existe.
+    const targetDocKey = targetCanonical || targetKey;
+    const targetNameKey = isCanonicalId(targetKey) ? calc.norm(targetName) : targetKey;
+    const targetStudentRef = doc(env.db, 'students', targetDocKey);
     const targetStudentSnap = await getDoc(targetStudentRef);
     const targetStudentBefore = targetStudentSnap.exists() ? targetStudentSnap.data() : null;
     await setDoc(targetStudentRef, {
       ...(targetStudentBefore || {}),
       name: targetName,
-      nameKey: isCanonicalId(targetKey)
-        ? (targetStudentBefore?.nameKey || calc.norm(targetName))
-        : targetKey,
+      nameKey: targetStudentBefore?.nameKey || targetNameKey,
       ...(targetCanonical ? { studentId: targetCanonical, officialStudentId: targetCanonical } : {}),
       mergedFrom: Array.from(new Set([...(targetStudentBefore?.mergedFrom || []), sourceKey])),
       updatedAt: stamp(env.fs),
       updatedBy: userEmail(env)
     }, { merge: true });
 
-    const registroSnap = await getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', sourceKey)));
-    for (const rowDoc of registroSnap.docs) {
+    // Filas del origen por llave heredada Y por studentId (sin duplicar).
+    for (const rowDoc of plan.registroDocs.values()) {
       const before = rowDoc.data();
-      const after = normalizeRegistro({ ...before, estudiante: targetName, estudianteKey: targetKey });
+      const after = normalizeRegistro({ ...before, estudiante: targetName, estudianteKey: targetNameKey });
       after.studentId = targetCanonical || '';
       after.mergedFromStudentKey = sourceKey;
+      if (sourceCanonical) after.mergedFromStudentId = sourceCanonical;
       after.mergedAt = stamp(env.fs);
       after.updatedAt = stamp(env.fs);
       after.updatedBy = userEmail(env);
@@ -932,13 +1143,12 @@
       summary.registro += 1;
     }
 
-    const primeraSnap = await getDocs(query(collection(env.db, 'primeraVez'), where('estudianteKey', '==', sourceKey)));
-    for (const rowDoc of primeraSnap.docs) {
+    for (const rowDoc of plan.primeraDocs) {
       const before = rowDoc.data();
       const after = {
         ...before,
         estudiante: targetName,
-        estudianteKey: targetKey,
+        estudianteKey: targetNameKey,
         studentId: targetCanonical || '',
         mergedFromStudentKey: sourceKey,
         mergedAt: stamp(env.fs),
@@ -974,11 +1184,11 @@
       summary.clientesB2C += 1;
     }
 
-    const sourceScheduleRef = doc(env.db, 'programacion', sourceKey);
-    const targetScheduleRef = doc(env.db, 'programacion', targetKey);
-    const [sourceScheduleSnap, targetScheduleSnap] = await Promise.all([getDoc(sourceScheduleRef), getDoc(targetScheduleRef)]);
-    if (sourceScheduleSnap.exists()) {
-      const sourceSchedule = sourceScheduleSnap.data();
+    // Programación: destino canónico; el origen se marca (no se borra aún).
+    if (plan.sourceScheduleSnap) {
+      const sourceSchedule = plan.sourceScheduleSnap.data();
+      const targetScheduleRef = doc(env.db, 'programacion', targetDocKey);
+      const targetScheduleSnap = await getDoc(targetScheduleRef);
       const targetSchedule = targetScheduleSnap.exists() ? targetScheduleSnap.data() : {};
       const fechas = Array.from(new Set([
         ...(Array.isArray(targetSchedule.fechas) ? targetSchedule.fechas : []),
@@ -986,9 +1196,10 @@
       ].map(x => String(x || '').trim()).filter(Boolean))).sort();
       const after = {
         ...targetSchedule,
-        studentId: targetKey,
+        studentId: targetCanonical || targetDocKey,
+        canonicalStudentId: targetCanonical || '',
         estudiante: targetName,
-        estudianteKey: targetKey,
+        estudianteKey: targetNameKey,
         fechas,
         maxClasses: Math.max(Number(targetSchedule.maxClasses) || 0, Number(sourceSchedule.maxClasses) || 0, fechas.length || 24),
         mergedFrom: Array.from(new Set([...(targetSchedule.mergedFrom || []), sourceKey])),
@@ -996,27 +1207,60 @@
         updatedBy: userEmail(env)
       };
       await setDoc(targetScheduleRef, after, { merge: true });
-      await deleteDoc(sourceScheduleRef);
-      await logAudit('programacion', targetKey, 'merge-student', { source: sourceSchedule, target: targetSchedule }, after);
+      await logAudit('programacion', targetDocKey, 'merge-student', { source: sourceSchedule, target: targetSchedule }, after);
       summary.programacion = 1;
     }
 
-    const sourceStudentRef = doc(env.db, 'students', sourceKey);
-    const sourceStudentSnap = await getDoc(sourceStudentRef);
-    if (sourceStudentSnap.exists()) {
-      await deleteDoc(sourceStudentRef);
-      await logAudit('students', sourceKey, 'merge-delete', sourceStudentSnap.data(), { mergedInto: targetKey });
-      summary.studentsDeleted = 1;
-    }
-    const sourceComputedRef = doc(env.db, 'studentComputed', sourceKey);
-    const sourceComputedSnap = await getDoc(sourceComputedRef);
-    if (sourceComputedSnap.exists()) await deleteDoc(sourceComputedRef);
+    /*
+      LIMPIEZA AL FINAL, después de que todas las escrituras relacionadas
+      terminaron. Un doc de origen CANÓNICO nunca se elimina: queda marcado
+      como fusionado (mergedInto/legacyAliasOf) para conservar la traza.
+      Solo los docs por nombre (legado) se eliminan como antes.
+    */
+    const markMerged = async (collectionName, refKey) => {
+      await setDoc(doc(env.db, collectionName, refKey), {
+        mergedInto: targetDocKey,
+        legacyAliasOf: targetCanonical || targetDocKey,
+        mergedAt: stamp(env.fs),
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env)
+      }, { merge: true });
+    };
 
-    await recalculateStudent(targetKey);
+    if (plan.sourceScheduleSnap) {
+      const scheduleDocId = plan.sourceScheduleSnap.id;
+      if (isCanonicalId(scheduleDocId)) await markMerged('programacion', scheduleDocId);
+      else await deleteDoc(doc(env.db, 'programacion', scheduleDocId));
+    }
+
+    for (const key of new Set([sourceKey, sourceCanonical].filter(Boolean))) {
+      const sourceStudentRef = doc(env.db, 'students', key);
+      const sourceStudentSnap = await getDoc(sourceStudentRef);
+      if (sourceStudentSnap.exists()) {
+        if (isCanonicalId(key)) {
+          await markMerged('students', key);
+          await logAudit('students', key, 'merge-mark', sourceStudentSnap.data(), { mergedInto: targetDocKey });
+          summary.studentsMarked += 1;
+        } else {
+          await deleteDoc(sourceStudentRef);
+          await logAudit('students', key, 'merge-delete', sourceStudentSnap.data(), { mergedInto: targetDocKey });
+          summary.studentsDeleted += 1;
+        }
+      }
+      const sourceComputedRef = doc(env.db, 'studentComputed', key);
+      const sourceComputedSnap = await getDoc(sourceComputedRef);
+      if (sourceComputedSnap.exists()) {
+        if (isCanonicalId(key)) await markMerged('studentComputed', key);
+        else await deleteDoc(sourceComputedRef);
+      }
+    }
+
+    await recalculateStudent(targetDocKey);
     clearCache();
-    await logAudit('students', targetKey, 'merge-student', { sourceKey }, { targetKey, targetName, summary });
-    notifyFirestoreChange({ entity: 'students', action: 'merge', id: targetKey, studentId: targetKey, sourceStudentId: sourceKey });
-    return { ok: true, sourceKey, targetKey, targetName, summary };
+    identity()?.invalidate?.();
+    await logAudit('students', targetDocKey, 'merge-student', { sourceKey, sourceCanonical }, { targetKey: targetDocKey, targetName, summary });
+    notifyFirestoreChange({ entity: 'students', action: 'merge', id: targetDocKey, studentId: targetCanonical || targetDocKey, sourceStudentId: sourceCanonical || sourceKey });
+    return { ok: true, sourceKey, targetKey: targetDocKey, targetName, summary, warnings: plan.warnings };
   }
 
   window.RIPRepository = {
@@ -1025,7 +1269,7 @@
     addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow,
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,
-    mergeStudents,
+    mergeStudents, previewMergeStudents,
     loadStudentSchedule, saveSchedule, saveScheduleFrom,
     recalculateStudent, recalculateAllStudents, logAudit,
     normalizeRegistro, getDefaultServices, mergeServiceMeta, clearCache

@@ -23,6 +23,47 @@
     return Number.isFinite(n) ? n : 0;
   }
 
+  /* =========================================================================
+    LLAVE ÚNICA DE AGRUPACIÓN POR ESTUDIANTE (contrato studentId).
+
+    Orden: groupKey pre-anotado por buildFirebasePack → studentId canónico →
+    canonicalStudentId → alias resuelto (aliasMap nameKey→canónico) →
+    estudianteKey → nombre normalizado (último recurso histórico).
+
+    Toda escritura nueva debe traer studentId; estudianteKey queda solo como
+    fallback de registros históricos. Usar SIEMPRE estos helpers en vez de
+    `estudianteKey || norm(estudiante)`.
+  ========================================================================= */
+
+  function getStudentGroupingKey(record, aliasMap) {
+    if (!record) return '';
+    const annotated = String(record.groupKey || '').trim();
+    if (annotated) return annotated;
+    const explicit = String(record.studentId || record.canonicalStudentId || '').trim();
+    if (explicit) return explicit;
+    const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
+    if (aliasMap && typeof aliasMap.get === 'function') {
+      const mapped = String(aliasMap.get(nameKey) || '').trim();
+      if (mapped) return mapped;
+    }
+    return nameKey;
+  }
+
+  // ¿Esta fila/doc pertenece al estudiante identificado por `key`?
+  // Acepta tanto studentId canónico como llaves de nombre heredadas.
+  function matchesStudentKey(record, key) {
+    if (!record) return false;
+    const target = String(key || '').trim();
+    if (!target) return false;
+    if (String(record.groupKey || '').trim() === target) return true;
+    if (String(record.studentId || '').trim() === target) return true;
+    if (String(record.canonicalStudentId || '').trim() === target) return true;
+    const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
+    if (nameKey === target) return true;
+    // Compatibilidad: llaves de nombre pueden llegar sin normalizar.
+    return norm(record.estudiante || record.name) === norm(target) && !/[A-Z]/.test(target);
+  }
+
   function parseDate(value) {
     const raw = String(value || '').trim();
     if (!raw) return null;
@@ -629,7 +670,7 @@
   function recalculateAllStudents(records, schedules) {
     const byStudent = new Map();
     for (const r of records || []) {
-      const k = r.estudianteKey || norm(r.estudiante);
+      const k = getStudentGroupingKey(r);
       if (!k) continue;
       if (!byStudent.has(k)) byStudent.set(k, []);
       byStudent.get(k).push(r);
@@ -639,6 +680,7 @@
 
   window.RIPCalculations = {
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
+    getStudentGroupingKey, matchesStudentKey,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,
     markDuplicateClasses, markMusigymSubscriptions, isMusigymRow, isMusigymSubscription,

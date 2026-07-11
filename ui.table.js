@@ -39,9 +39,15 @@
    * Si se pasa un estudianteKey, filtra solo sus filas.
    */
   function getServiciosUnique(registro, estudianteKey) {
+    const calc = window.RIPCalculations;
     const m = new Map();
     for (const r of registro) {
-      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
+      if (estudianteKey) {
+        const belongs = calc?.matchesStudentKey
+          ? calc.matchesStudentKey(r, estudianteKey)
+          : r.estudianteKey === estudianteKey;
+        if (!belongs) continue;
+      }
       if (!r.servicioKey) continue;
       if (!m.has(r.servicioKey)) m.set(r.servicioKey, r.servicio || '');
     }
@@ -55,9 +61,15 @@
    * Si se pasa un estudianteKey, filtra solo sus filas.
    */
   function getProfesoresUnique(registro, estudianteKey) {
+    const calc = window.RIPCalculations;
     const m = new Map();
     for (const r of registro) {
-      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
+      if (estudianteKey) {
+        const belongs = calc?.matchesStudentKey
+          ? calc.matchesStudentKey(r, estudianteKey)
+          : r.estudianteKey === estudianteKey;
+        if (!belongs) continue;
+      }
       const k = norm(r.profesor);
       if (!k) continue;
       if (!m.has(k)) m.set(k, r.profesor || '');
@@ -95,7 +107,7 @@
 
   function studentNameScore(value) {
     const text = String(value || '').trim();
-    const upper = (text.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length;
+    const upper = (text.match(/[A-Zï¿½ï¿½ï¿½ï¿½ï¿½ï¿½]/g) || []).length;
     const words = norm(text).split(' ').filter(Boolean).length;
     return text.length + words * 10 + upper * 2;
   }
@@ -208,7 +220,7 @@
     const entry = matches.length === 1 ? matches[0] : null;
     if (!entry) {
       if (matches.length > 1) {
-        setStatus(ctx, `Encontré ${matches.length} coincidencias. Escoge una de la lista.`);
+        setStatus(ctx, `Encontrï¿½ ${matches.length} coincidencias. Escoge una de la lista.`);
         renderStudentDatalist(ctx, pool, typedName);
         return false;
       }

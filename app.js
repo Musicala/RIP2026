@@ -997,8 +997,16 @@
   const PRIMERA_VEZ_MOTIVOS = ['Enfermedad', 'Descuido', 'Olvido', 'Familiar', 'Transporte', 'Otro'];
 
   function getPrimeraVezForStudent(studentNameOrKey) {
-    const key = norm(studentNameOrKey);
-    if (!key) return null;
+    // Acepta studentId canónico (no se normaliza) o nombre/llave heredada.
+    const raw = String(studentNameOrKey || '').trim();
+    if (!raw) return null;
+    const calc = window.RIPCalculations;
+    if (calc?.matchesStudentKey) {
+      return (state.primeraVez || []).find(row =>
+        calc.matchesStudentKey(row, raw) || calc.matchesStudentKey(row, norm(raw))
+      ) || null;
+    }
+    const key = norm(raw);
     return (state.primeraVez || []).find(row => norm(row.estudianteKey || row.estudiante) === key || norm(row.estudiante) === key) || null;
   }
 
@@ -1504,9 +1512,10 @@
   }
 
   function buildTrialContinuityGroups() {
+    const calc = window.RIPCalculations;
     const byStudent = new Map();
     for (const row of state.registro || []) {
-      const key = row.estudianteKey || norm(row.estudiante);
+      const key = row.groupKey || (calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(row) : (row.estudianteKey || norm(row.estudiante)));
       if (!key) continue;
       if (!byStudent.has(key)) byStudent.set(key, []);
       byStudent.get(key).push(row);
@@ -1687,7 +1696,7 @@
     }
 
     ctx.el.trialListBody.innerHTML = sorted.map(r => {
-      const key = r.estudianteKey || norm(r.estudiante);
+      const key = r.groupKey || (window.RIPCalculations?.getStudentGroupingKey ? window.RIPCalculations.getStudentGroupingKey(r) : (r.estudianteKey || norm(r.estudiante)));
       const converted = convertedKeys.has(key);
       const esCortesia = /cortesia|gratis|obsequio/i.test(`${r.servicio || ''} ${r.comentario || ''} ${r.clasif || ''}`);
       const tipoLabel = esCortesia
