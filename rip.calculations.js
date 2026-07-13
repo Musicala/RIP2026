@@ -23,6 +23,47 @@
     return Number.isFinite(n) ? n : 0;
   }
 
+  /* =========================================================================
+    LLAVE ÚNICA DE AGRUPACIÓN POR ESTUDIANTE (contrato studentId).
+
+    Orden: groupKey pre-anotado por buildFirebasePack → studentId canónico →
+    canonicalStudentId → alias resuelto (aliasMap nameKey→canónico) →
+    estudianteKey → nombre normalizado (último recurso histórico).
+
+    Toda escritura nueva debe traer studentId; estudianteKey queda solo como
+    fallback de registros históricos. Usar SIEMPRE estos helpers en vez de
+    `estudianteKey || norm(estudiante)`.
+  ========================================================================= */
+
+  function getStudentGroupingKey(record, aliasMap) {
+    if (!record) return '';
+    const annotated = String(record.groupKey || '').trim();
+    if (annotated) return annotated;
+    const explicit = String(record.studentId || record.canonicalStudentId || '').trim();
+    if (explicit) return explicit;
+    const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
+    if (aliasMap && typeof aliasMap.get === 'function') {
+      const mapped = String(aliasMap.get(nameKey) || '').trim();
+      if (mapped) return mapped;
+    }
+    return nameKey;
+  }
+
+  // ¿Esta fila/doc pertenece al estudiante identificado por `key`?
+  // Acepta tanto studentId canónico como llaves de nombre heredadas.
+  function matchesStudentKey(record, key) {
+    if (!record) return false;
+    const target = String(key || '').trim();
+    if (!target) return false;
+    if (String(record.groupKey || '').trim() === target) return true;
+    if (String(record.studentId || '').trim() === target) return true;
+    if (String(record.canonicalStudentId || '').trim() === target) return true;
+    const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
+    if (nameKey === target) return true;
+    // Compatibilidad: llaves de nombre pueden llegar sin normalizar.
+    return norm(record.estudiante || record.name) === norm(target) && !/[A-Z]/.test(target);
+  }
+
   function parseDate(value) {
     const raw = String(value || '').trim();
     if (!raw) return null;
@@ -52,6 +93,205 @@
     if (!d) return '';
     const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
     return local.toISOString().slice(0, 10);
+  }
+
+  const INTEREST_DICTIONARY = {
+    musica: {
+      curso: 'Música',
+      target: 'instrumentos',
+      values: [
+        'Guitarra acústica o eléctrica',
+        'Producción musical',
+        'Teoría musical',
+        'Guitarra acústica',
+        'Guitarra eléctrica',
+        'Violonchelo',
+        'Percusión',
+        'Saxofón',
+        'Batería',
+        'Guitarra',
+        'Teclado',
+        'Ukelele',
+        'Violín',
+        'Piano',
+        'Canto',
+        'Cello',
+        'Viola',
+        'Bajo',
+        'Flauta'
+      ],
+      aliases: [
+        { match: 'MS: Musicalitos - Exploración Músical', value: 'Iniciación musical' },
+        { match: 'MS: Musicalitos - Exploración Musical', value: 'Iniciación musical' }
+      ]
+    },
+    danza: {
+      curso: 'Danza',
+      target: 'estilos',
+      values: [
+        'Danza contemporánea',
+        'Danza folclórica',
+        'Ritmos latinos',
+        'Danza urbana',
+        'Hip hop',
+        'K-pop',
+        'Ballet',
+        'Urbano',
+        'Jazz'
+      ],
+      aliases: [
+        { match: 'MS: Musicalitos - Exploración corporal', value: 'Musicalitos danza' }
+      ]
+    },
+    artes: {
+      curso: 'Artes manuales',
+      target: 'enfasis',
+      values: [
+        'Artes plásticas',
+        'Artes visuales',
+        'Artes manuales',
+        'Manualidades',
+        'Ilustración',
+        'Plastilina',
+        'Cerámica',
+        'Escultura',
+        'Acuarela',
+        'Pintura',
+        'Dibujo'
+      ],
+      aliases: [
+        { match: 'MS: Musicalitos exploración artística', value: 'Exploración en artes plásticas' },
+        { match: 'MS: Musicalitos - exploración artística', value: 'Exploración en artes plásticas' }
+      ]
+    }
+  };
+
+  const INTEREST_LOOKUP = Object.values(INTEREST_DICTIONARY).flatMap(group =>
+    [
+      ...group.values.map(value => ({ match: value, value })),
+      ...(group.aliases || [])
+    ].map(item => ({
+      key: norm(item.match),
+      value: item.value,
+      curso: group.curso,
+      target: group.target
+    }))
+  ).sort((a, b) => b.key.length - a.key.length);
+
+  function cleanDisplayValue(value) {
+    return String(value || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/\s+,/g, ',');
+  }
+
+  function uniquePush(list, seen, value) {
+    const clean = cleanDisplayValue(value);
+    const key = norm(clean);
+    if (!clean || seen.has(key)) return;
+    seen.add(key);
+    list.push(clean);
+  }
+
+  function makeInterestResult(source) {
+    const cursos = source.cursos || [];
+    const instrumentos = source.instrumentos || [];
+    const estilos = source.estilos || [];
+    const enfasis = source.enfasis || [];
+    return {
+      cursos,
+      instrumentos,
+      estilos,
+      enfasis,
+      cursoDisplay: cursos.join(', '),
+      instrumentoDisplay: instrumentos.join(', '),
+      estiloDisplay: estilos.join(', '),
+      enfasisDisplay: enfasis.join(', '),
+      fuenteAreaInteres: 'RIP'
+    };
+  }
+
+  function collectInterestTexts(row) {
+    const fields = [
+      row?.curso, row?.area, row?.areaInteres, row?.categoria,
+      row?.instrumento, row?.estilo, row?.enfasis,
+      row?.servicio, row?.clasif, row?.clasifPago,
+      row?.comentario, row?.programa
+    ];
+    if (Array.isArray(row?.servicios)) fields.push(...row.servicios);
+    if (Array.isArray(row?.cursos)) fields.push(...row.cursos);
+    return fields.map(cleanDisplayValue).filter(Boolean);
+  }
+
+  function getRecordDateTs(row) {
+    const ts = Number(row?.fechaTs) || 0;
+    if (ts) return ts;
+    const parsed = parseDate(row?.fecha || row?.fechaRaw);
+    return parsed ? parsed.getTime() : 0;
+  }
+
+  function isActiveInterestRow(row, today) {
+    if (!row || row.duplicateReview) return false;
+    if (norm(row.tipo) !== 'clase') return false;
+    const ts = getRecordDateTs(row);
+    if (!ts) return false;
+    const base = today instanceof Date ? today : new Date();
+    const todayStart = new Date(base.getFullYear(), base.getMonth(), base.getDate()).getTime();
+    const d = new Date(ts);
+    const rowStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days = Math.floor((todayStart - rowStart) / 86400000);
+    return days >= 0 && days <= 30;
+  }
+
+  function getInterestSources(records, schedule, opts = {}) {
+    const rows = Array.isArray(records) ? records : [];
+    if (opts.activeOnly === false) {
+      return [
+        ...rows,
+        ...(schedule ? [schedule] : [])
+      ];
+    }
+    return rows.filter(row => isActiveInterestRow(row, opts.today));
+  }
+
+  function calculateStudentInterest(records, schedule, opts = {}) {
+    const out = {
+      cursos: [],
+      instrumentos: [],
+      estilos: [],
+      enfasis: []
+    };
+    const seen = {
+      cursos: new Set(),
+      instrumentos: new Set(),
+      estilos: new Set(),
+      enfasis: new Set()
+    };
+    const sources = getInterestSources(records, schedule, opts);
+
+    for (const source of sources) {
+      const texts = collectInterestTexts(source);
+      for (const text of texts) {
+        const textKey = norm(text);
+        if (!textKey) continue;
+        const matchedKeysByTarget = {
+          instrumentos: [],
+          estilos: [],
+          enfasis: []
+        };
+        for (const item of INTEREST_LOOKUP) {
+          const exact = textKey === item.key;
+          const contains = new RegExp(`(^|\\W)${item.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\W|$)`).test(textKey);
+          if (!exact && !contains) continue;
+          if ((matchedKeysByTarget[item.target] || []).some(key => key.includes(item.key))) continue;
+          uniquePush(out.cursos, seen.cursos, item.curso);
+          uniquePush(out[item.target], seen[item.target], item.value);
+          matchedKeysByTarget[item.target].push(item.key);
+        }
+      }
+    }
+
+    return makeInterestResult(out);
   }
 
   function computeMovimiento(row) {
@@ -408,6 +648,7 @@
   function recalculateStudentFromRecords(studentId, records, schedule) {
     const ficha = calculateStudentFicha(records);
     const prog = calculateProgramacionStatus(schedule?.fechas || []);
+    const interest = calculateStudentInterest(records, schedule);
     return {
       studentId,
       estudiante: records?.[0]?.estudiante || schedule?.estudiante || '',
@@ -421,6 +662,7 @@
       nextClassDate: prog.nextClassDate,
       futureClassCount: prog.futureCount,
       pivotCategorias: [],
+      ...interest,
       updatedAt: new Date()
     };
   }
@@ -428,7 +670,7 @@
   function recalculateAllStudents(records, schedules) {
     const byStudent = new Map();
     for (const r of records || []) {
-      const k = r.estudianteKey || norm(r.estudiante);
+      const k = getStudentGroupingKey(r);
       if (!k) continue;
       if (!byStudent.has(k)) byStudent.set(k, []);
       byStudent.get(k).push(r);
@@ -438,11 +680,12 @@
 
   window.RIPCalculations = {
     norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
+    getStudentGroupingKey, matchesStudentKey,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,
     markDuplicateClasses, markMusigymSubscriptions, isMusigymRow, isMusigymSubscription,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
-    getStudentClassLimit, calculateProgramacionStatus, recalculateStudentFromRecords,
+    getStudentClassLimit, calculateProgramacionStatus, isActiveInterestRow, calculateStudentInterest, recalculateStudentFromRecords,
     recalculateAllStudents
   };
 })();

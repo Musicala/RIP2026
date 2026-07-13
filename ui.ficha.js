@@ -28,11 +28,7 @@
   // =========================
   // Config años / TSV / columnas
   // =========================
-  const TSV_URLS = {
-    "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-    "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-    "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-  };
+  const TSV_URLS = {};
 
   const COLMAP = {
     "2023": { fecha: 1, nombre: 2, servicio: 4, hora: 7, pago: null, profesor: null },
@@ -167,13 +163,18 @@
     const name = state.currentStudentName || '';
     if (!name) return null;
 
+    const fresh = getSearchEntryByName(state, name);
+    if (fresh) {
+      state.currentSearchEntry = fresh;
+      return fresh;
+    }
+
     if (state.currentSearchEntry && norm(state.currentSearchEntry.name) === norm(name)) {
       return state.currentSearchEntry;
     }
 
-    return getSearchEntryByName(state, name);
+    return null;
   }
-
   function getAvailableYearsForEntry(entry, state) {
     const set = new Set();
 
@@ -670,7 +671,7 @@
     const fallback = String(r?.servicio || '').trim();
 
     if (isPagoRow(r) && fromPago) return fromPago;
-    return fromClase || fromPago || fallback || 'Sin categor�a';
+    return fromClase || fromPago || fallback || 'Sin categoría';
   }
 
   function isTrialCPLabel(label) {
@@ -775,10 +776,14 @@
   }
 
   function getPrimeraVezForStudent(ctx, student) {
-    const key = norm(student?.key || student?.name || '');
+    // student.key puede ser un studentId canónico: no se normaliza.
+    const key = String(student?.key || '').trim() || norm(student?.name || '');
     if (!key) return null;
+    const calc = window.RIPCalculations;
     return (ctx?.state?.primeraVez || [])
-      .filter(row => norm(row?.estudianteKey || row?.estudiante) === key || norm(row?.estudiante) === key)
+      .filter(row => (calc?.matchesStudentKey
+        ? calc.matchesStudentKey(row, key) || (student?.name && calc.matchesStudentKey(row, norm(student.name)))
+        : norm(row?.estudianteKey || row?.estudiante) === norm(key)))
       .sort((a, b) => (Number(b?.fechaClaseTs) || 0) - (Number(a?.fechaClaseTs) || 0))[0] || null;
   }
 
@@ -788,6 +793,70 @@
     const motivo = record.motivo || 'Sin motivo';
     return `${fecha} · ${motivo}`;
   }
+
+  function getActiveInterestRows(rows) {
+    const calc = window.RIPCalculations;
+    return (rows || []).filter(row => calc?.isActiveInterestRow ? calc.isActiveInterestRow(row) : norm(row?.tipo) === 'clase');
+  }
+
+  function uniqueServicesFromRows(rows) {
+    const seen = new Set();
+    const out = [];
+    for (const row of getActiveInterestRows(rows || [])) {
+      const name = String(row?.servicio || '').trim().replace(/\s+/g, ' ');
+      const key = norm(name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(name);
+    }
+    return out.sort((a, b) => a.localeCompare(b, 'es'));
+  }
+
+  function renderInterestValue(value) {
+    const text = String(value || '').trim();
+    return text ? escapeHTML(text) : '<span class="muted">?</span>';
+  }
+
+  function renderServiceChips(services) {
+    const list = Array.isArray(services) ? services : [];
+    if (!list.length) return '<span class="muted">Sin servicios registrados</span>';
+    return list.map(service => `<span class="ficha-service-chip">${escapeHTML(service)}</span>`).join('');
+  }
+
+  function renderFichaServicios(ctx, student, rows) {
+    const el = ctx?.el?.fichaServiciosBlock;
+    if (!el) return;
+    const calculated = window.RIPCalculations?.calculateStudentInterest
+      ? window.RIPCalculations.calculateStudentInterest(rows || [])
+      : (student?.computed || {});
+    const activeRows = getActiveInterestRows(rows || []);
+    const services = uniqueServicesFromRows(activeRows);
+    el.innerHTML = `
+      <div class="ficha-interest-grid">
+        <div class="ficha-interest-cell">
+          <span>Curso</span>
+          <strong>${renderInterestValue(calculated.cursoDisplay)}</strong>
+        </div>
+        <div class="ficha-interest-cell">
+          <span>Instrumento</span>
+          <strong>${renderInterestValue(calculated.instrumentoDisplay)}</strong>
+        </div>
+        <div class="ficha-interest-cell">
+          <span>Estilo</span>
+          <strong>${renderInterestValue(calculated.estiloDisplay)}</strong>
+        </div>
+        <div class="ficha-interest-cell">
+          <span>?nfasis</span>
+          <strong>${renderInterestValue(calculated.enfasisDisplay)}</strong>
+        </div>
+      </div>
+      <div class="ficha-services-row">
+        <span class="ficha-services-label">Servicios activos detectados</span>
+        <div class="ficha-services-chips">${renderServiceChips(services)}</div>
+      </div>
+    `;
+  }
+
 
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
@@ -857,6 +926,8 @@
       }).join('');
       el.fichaSaldosMini.innerHTML = chipsHTML;
     }
+
+    renderFichaServicios(ctx, student, rows);
   }
 
   function renderSimpleSummary(ctx, studentName, year, rowsSlice) {
@@ -880,6 +951,7 @@
         <span class="pill soft">Histórico ${escapeHTML(year)}</span>
       `;
     }
+    if (el.fichaServiciosBlock) el.fichaServiciosBlock.innerHTML = '';
   }
 
   async function syncProgramacionIfAvailable(ctx, state, studentName, year) {
@@ -1044,6 +1116,7 @@
     show(el.btnPDF);
     show(el.btnClaseEspecial);
     show(el.btnPrimeraVezFicha);
+    show(el.btnMergeStudent);
     show(el.btnVolverDash);
 
     const ficha = RIPCore.getStudentFicha(state.registro, studentKey);
@@ -1075,6 +1148,7 @@
     show(el.btnPDF);
     show(el.btnClaseEspecial);
     show(el.btnPrimeraVezFicha);
+    show(el.btnMergeStudent);
     show(el.btnVolverDash);
 
     const years = getAvailableYearsForEntry(entry, state);
@@ -1404,7 +1478,7 @@
       toast(ctx.el.toastWrap, 'No hay duplicadas por eliminar.', 'info');
       return;
     }
-    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y quedan para revision manual.` : ''} �Continuar?`;
+    const msg = `Se eliminarán ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y quedan para revisión manual.` : ''} ¿Continuar?`;
     if (!deletable.length || !confirm(msg)) return;
     toast(ctx.el.toastWrap, 'Eliminando duplicadas...', 'info');
     for (const row of deletable) {
@@ -1421,6 +1495,160 @@
     toast(ctx.el.toastWrap, `Duplicadas eliminadas: ${deletable.length}`, 'ok');
   }
 
+  function getMergeCandidateStudents(state, targetKey) {
+    const byKey = new Map();
+    const push = (name, key) => {
+      const cleanName = String(name || '').trim();
+      const cleanKey = String(key || norm(cleanName)).trim();
+      if (!cleanName || !cleanKey || cleanKey === targetKey) return;
+      if (!byKey.has(cleanKey)) byKey.set(cleanKey, { name: cleanName, key: cleanKey });
+    };
+    (state.allStudents || []).forEach((s) => push(s.name || s.estudiante, s.key || s.nameKey));
+    (state.registro || []).forEach((r) => push(r.estudiante, r.estudianteKey));
+    (state.searchStudents || []).forEach((s) => push(s.name || s.estudiante, s.currentKey || s.key));
+    return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  }
+
+  function openMergeStudentModal(ctx, state) {
+    const targetKey = String(state.currentStudentKey || '').trim();
+    const targetName = String(state.currentStudentName || '').trim();
+    if (!targetKey || !targetName) {
+      toast(ctx.el.toastWrap, 'Primero selecciona el contacto que quieres conservar.', 'warn');
+      return;
+    }
+    if (!window.RIPRepository?.mergeStudents) {
+      toast(ctx.el.toastWrap, 'La fusion de contactos no esta disponible.', 'warn');
+      return;
+    }
+
+    const prev = document.getElementById('ripMergeStudentModal');
+    if (prev) prev.remove();
+
+    const candidates = getMergeCandidateStudents(state, targetKey);
+    const options = candidates
+      .map((s) => `<option value="${escapeHTML(s.name)}" data-key="${escapeHTML(s.key)}"></option>`)
+      .join('');
+
+    const modal = document.createElement('div');
+    modal.id = 'ripMergeStudentModal';
+    modal.className = 'rip-modal-in';
+    modal.innerHTML = `
+      <div class="rip-modal-overlay"></div>
+      <div class="rip-modal-box rip-editor-box">
+        <div class="rip-modal-head">
+          <span class="rip-modal-title">Fusionar contacto</span>
+          <button class="rip-modal-close" type="button">x</button>
+        </div>
+        <div class="rip-modal-body">
+          <div class="empty-td" style="text-align:left;margin-bottom:12px">
+            Se conservara <strong>${escapeHTML(targetName)}</strong>. El contacto que elijas abajo se movera a esta ficha.
+          </div>
+          <label class="ripedit-field">
+            <span class="ripedit-label">Contacto duplicado</span>
+            <input id="mergeSourceStudent" class="control" list="mergeStudentOptions" placeholder="Escribe el otro nombre">
+            <datalist id="mergeStudentOptions">${options}</datalist>
+          </label>
+          <div class="empty-td" style="text-align:left;margin-top:12px">
+            Esto fusiona clases, pagos, pagos B2C, primera vez y programacion. Al final queda solo el contacto conservado.
+          </div>
+        </div>
+        <div class="rip-modal-foot">
+          <span class="status" id="mergeStudentStatus">Listo.</span>
+          <button class="btn ghost" type="button" data-close>Cancelar</button>
+          <button class="btn primary" type="button" data-merge>Fusionar</button>
+        </div>
+      </div>`;
+
+    const close = () => modal.remove();
+    const setStatus = (msg) => {
+      const el = modal.querySelector('#mergeStudentStatus');
+      if (el) el.textContent = msg;
+    };
+    const resolveSource = () => {
+      const raw = String(modal.querySelector('#mergeSourceStudent')?.value || '').trim();
+      const key = norm(raw);
+      return candidates.find((s) => s.key === key || norm(s.name) === key) || (raw ? { name: raw, key } : null);
+    };
+
+    modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
+    modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
+    modal.querySelector('[data-close]')?.addEventListener('click', close);
+    modal.querySelector('[data-merge]')?.addEventListener('click', async () => {
+      const source = resolveSource();
+      if (!source?.key || source.key === targetKey) {
+        toast(ctx.el.toastWrap, 'Elige un contacto duplicado diferente.', 'warn');
+        return;
+      }
+      const btn = modal.querySelector('[data-merge]');
+      if (btn) btn.disabled = true;
+
+      // Previsualización sin escrituras: cuántos documentos se moverán y si
+      // la fusión une dos identidades canónicas distintas (requiere doble
+      // confirmación explícita).
+      let preview = null;
+      try {
+        setStatus('Calculando previsualización...');
+        preview = await window.RIPRepository.previewMergeStudents?.(source.key, targetKey, targetName);
+      } catch (previewErr) {
+        setStatus('No se pudo previsualizar.');
+        toast(ctx.el.toastWrap, previewErr?.message || 'No se pudo previsualizar la fusión.', 'warn');
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      const counts = preview?.counts || {};
+      const warnText = (preview?.warnings || []).length ? `\n\n${preview.warnings.join('\n')}` : '';
+      const msg = `Fusionar "${source.name}" dentro de "${targetName}"?\n` +
+        `Se moverán: ${counts.registro || 0} registro(s), ${counts.primeraVez || 0} primera(s) vez, ` +
+        `${counts.programacion || 0} programación(es).${warnText}`;
+      if (!confirm(msg)) {
+        setStatus('Fusión cancelada.');
+        if (btn) btn.disabled = false;
+        return;
+      }
+      let confirmDistinctCanonical = false;
+      if (preview?.requiresExplicitConfirmation) {
+        confirmDistinctCanonical = confirm(
+          'CONFIRMACIÓN ADICIONAL: origen y destino son DOS estudiantes con identidad oficial distinta. ' +
+          '¿Seguro que son la misma persona y quieres fusionarlos?'
+        );
+        if (!confirmDistinctCanonical) {
+          setStatus('Fusión cancelada.');
+          if (btn) btn.disabled = false;
+          return;
+        }
+      }
+
+      setStatus('Fusionando...');
+      try {
+        const result = await window.RIPRepository.mergeStudents(source.key, targetKey, targetName, { confirmDistinctCanonical });
+        const [registro, students, programacion, primeraVez] = await Promise.all([
+          window.RIPRepository.loadRegistro(),
+          window.RIPRepository.loadStudents(),
+          window.RIPRepository.loadProgramacion(),
+          window.RIPRepository.loadPrimeraVez ? window.RIPRepository.loadPrimeraVez() : Promise.resolve(state.primeraVez || [])
+        ]);
+        state.registro = registro;
+        state.allStudents = (students || []).map((s) => ({ ...s, name: s.name || s.estudiante || s.id, key: s.nameKey || s.id }));
+        state.programacion = programacion;
+        state.primeraVez = primeraVez;
+        try { window.RIPCore?.clearCaches?.(); } catch (_) {}
+        try { window.RIPApp?.clearAppCaches?.(); } catch (_) {}
+        close();
+        openFichaByKey(ctx, state, targetKey);
+        const total = result?.summary?.registro || 0;
+        toast(ctx.el.toastWrap, `Contacto fusionado. ${total} registro(s) movidos.`, 'success');
+      } catch (err) {
+        console.error(err);
+        setStatus('No se pudo fusionar.');
+        toast(ctx.el.toastWrap, err?.message || 'No se pudo fusionar el contacto.', 'warn');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    document.body.appendChild(modal);
+  }
   function bindFichaEditButtons(ctx, state) {
     if (ctx.__fichaEditButtonsBound) return;
     ctx.__fichaEditButtonsBound = true;
@@ -1463,6 +1691,10 @@
         toast(ctx.el.toastWrap, 'No se pudieron eliminar duplicadas: ' + (err.message || err), 'warn');
       }
     });
+
+    ctx.el.btnMergeStudent?.addEventListener('click', () => {
+      openMergeStudentModal(ctx, state);
+    });
   }  // =========================
   // Export
   // =========================
@@ -1471,7 +1703,9 @@
     openStudentFromSearch,
     openStudentYear,
     loadStudentByYear,
+    preloadHistoricalYear: getParsedYearTSV,
     renderTable2026,
+    refreshYearButtons: renderYearButtons,
     // Limpia caches en memoria y TSV para el refresh nuclear
     clearCaches() {
       historyCache.clear();
@@ -1479,7 +1713,5 @@
     }
   };
 })();
-
-
 
 

@@ -1280,19 +1280,42 @@
     ]);
     const calc = window.RIPCalculations;
     const today = todayISO();
+
+    // Alias nameKey → studentId canónico (mismo criterio que buildFirebasePack)
+    const aliasMap = new Map();
+    (students || []).forEach(s => {
+      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+    });
+    const keyOf = (record) => (calc?.getStudentGroupingKey
+      ? calc.getStudentGroupingKey(record, aliasMap)
+      : (record?.estudianteKey || record?.studentId || norm(record?.estudiante)));
+
     const studentMap = new Map();
     (students || []).forEach(s => {
-      const key = s.nameKey || norm(s.name);
+      if (s.legacyAliasOf) return; // el canónico ya lo representa
+      const nameKey = String(s.nameKey || '').trim() || norm(s.name);
+      const key = String(aliasMap.get(nameKey) || '').trim() || nameKey;
       if (key) studentMap.set(key, s.name || key);
     });
     (programacion || []).forEach(p => {
-      const key = p.estudianteKey || p.studentId || norm(p.estudiante);
+      if (p.legacyAliasOf) return;
+      const key = keyOf(p);
       if (key && !studentMap.has(key)) studentMap.set(key, p.estudiante || key);
     });
-    const bySchedule = new Map((programacion || []).map(p => [p.estudianteKey || p.studentId || norm(p.estudiante), p]));
+    const bySchedule = new Map();
+    (programacion || []).forEach(p => {
+      const key = keyOf(p);
+      if (!key) return;
+      // El doc canónico manda sobre el alias legado.
+      if (p.legacyAliasOf && bySchedule.has(key)) return;
+      if (!bySchedule.has(key) || !bySchedule.get(key).canonicalStudentId) bySchedule.set(key, p);
+    });
     const rowsByStudent = new Map();
     (registro || []).forEach(row => {
-      const key = row?.estudianteKey || norm(row?.estudiante);
+      const key = row?.groupKey || keyOf(row);
       if (!key) return;
       if (!rowsByStudent.has(key)) rowsByStudent.set(key, []);
       rowsByStudent.get(key).push(row);

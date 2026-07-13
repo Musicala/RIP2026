@@ -1,0 +1,55 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "site": "rip-musicala",
+    "public": ".firebase-hosting",
+    "predeploy": [
+      "node prepare-hosting.mjs"
+    ],
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      "**/.*",
+      "**/node_modules/**",
+      "**/*.md",
+      "**/*.txt",
+      "**/*.gs",
+      "**/*.rules",
+      "firestore.indexes.json",
+      "**/*.test.js",
+      "**/*.spec.js",
+      "test/**",
+      "tests/**",
+      "fixtures/**",
+      "tools/**",
+      "snapshots/**",
+      "reports/**",
+      "coverage/**",
+      "*.log",
+      "*.dpapi",
+      "*.bundle"
+    ],
+    "cleanUrls": false,
+    "appAssociation": "NONE",
+    "headers": [
+      {
+        "source": "**/*.@(html|js|css)",
+        "headers": [
+          { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+          { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        ]
+      }
+    ]
+  }
+}

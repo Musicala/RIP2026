@@ -17,6 +17,7 @@
 
   const { escapeHTML, fmtMoney, setBadge, norm } = window.RIPUI.shared;
   const RIPUI = (window.RIPUI = window.RIPUI || {});
+  let studentSearchCache = { source: null, pool: [] };
 
   // =========================
   // Helpers de lista
@@ -38,9 +39,15 @@
    * Si se pasa un estudianteKey, filtra solo sus filas.
    */
   function getServiciosUnique(registro, estudianteKey) {
+    const calc = window.RIPCalculations;
     const m = new Map();
     for (const r of registro) {
-      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
+      if (estudianteKey) {
+        const belongs = calc?.matchesStudentKey
+          ? calc.matchesStudentKey(r, estudianteKey)
+          : r.estudianteKey === estudianteKey;
+        if (!belongs) continue;
+      }
       if (!r.servicioKey) continue;
       if (!m.has(r.servicioKey)) m.set(r.servicioKey, r.servicio || '');
     }
@@ -54,9 +61,15 @@
    * Si se pasa un estudianteKey, filtra solo sus filas.
    */
   function getProfesoresUnique(registro, estudianteKey) {
+    const calc = window.RIPCalculations;
     const m = new Map();
     for (const r of registro) {
-      if (estudianteKey && r.estudianteKey !== estudianteKey) continue;
+      if (estudianteKey) {
+        const belongs = calc?.matchesStudentKey
+          ? calc.matchesStudentKey(r, estudianteKey)
+          : r.estudianteKey === estudianteKey;
+        if (!belongs) continue;
+      }
       const k = norm(r.profesor);
       if (!k) continue;
       if (!m.has(k)) m.set(k, r.profesor || '');
@@ -94,7 +107,7 @@
 
   function studentNameScore(value) {
     const text = String(value || '').trim();
-    const upper = (text.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length;
+    const upper = (text.match(/[A-ZÃÃ‰ÃÃ“ÃšÃ‘]/g) || []).length;
     const words = norm(text).split(' ').filter(Boolean).length;
     return text.length + words * 10 + upper * 2;
   }
@@ -149,31 +162,45 @@
     return years.length ? ` Â· ${years.join(', ')}` : '';
   }
 
+  function getPreparedStudentPool(students) {
+    const source = Array.isArray(students) ? students : [];
+    if (studentSearchCache.source === source) return studentSearchCache.pool;
+    const pool = removeShortContainedNames(dedupeStudentsByName(source))
+      .map((s) => {
+        const name = getStudentDisplayName(s);
+        const label = `${name}${getStudentYearsLabel(s)}`;
+        return {
+          ...s,
+          __displayName: name,
+          __searchKey: norm(name),
+          __optionHTML: `<option value="${escapeHTML(name)}" label="${escapeHTML(label)}"></option>`
+        };
+      })
+      .filter(s => s.__displayName && s.__searchKey);
+    studentSearchCache = { source, pool };
+    return pool;
+  }
+
   function renderStudentDatalist(ctx, students, query) {
     const dl = ensureDatalist();
     if (!dl) return;
 
     const q = norm(query || '');
-    const pool = removeShortContainedNames(dedupeStudentsByName(students));
+    const pool = getPreparedStudentPool(students);
 
     const list = q
-      ? pool.filter((s) => norm(getStudentDisplayName(s)).includes(q)).slice(0, 80)
+      ? pool.filter((s) => s.__searchKey.includes(q)).slice(0, 50)
       : pool.slice(0, 120);
 
-    dl.innerHTML = list
-      .map((s) => {
-        const label = `${getStudentDisplayName(s)}${getStudentYearsLabel(s)}`;
-        return `<option value="${escapeHTML(getStudentDisplayName(s))}" label="${escapeHTML(label)}"></option>`;
-      })
-      .join('');
+    dl.innerHTML = list.map((s) => s.__optionHTML).join('');
   }
 
   function findStudentMatches(students, name) {
     const target = norm(name);
     if (!target) return [];
-    const pool = removeShortContainedNames(dedupeStudentsByName(students || []));
-    const exact = pool.filter((s) => norm(s?.name) === target);
-    return exact.length ? exact : pool.filter((s) => norm(s?.name).includes(target));
+    const pool = getPreparedStudentPool(students || []);
+    const exact = pool.filter((s) => s.__searchKey === target);
+    return exact.length ? exact : pool.filter((s) => s.__searchKey.includes(target));
   }
 
   function findStudentEntryByName(students, name) {
@@ -193,7 +220,7 @@
     const entry = matches.length === 1 ? matches[0] : null;
     if (!entry) {
       if (matches.length > 1) {
-        setStatus(ctx, `Encontré ${matches.length} coincidencias. Escoge una de la lista.`);
+        setStatus(ctx, `EncontrÃ© ${matches.length} coincidencias. Escoge una de la lista.`);
         renderStudentDatalist(ctx, pool, typedName);
         return false;
       }
@@ -579,7 +606,6 @@
 
   RIPUI.table = { init, applyAndRender, resetFilters, readFilters, renderProfesorOptions, renderServiceList, renderStudentDatalist };
 })();
-
 
 
 

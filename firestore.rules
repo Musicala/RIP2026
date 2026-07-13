@@ -2,18 +2,129 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAllowed() {
-      return request.auth != null
-        && request.auth.token.email in [
-          "catalina.medina.leal@gmail.com",
-          "alekcaballeromusic@gmail.com",
-          "imusicala@gmail.com",
-          "musicalaasesor@gmail.com"
-        ];
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function authEmail() {
+      return isSignedIn() && request.auth.token.email is string
+        ? request.auth.token.email.lower()
+        : "";
+    }
+
+    // Los perfiles viven en users/{emailNormalized}. Google Auth entrega el
+    // correo normalizado; no existe ninguna excepción por correo embebido.
+    function hasAccessProfile() {
+      return isSignedIn() && authEmail() != "" &&
+        exists(/databases/$(database)/documents/users/$(authEmail()));
+    }
+
+    function profileData() {
+      return get(/databases/$(database)/documents/users/$(authEmail())).data;
+    }
+
+    function accessRole() {
+      return profileData().get('role', profileData().get('rol', ''));
+    }
+
+    function accessIsActive() {
+      return profileData().get('active', true) != false &&
+        !(profileData().get('status', '') in ['disabled', 'inactive', 'blocked', 'suspended']);
+    }
+
+    function isAdmin() {
+      return hasAccessProfile() && accessIsActive() &&
+        accessRole() in ['admin', 'administrator', 'administrador'];
+    }
+
+    function isTeacher() {
+      return hasAccessProfile() && accessIsActive() &&
+        accessRole() in ['teacher', 'docente', 'profesor'];
+    }
+
+    function isStaff() {
+      return isAdmin() || isTeacher();
+    }
+
+    function canonicalStudentExists(studentId) {
+      return studentId is string && studentId.size() > 0 &&
+        exists(/databases/$(database)/documents/students/$(studentId)) &&
+        get(/databases/$(database)/documents/students/$(studentId)).data.studentId == studentId &&
+        get(/databases/$(database)/documents/students/$(studentId)).data.identitySource == 'estudiantes-musicala';
+    }
+
+    function validCanonicalRecord() {
+      return canonicalStudentExists(request.resource.data.studentId);
+    }
+
+    function validCanonicalDocument(documentId) {
+      return request.resource.data.studentId == documentId &&
+        canonicalStudentExists(documentId);
+    }
+
+    match /users/{emailKey} {
+      allow get: if isAdmin() || (isSignedIn() && authEmail() == emailKey);
+      allow list: if isAdmin();
+      // Los perfiles de acceso se aprovisionan únicamente mediante backend
+      // autenticado (Admin SDK/IAM), que no depende de estas reglas.
+      allow create, update, delete: if false;
+    }
+
+    // Réplica de identidad: solo Cloud Functions/Admin SDK la escriben. El
+    // frontend RIP la consulta, pero no crea ni corrige identidades.
+    match /students/{studentId} {
+      allow read: if isStaff();
+      allow create, update, delete: if false;
+    }
+
+    match /registro/{recordId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() && validCanonicalRecord();
+      allow delete: if isAdmin();
+    }
+
+    match /primeraVez/{recordId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() && validCanonicalRecord();
+      allow delete: if isAdmin();
+    }
+
+    match /programacion/{studentId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() && validCanonicalDocument(studentId);
+      allow delete: if isAdmin();
+    }
+
+    match /studentComputed/{studentId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() && validCanonicalDocument(studentId);
+      allow delete: if isAdmin();
+    }
+
+    // Datos financieros: exclusivamente administración.
+    match /clientesB2C/{recordId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    // Relación auxiliar del importador Wix. Nunca constituye una identidad:
+    // debe apuntar a un studentId canónico existente.
+    match /wixStudentEmails/{emailKey} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin() &&
+        request.resource.data.email == emailKey &&
+        canonicalStudentExists(request.resource.data.studentId);
+      allow delete: if isAdmin();
+    }
+
+    match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.userEmail == authEmail();
+      allow update, delete: if false;
     }
 
     match /{document=**} {
-      allow read, write: if isAllowed();
+      allow read, write: if false;
     }
   }
 }

@@ -57,7 +57,9 @@
     ]);
     meta = mergePricesMeta(baseMeta, priceMeta);
     fillMeta();
-    setStatus('Listo para registrar pago.');
+    setStatus(priceMeta
+      ? 'Listo para registrar pago.'
+      : 'Listo para registrar pago · catálogo público de precios deshabilitado; usa el valor manual.');
     refreshTotals();
     renderPreview();
   }
@@ -172,7 +174,7 @@
 
   async function loadPricesMetaCached() {
     const url = window.RIP_PRICES_TSV_URL || '';
-    if (!url) return null;
+    if (!window.RIP_PUBLIC_FEEDS_ENABLED || !url) return null;
     const cached = readPriceCache();
     if (cached) return cached;
     try {

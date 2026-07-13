@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
   app.js — RIP 2026 App (Wiring) — v4 optimizado
   - Boot progresivo real: 2026 fast -> tabla usable -> programación -> análisis
   - Índice global liviano de estudiantes (2023/2024/2025/2026) lazy / background
@@ -18,7 +18,7 @@
 
   const RIPUI = window.RIPUI;
   const { toast, buildContext, hide, show, setText, setHTML, norm, escapeHTML, fmtMoney } = RIPUI.shared;
-  const MORE_INFO_URL = 'https://musicala.github.io/estudiantesmusicala/';
+  const MORE_INFO_URL = window.RIP_STUDENT_HUB_URL || '';
   const TSV_ESTUDIANTES_URL = '';
   const FICHA_COL = {
     nombre: 0, estado: 1, edad: 4, tel: 9, cel: 10, curso: 11,
@@ -29,12 +29,7 @@
   // =========================
   // Config índice global
   // =========================
-  const STUDENT_INDEX_URLS = {
-    "2026": "https://docs.google.com/spreadsheets/d/e/2PACX-1vREJFkqvhXwjBNPCQXTg4pHXUplygJU1ZZG6-xgOeAJ2ifnEMHmuoDJKwQIpxVfGfCrmfmNCS_8RHTc/pub?gid=1810443337&single=true&output=tsv",
-    "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-    "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-    "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-  };
+  const STUDENT_INDEX_URLS = {};
 
   const STUDENT_INDEX_COLMAP = {
     "2023": { fecha: 1, nombre: 2, servicio: 4, hora: 7, pago: null, profesor: null },
@@ -90,6 +85,8 @@
   ctx.state = state;
   let syncTimer = null;
   let syncWriteTimer = null;
+  let combinedSearchCache = null;
+  let quickSearchRenderTimer = null;
 
   // =========================
   // Helpers internos
@@ -423,6 +420,7 @@
     state.currentStudentName = '';
     state.currentSearchEntry = null;
     state.historicalIndexReady = false;
+    combinedSearchCache = null;
     state.prog = {
       data: null,
       currentStudentName: '',
@@ -434,7 +432,7 @@
 
   function studentNameScore(value) {
     const text = String(value || '').trim();
-    const upper = (text.match(/[A-Z������]/g) || []).length;
+    const upper = (text.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length;
     const words = norm(text).split(' ').filter(Boolean).length;
     return text.length + words * 10 + upper * 2;
   }
@@ -679,6 +677,104 @@
     }, 0);
   }
 
+  function mergeSearchEntries(existing, incoming) {
+    const byName = new Map();
+    for (const item of existing || []) {
+      const k = norm(item?.name);
+      if (!k) continue;
+      byName.set(k, {
+        name: item.name || '',
+        key: item.key || '',
+        currentKey: item.currentKey || '',
+        years: Array.isArray(item.years) ? [...item.years] : []
+      });
+    }
+
+    for (const item of incoming || []) {
+      const k = norm(item?.name);
+      if (!k) continue;
+      const prev = byName.get(k);
+      if (!prev) {
+        byName.set(k, {
+          name: item.name || '',
+          key: item.key || '',
+          currentKey: item.currentKey || '',
+          years: Array.isArray(item.years) ? [...item.years] : []
+        });
+        continue;
+      }
+      const years = new Set([...(prev.years || []), ...(item.years || [])]);
+      byName.set(k, {
+        ...prev,
+        name: prev.name || item.name || '',
+        key: prev.key || item.key || '',
+        currentKey: prev.currentKey || item.currentKey || '',
+        years: INDEX_YEAR_ORDER.filter(y => years.has(y))
+      });
+    }
+
+    return Array.from(byName.values()).sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'es')
+    );
+  }
+
+  function refreshSearchDatalists() {
+    const combined = getCombinedSearchStudents();
+    if (RIPUI.table?.renderStudentDatalist) {
+      RIPUI.table.renderStudentDatalist(
+        ctx,
+        combined,
+        ctx.el.fStudent?.value || ctx.el.quickStudentSearch?.value || ''
+      );
+    }
+  }
+
+  function refreshCurrentFichaYearButtons() {
+    if (!ctx.el.fichaView || ctx.el.fichaView.style.display === 'none') return;
+    if (!state.currentStudentName || !RIPUI.ficha?.refreshYearButtons) return;
+    RIPUI.ficha.refreshYearButtons(ctx, state);
+  }
+
+  function warmHistoricalIndexProgressively() {
+    setTimeout(async () => {
+      const base2026 = mergeSearchIndexWithCurrentStudents([], state.allStudents || []);
+      state.searchStudents = dedupeByNormalizedName(base2026);
+      refreshSearchDatalists();
+
+      if (!Object.keys(STUDENT_INDEX_URLS).length) {
+        state.historicalIndexReady = true;
+        setText(
+          ctx.el.status,
+          `Listo · datos Firestore activos (${state.searchStudents.length || 0} estudiantes); histórico externo deshabilitado`
+        );
+        refreshCurrentFichaYearButtons();
+        return;
+      }
+
+      for (const year of ['2025', '2024', '2023']) {
+        try {
+          setText(ctx.el.status, `Listo · cargando historico ${year}...`);
+          const parsed = await getParsedIndexYear(year);
+          RIPUI.ficha?.preloadHistoricalYear?.(year).catch(err => {
+            console.warn(`No se pudo precargar ficha ${year}:`, err);
+          });
+          const entries = buildYearStudentEntries(year, parsed, state.allStudents || []);
+          state.searchStudents = dedupeByNormalizedName(
+            mergeSearchEntries(state.searchStudents, entries)
+          );
+          refreshSearchDatalists();
+          refreshCurrentFichaYearButtons();
+        } catch (err) {
+          console.warn(`No se pudo cargar historico ${year}:`, err);
+        }
+      }
+
+      state.historicalIndexReady = true;
+      setText(ctx.el.status, `Listo · historico activo (${state.searchStudents.length || 0} estudiantes)`);
+      refreshCurrentFichaYearButtons();
+    }, 0);
+  }
+
   function describeClienteUsuarios(row) {
     return (Array.isArray(row?.usuarios) ? row.usuarios : [])
       .map(u => String(u?.estudiante || u?.nombre || '').trim())
@@ -906,8 +1002,16 @@
   const PRIMERA_VEZ_MOTIVOS = ['Enfermedad', 'Descuido', 'Olvido', 'Familiar', 'Transporte', 'Otro'];
 
   function getPrimeraVezForStudent(studentNameOrKey) {
-    const key = norm(studentNameOrKey);
-    if (!key) return null;
+    // Acepta studentId canónico (no se normaliza) o nombre/llave heredada.
+    const raw = String(studentNameOrKey || '').trim();
+    if (!raw) return null;
+    const calc = window.RIPCalculations;
+    if (calc?.matchesStudentKey) {
+      return (state.primeraVez || []).find(row =>
+        calc.matchesStudentKey(row, raw) || calc.matchesStudentKey(row, norm(raw))
+      ) || null;
+    }
+    const key = norm(raw);
     return (state.primeraVez || []).find(row => norm(row.estudianteKey || row.estudiante) === key || norm(row.estudiante) === key) || null;
   }
 
@@ -1259,7 +1363,7 @@
         <div class="registro-day-row registro-day-row-editable">
           <div class="registro-day-main">
             <strong>${escapeHTML(r.estudiante || '')}</strong>
-            <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' � '))}</span>
+            <span>${escapeHTML([r.hora, r.servicio, r.profesor].filter(Boolean).join(' · '))}</span>
           </div>
           <div class="registro-day-row-actions">
             <button class="btn small ghost" type="button" data-registro-edit="${escapeHTML(r.id || '')}" ${r.id ? '' : 'disabled'}>Editar</button>
@@ -1399,6 +1503,12 @@
     return tipo === 'clase' || (tipo !== 'pago' && !String(row?.pago || '').trim());
   }
 
+  function isPaidPackageRow(row) {
+    const tipo = norm(row?.tipo || '');
+    const hasPayment = tipo === 'pago' || Number(row?.movimiento) > 0 || Number(row?.pago) > 0;
+    return hasPayment && !isTrialOrCourtesyRow(row);
+  }
+
   function getTrialCreditCode(row) {
     const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
     if (txt.includes('cp de clase de prueba') || (/\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt))) return 'CP';
@@ -1407,9 +1517,10 @@
   }
 
   function buildTrialContinuityGroups() {
+    const calc = window.RIPCalculations;
     const byStudent = new Map();
     for (const row of state.registro || []) {
-      const key = row.estudianteKey || norm(row.estudiante);
+      const key = row.groupKey || (calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(row) : (row.estudianteKey || norm(row.estudiante)));
       if (!key) continue;
       if (!byStudent.has(key)) byStudent.set(key, []);
       byStudent.get(key).push(row);
@@ -1457,28 +1568,30 @@
       const firstTrialRow = firstTrial.row;
       const firstTrialTs = Number(firstTrialRow.fechaTs) || Number(RIPCore.util?.parseDate?.(firstTrialRow.fecha || firstTrialRow.fechaRaw)?.getTime()) || 0;
       const laterClass = sorted.find(r => isClassLike(r) && (Number(r.fechaTs) || Number(RIPCore.util?.parseDate?.(r.fecha || r.fechaRaw)?.getTime()) || 0) > firstTrialTs);
-      const referenceRow = laterClass || lastTrial.row;
+      const laterPaidPackage = sorted.find(r => isPaidPackageRow(r) && (Number(r.fechaTs) || Number(RIPCore.util?.parseDate?.(r.fecha || r.fechaRaw)?.getTime()) || 0) > firstTrialTs);
+      const hasContinuity = Boolean(laterClass || laterPaidPackage);
+      const referenceRow = laterClass || laterPaidPackage || lastTrial.row;
       const referenceTs = Number(referenceRow.fechaTs) || Number(RIPCore.util?.parseDate?.(referenceRow.fecha || referenceRow.fechaRaw)?.getTime()) || 0;
       const lastDateStart = referenceTs ? new Date(referenceTs).setHours(0, 0, 0, 0) : todayStart;
       const days = Math.max(0, Math.floor((todayStart - lastDateStart) / 86400000));
       const student = (state.allStudents || []).find(s => s.key === key);
       const name = referenceRow.estudiante || student?.name || key;
       const code = lastTrial.code || firstTrial.code || 'CP';
-      const target = laterClass ? groups.con : groups.sin;
+      const target = hasContinuity ? groups.con : groups.sin;
       target.push({
-        priority: laterClass ? 'Prueba con continuidad' : 'Prueba sin continuidad',
-        filter: laterClass ? 'Prueba con continuidad' : 'Prueba sin continuidad',
+        priority: hasContinuity ? 'Prueba con continuidad' : 'Prueba sin continuidad',
+        filter: hasContinuity ? 'Prueba con continuidad' : 'Prueba sin continuidad',
         name,
         key,
         reason: code === 'CC'
-          ? (laterClass ? 'Clase de cortesia con continuidad' : 'Clase de cortesia sin continuidad')
-          : (laterClass ? 'Clase de prueba con continuidad' : 'Clase de prueba sin continuidad'),
-        metric: laterClass ? `Continua desde ${laterClass.fecha || laterClass.fechaRaw || ''}` : `${days} dias`,
+          ? (hasContinuity ? 'Clase de cortesia con continuidad' : 'Clase de cortesia sin continuidad')
+          : (hasContinuity ? 'Clase de prueba con continuidad' : 'Clase de prueba sin continuidad'),
+        metric: hasContinuity ? `Continua desde ${referenceRow.fecha || referenceRow.fechaRaw || ''}` : `${days} dias`,
         lastRegistro: referenceRow.fecha || referenceRow.fechaRaw || '',
         programacion: getReviewProgramacionText(name),
         days,
         lastClassTs: referenceTs,
-        finalClasif: laterClass ? 'CP/CC con continuidad' : 'CP/CC sin continuidad',
+        finalClasif: hasContinuity ? 'CP/CC con continuidad' : 'CP/CC sin continuidad',
         paramClasif: code
       });
     });
@@ -1494,7 +1607,7 @@
   function openTrialContinuityList(title, list) {
     showFichaContainer();
     ensureFichaProgramacionHidden();
-    RIPUI.dashboard.renderStudentList(ctx, `Lista � ${title}`, list, (studentKey, studentName) => {
+    RIPUI.dashboard.renderStudentList(ctx, `Lista · ${title}`, list, (studentKey, studentName) => {
       if (studentKey) openStudentFicha(studentKey, { focusProgramacion: false, studentName });
       else if (studentName) openStudentFichaByName(studentName);
     }, { bdEligible: false });
@@ -1588,7 +1701,7 @@
     }
 
     ctx.el.trialListBody.innerHTML = sorted.map(r => {
-      const key = r.estudianteKey || norm(r.estudiante);
+      const key = r.groupKey || (window.RIPCalculations?.getStudentGroupingKey ? window.RIPCalculations.getStudentGroupingKey(r) : (r.estudianteKey || norm(r.estudiante)));
       const converted = convertedKeys.has(key);
       const esCortesia = /cortesia|gratis|obsequio/i.test(`${r.servicio || ''} ${r.comentario || ''} ${r.clasif || ''}`);
       const tipoLabel = esCortesia
@@ -1764,10 +1877,18 @@
   }
 
   function getCombinedSearchStudents() {
-    return dedupeByNormalizedName([
-      ...(Array.isArray(state.searchStudents) ? state.searchStudents : []),
-      ...(Array.isArray(state.allStudents) ? state.allStudents : [])
-    ]);
+    const searchRef = Array.isArray(state.searchStudents) ? state.searchStudents : [];
+    const currentRef = Array.isArray(state.allStudents) ? state.allStudents : [];
+    if (
+      combinedSearchCache &&
+      combinedSearchCache.searchRef === searchRef &&
+      combinedSearchCache.currentRef === currentRef
+    ) {
+      return combinedSearchCache.items;
+    }
+    const items = dedupeByNormalizedName([...searchRef, ...currentRef]);
+    combinedSearchCache = { searchRef, currentRef, items };
+    return items;
   }
 
   function openStudentFichaByName(name) {
@@ -2653,8 +2774,11 @@
       openStudentFichaByName(name);
     });
     ctx.el.quickStudentSearch?.addEventListener('input', () => {
-      const q = ctx.el.quickStudentSearch?.value || '';
-      RIPUI.table?.renderStudentDatalist?.(ctx, getCombinedSearchStudents(), q);
+      if (quickSearchRenderTimer) clearTimeout(quickSearchRenderTimer);
+      quickSearchRenderTimer = setTimeout(() => {
+        const q = ctx.el.quickStudentSearch?.value || '';
+        RIPUI.table?.renderStudentDatalist?.(ctx, getCombinedSearchStudents(), q);
+      }, 80);
     });
     ctx.el.quickStudentSearch?.addEventListener('focus', () => {
       const q = ctx.el.quickStudentSearch?.value || '';
@@ -3017,29 +3141,11 @@
       setText(ctx.el.badgeMode, 'Firebase');
       setText(ctx.el.badgeCount, `${state.registro.length} registros`);
       setText(ctx.el.status, 'Listo ✅');
-      setTimeout(async () => {
-        try {
-          const hp = await RIPCore.loadAll({ force: false, includeHistorical: true });
-          if (!hp) return;
-          state.registro = hp.registro || state.registro;
-          state.paramsMap = hp.paramsMap || state.paramsMap;
-          state.allStudents = hp.allStudents || state.allStudents;
-          state.searchStudents = dedupeByNormalizedName(
-            mergeSearchIndexWithCurrentStudents([], state.allStudents || [])
-          );
-          if (RIPUI.table?.renderStudentDatalist) {
-            RIPUI.table.renderStudentDatalist(ctx, getCombinedSearchStudents(), ctx.el.fStudent?.value || ctx.el.quickStudentSearch?.value || '');
-          }
-          renderDashboards();
-        } catch (e) {
-          console.warn('Historicos en segundo plano:', e);
-        }
-      }, 0);
 
       toast(ctx.el.toastWrap, 'Datos cargados ✓', 'ok');
 
       // ─── FASE 3: Histórico 2023-2025 en fondo (no bloquea nada) ────────────
-      warmGlobalStudentIndexInBackground();
+      warmHistoricalIndexProgressively();
 
     } catch (err) {
       console.error(err);

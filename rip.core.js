@@ -36,11 +36,7 @@
       params: 'rip2026_cache_params_v2',
       meta: 'rip2026_cache_meta_v2'
     },
-    HIST_LAST_CLASS_TSV_URLS: {
-      "2025": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRv5znuM6DUG7m6DOQBCbjzJiYpZJiuMK23GW__RfMCcOi1kAcMT_7YH7CzBgmtDEJ-HeiJ5bgCKryw/pub?gid=1810443337&single=true&output=tsv",
-      "2024": "https://docs.google.com/spreadsheets/d/e/2PACX-1vTKhAIn0x5D-p80AVkXrBaLhVyqakoQabAvUw3UmEzoo__1AXaWXM1dfvdagWNkHGO4YY_Txxb7OQHM/pub?gid=1810443337&single=true&output=tsv",
-      "2023": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRL2kvbjxpU7qoPgiyoytANin1VsvqRx8BTZpSqBOJw_Lyid3NGPc88e3kwFiOsHpOPIgRricd64cin/pub?gid=1810443337&single=true&output=tsv"
-    }
+    HIST_LAST_CLASS_TSV_URLS: {}
   };
 
   // =========================
@@ -178,7 +174,7 @@
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
       if (test(s, /vacacional/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'TV' };
       if (!s) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
-      if (test(s, /matr[i�]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
+      if (test(s, /matr[ií]cula/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
       if (test(s, /virtual.*personalizado|personalizado.*virtual/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MV P' };
       if (test(s, /hogar.*personalizado|personalizado.*hogar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MH P' };
       if (test(s, /sede.*personalizado|personalizado.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS P' };
@@ -213,7 +209,7 @@
     if (isCourtesyText(servicio, comentario)) return 0;
     if (/^clase$/i.test(tipo)) return -1;
     if (/^pago$/i.test(tipo)) {
-      if (/musigym/i.test(servicio) && /\b(1\s*mes|un\s*mes|mensual|suscripci[o�]n)\b/i.test(servicio + ' ' + comentario)) return 0;
+      if (/musigym/i.test(servicio) && /\b(1\s*mes|un\s*mes|mensual|suscripci[oó]n)\b/i.test(servicio + ' ' + comentario)) return 0;
       if (isTrialText(servicio, comentario) || /\bindividual\b/i.test(servicio)) return 1;
       if (/\bCP\b/i.test(servicio)) return 1;
       const m = servicio.match(/(?:\bP\s*|Paquete\s*(?:de\s*)?)(\d+)/i);
@@ -271,6 +267,16 @@
     return markDuplicateClasses(rows || []);
   };
 
+  const musigymRowsCache = new WeakMap();
+
+  function getMusigymRows(rows) {
+    if (!Array.isArray(rows)) return markMusigymSubscriptions(rows || []);
+    if (musigymRowsCache.has(rows)) return musigymRowsCache.get(rows);
+    const marked = markMusigymSubscriptions(rows);
+    musigymRowsCache.set(rows, marked);
+    return marked;
+  }
+
   const classifyByDaysSinceLastClass = (days, forceActivo = false) => {
     if (forceActivo) return 'Activo';
     if (!Number.isFinite(days)) return 'Inactivo sin info';
@@ -327,35 +333,71 @@
   const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
 
   function buildFirebasePack(registro, students, programacion, computed) {
+    const calc = window.RIPCalculations;
+
+    /*
+      aliasMap: nameKey heredado → studentId canónico. Se construye desde el
+      directorio local `students` (docs canónicos del sync de identidad y
+      docs legados anotados con officialStudentId). Con él, TODAS las filas
+      de un estudiante — con o sin studentId propio — agrupan bajo la misma
+      llave canónica y dos homónimos con IDs distintos jamás se mezclan.
+    */
+    const aliasMap = new Map();
+    for (const s of students || []) {
+      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+    }
+
+    const groupKeyOf = (record) => (calc?.getStudentGroupingKey
+      ? calc.getStudentGroupingKey(record, aliasMap)
+      : (record?.studentId || record?.estudianteKey || norm(record?.estudiante)));
+
     const paramsMap = new Map();
     const set = new Map();
     for (const s of students || []) {
-      const key = s.nameKey || s.key || norm(s.name);
-      if (key) set.set(key, s.name || key);
+      // Los docs marcados como alias no generan una entrada propia: su
+      // canónico ya representa al estudiante (evita duplicados en listas).
+      const nameKey = String(s.nameKey || '').trim() || norm(s.name || '');
+      const key = String(aliasMap.get(nameKey) || '').trim() || nameKey || String(s.key || s.id || '').trim();
+      if (s.legacyAliasOf && aliasMap.get(nameKey)) {
+        if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
+        continue;
+      }
+      if (key) set.set(key, s.name || set.get(key) || key);
       if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
     }
-    const registroRows = markDuplicateClasses(registro || []);
+    const sourceRegistro = registro || [];
+    const registroRows = (sourceRegistro.some(r => r && (r.duplicateClassKey !== undefined || r.isDuplicateClass !== undefined))
+      ? sourceRegistro
+      : markDuplicateClasses(sourceRegistro))
+      // groupKey pre-anotado: el resto de la app agrupa/filtra con él.
+      .map(r => ({ ...r, groupKey: groupKeyOf(r) }));
     for (const r of registroRows) {
-      if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+      if (r.groupKey) set.set(r.groupKey, r.estudiante || set.get(r.groupKey) || r.groupKey);
     }
     for (const p of programacion || []) {
-      const key = p.estudianteKey || p.studentId || norm(p.estudiante || p.name);
+      // Los docs de programación marcados como alias ya tienen espejo
+      // canónico: no aportan una entrada de estudiante propia.
+      if (p.legacyAliasOf) continue;
+      const key = groupKeyOf(p);
       const name = String(p.estudiante || p.name || '').trim();
       if (key) set.set(key, name || set.get(key) || key);
     }
 
     const lastClassTsByStudent = new Map();
     for (const r of registroRows) {
-      if (!r?.estudianteKey) continue;
+      if (!r?.groupKey) continue;
       const tipo = norm(r?.tipo || '');
       if (tipo !== 'clase') continue;
       const ts = Number(r?.fechaTs) || 0;
       if (!ts) continue;
-      const prev = Number(lastClassTsByStudent.get(r.estudianteKey)) || 0;
-      if (ts > prev) lastClassTsByStudent.set(r.estudianteKey, ts);
+      const prev = Number(lastClassTsByStudent.get(r.groupKey)) || 0;
+      if (ts > prev) lastClassTsByStudent.set(r.groupKey, ts);
     }
     const today = startOfDay(new Date());
-    const computedMap = new Map((computed || []).map(c => [c.studentId || c.id, c]));
+    const computedMap = new Map((computed || []).map(c => [groupKeyOf(c) || c.id, c]));
     const allStudents = Array.from(set.entries()).map(([key, name]) => {
       const c = computedMap.get(key) || {};
       const paramClasif = paramsMap.get(key) || '';
@@ -388,10 +430,20 @@
 
   function buildProgramacionDashboard(programacion, allStudents, registro) {
     const calc = window.RIPCalculations;
-    const schedules = new Map((programacion || []).map(p => [p.estudianteKey || p.studentId || norm(p.estudiante), p]));
+    const scheduleKeyOf = (p) => (calc?.getStudentGroupingKey
+      ? calc.getStudentGroupingKey(p)
+      : (p.estudianteKey || p.studentId || norm(p.estudiante)));
+    const schedules = new Map();
+    for (const p of programacion || []) {
+      const key = scheduleKeyOf(p);
+      if (!key) continue;
+      // El doc canónico manda; el alias legado solo entra si no hay canónico.
+      if (p.legacyAliasOf && schedules.has(key)) continue;
+      if (!schedules.has(key) || !schedules.get(key).canonicalStudentId) schedules.set(key, p);
+    }
     const rowsByStudent = new Map();
     for (const row of registro || []) {
-      const key = row?.estudianteKey || norm(row?.estudiante);
+      const key = row?.groupKey || (calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(row) : (row?.estudianteKey || norm(row?.estudiante)));
       if (!key) continue;
       if (!rowsByStudent.has(key)) rowsByStudent.set(key, []);
       rowsByStudent.get(key).push(row);
@@ -560,7 +612,7 @@
   // =========================
   // Load principal: registro + params
   // =========================
-  
+
   // =========================
   // Carga RÁPIDA (solo para filtrar y ver registro de estudiantes)
   // - No calcula pivots/saldos/dashboards
@@ -569,8 +621,12 @@
   RIPCore.loadRegistroFast = async ({ force = false } = {}) => {
     if (window.RIPRepository?.loadRegistro) {
       const rows = await window.RIPRepository.loadRegistro();
+      const calc = window.RIPCalculations;
       const set = new Map();
-      for (const r of rows) if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
+      for (const r of rows) {
+        const key = calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(r) : r.estudianteKey;
+        if (key) set.set(key, r.estudiante);
+      }
       return {
         rows,
         allStudents: Array.from(set.entries()).map(([key, name]) => ({ key, name, paramClasif: '' })).sort((a, b) => a.name.localeCompare(b.name, 'es'))
@@ -789,11 +845,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
     // Todos los estudiantes únicos del registro, ordenados
     const set = new Map(); // key -> display
-    for (const r of markMusigymSubscriptions(registro || [])) {
+    for (const r of getMusigymRows(registro || [])) {
       if (r.estudianteKey) set.set(r.estudianteKey, r.estudiante);
     }
     const lastClassTsByStudent = new Map();
-    for (const r of markMusigymSubscriptions(registro || [])) {
+    for (const r of getMusigymRows(registro || [])) {
       if (!r?.estudianteKey) continue;
       const tipo = norm(r?.tipo || '');
       const isClase = (tipo === 'clase') || (tipo !== 'pago' && !String(r?.pago || '').trim());
@@ -883,10 +939,12 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   };
 
   RIPCore.sumMovimientoByStudent = (registro) => {
-    const sums = new Map(); // key -> sum
-    for (const r of markMusigymSubscriptions(registro || [])) {
-      if (!r.estudianteKey) continue;
-      sums.set(r.estudianteKey, (sums.get(r.estudianteKey) || 0) + (Number(r.movimientoSaldo ?? r.movimiento) || 0));
+    const calc = window.RIPCalculations;
+    const sums = new Map(); // groupKey -> sum
+    for (const r of getMusigymRows(registro || [])) {
+      const key = r.groupKey || (calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(r) : r.estudianteKey);
+      if (!key) continue;
+      sums.set(key, (sums.get(key) || 0) + (Number(r.movimientoSaldo ?? r.movimiento) || 0));
     }
     return sums;
   };
@@ -907,10 +965,12 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   }
 
   RIPCore.buildSaldosDashboard = (students, registro) => {
+    const calc = window.RIPCalculations;
     const sums = RIPCore.sumMovimientoByStudent(registro);
     const duplicateCounts = new Map();
-    for (const r of markMusigymSubscriptions(registro || [])) {
-      if (r?.duplicateReview && r.estudianteKey) duplicateCounts.set(r.estudianteKey, (duplicateCounts.get(r.estudianteKey) || 0) + 1);
+    for (const r of getMusigymRows(registro || [])) {
+      const key = r.groupKey || (calc?.getStudentGroupingKey ? calc.getStudentGroupingKey(r) : r.estudianteKey);
+      if (r?.duplicateReview && key) duplicateCounts.set(key, (duplicateCounts.get(key) || 0) + 1);
     }
     const cats = {
       deben: [],
@@ -943,8 +1003,12 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // Ficha estudiante: saldo + pivots + rows
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
-    // Lazy compute fechaTs para fast-pack (solo para este estudiante)
-    const subset = markMusigymSubscriptions(registro || []).filter((r) => r.estudianteKey === studentKey);
+    const calc = window.RIPCalculations;
+    // Coincide por studentId canónico O por llave heredada (transición).
+    const studentRows = (registro || []).filter((r) => (
+      calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey
+    ));
+    const subset = getMusigymRows(studentRows);
     for (const r of subset) {
       if (!r.fechaTs) {
         const d = parseDate(r.fechaRaw);
@@ -988,7 +1052,13 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   } = filters || {};
 
   return registro.filter((r) => {
-    if (estudianteKey && r.estudianteKey !== estudianteKey) return false;
+    if (estudianteKey) {
+      const calc = window.RIPCalculations;
+      const belongs = calc?.matchesStudentKey
+        ? calc.matchesStudentKey(r, estudianteKey)
+        : r.estudianteKey === estudianteKey;
+      if (!belongs) return false;
+    }
 
     if (profesores && norm(r.profesor) !== norm(profesores)) return false;
 
@@ -1025,6 +1095,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   RIPCore.clearCaches = () => {
     histLastClassCache.clear();
     try {
+      window.RIPRepository?.clearCache?.();
+    } catch (err) {
+      console.warn('No se pudo limpiar cache de repositorio:', err);
+    }
+    try {
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
@@ -1048,8 +1123,5 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   window.RIPCore = RIPCore;
 })();
-
-
-
 
 

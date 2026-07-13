@@ -99,12 +99,11 @@
 
   async function refreshExisting() {
     setStatus('Leyendo clases existentes...');
-    const [registro, students, programacion] = await Promise.all([
+    const [registro, students] = await Promise.all([
       window.RIPRepository.loadRegistro(),
-      window.RIPRepository.loadStudents(),
-      window.RIPRepository.loadProgramacion()
+      window.RIPRepository.loadStudents()
     ]);
-    buildLocalStudentIndex(registro, students, programacion);
+    buildLocalStudentIndex(students);
     existingHashes = new Set(registro.map(r => r.recordHash).filter(Boolean));
     existingClassKeys = new Set(registro.map(duplicateClassKey).filter(Boolean));
     const classDates = registro
@@ -137,77 +136,65 @@
   }
 
   async function loadOfficialStudentsIndex() {
-    const config = window.MUSICALA_STUDENTS_FIREBASE_CONFIG;
-    if (!config) {
-      officialStudentsError = 'No esta configurado el Firestore de estudiantes activos.';
-      return;
-    }
-
-    setStatus('Leyendo estudiantes activos por correo...');
+    setStatus('Leyendo el directorio canÃ³nico de estudiantes...');
     try {
-      const CDN = 'https://www.gstatic.com/firebasejs/10.12.5/';
-      const appMod = await import(CDN + 'firebase-app.js');
-      const fsMod = await import(CDN + 'firebase-firestore.js');
-      const appName = 'musicala-students-active';
-      const app = appMod.getApps().some(a => a.name === appName)
-        ? appMod.getApp(appName)
-        : appMod.initializeApp(config, appName);
-      const db = fsMod.getFirestore(app);
-      const collections = window.MUSICALA_STUDENTS_COLLECTIONS || ['students', 'Students', 'estudiantes', 'Estudiantes', 'alumnos', 'Alumnos', 'usuarios', 'Usuarios'];
+      const students = await window.RIPRepository.loadStudents();
       const byEmail = new Map();
-      let docsRead = 0;
-      let collectionsRead = 0;
+      let canonicalDocs = 0;
 
-      for (const collectionName of collections) {
-        try {
-          const snap = await fsMod.getDocs(fsMod.collection(db, collectionName));
-          if (!snap.empty) collectionsRead++;
-          docsRead += snap.size;
-          snap.forEach((docSnap) => {
-            const student = normalizeOfficialStudent(docSnap.data(), docSnap.id, collectionName);
-            if (!student.active || !student.emails.length) return;
-            for (const email of student.emails) {
-              if (!byEmail.has(email)) byEmail.set(email, student);
-            }
-          });
-        } catch (err) {
-          console.warn(`No se pudo leer ${collectionName} en estudiantes-musicala:`, err);
+      for (const raw of students || []) {
+        const studentId = String(raw?.id || '').trim();
+        if (
+          !studentId ||
+          String(raw?.studentId || '').trim() !== studentId ||
+          String(raw?.identitySource || '').trim() !== 'estudiantes-musicala'
+        ) {
+          continue;
+        }
+        canonicalDocs += 1;
+        const student = normalizeOfficialStudent(raw, studentId, 'rip/students');
+        for (const email of student.emails) {
+          if (!byEmail.has(email)) byEmail.set(email, student);
         }
       }
 
       officialStudentsByEmail = byEmail;
       officialStudentsLoaded = true;
-      officialStudentsReadStats = { collections: collectionsRead, docs: docsRead, emails: byEmail.size };
+      officialStudentsReadStats = { collections: 1, docs: canonicalDocs, emails: byEmail.size };
       officialStudentsError = '';
-      console.info('Estudiantes activos leidos:', officialStudentsReadStats);
+      console.info('Directorio canÃ³nico local leÃ­do:', officialStudentsReadStats);
     } catch (err) {
       console.error(err);
-      officialStudentsError = err?.message || 'No se pudo cargar estudiantes activos.';
+      officialStudentsError = err?.message || 'No se pudo cargar el directorio canÃ³nico local.';
     }
   }
 
 
-  function studentNameScore(value) {
-    const text = String(value || '').trim();
-    const upper = (text.match(/[A-ZÁÉÍÓÚÑ]/g) || []).length;
-    const words = norm(text).split(' ').filter(Boolean).length;
-    return text.length + words * 10 + upper * 2;
-  }
-
-  function buildLocalStudentIndex(registro, students, programacion) {
+  function buildLocalStudentIndex(students) {
     const byKey = new Map();
     const add = (name, source, id) => {
       const clean = String(name || '').trim();
       const key = norm(clean);
-      if (!clean || !key) return;
+      const canonicalId = String(id || '').trim();
+      if (!clean || !key || !canonicalId) return;
       const current = byKey.get(key);
-      const next = { id: id || key, sourceCollection: source || 'rip', name: clean, nameKey: key, emails: [], active: true };
-      if (!current || studentNameScore(clean) > studentNameScore(current.name)) byKey.set(key, next);
+      const next = { id: canonicalId, studentId: canonicalId, sourceCollection: source || 'rip/students', name: clean, nameKey: key, emails: [] };
+      if (!current) byKey.set(key, next);
+      else if (current.id !== canonicalId) byKey.set(key, { ambiguous: true, nameKey: key });
     };
-    (students || []).forEach(s => add(s.name || s.estudiante, 'rip/students', s.id || s.nameKey));
-    (programacion || []).forEach(p => add(p.estudiante || p.name, 'rip/programacion', p.id || p.studentId || p.estudianteKey));
-    (registro || []).forEach(r => add(r.estudiante, 'rip/registro', r.estudianteKey));
-    localStudents = Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    (students || []).forEach((student) => {
+      const id = String(student?.id || '').trim();
+      if (
+        id &&
+        String(student?.studentId || '').trim() === id &&
+        String(student?.identitySource || '').trim() === 'estudiantes-musicala'
+      ) {
+        add(student.name || student.estudiante, 'rip/students', id);
+      }
+    });
+    localStudents = Array.from(byKey.values())
+      .filter(student => !student.ambiguous)
+      .sort((a, b) => a.name.localeCompare(b.name, 'es'));
   }
 
   async function loadLocalEmailLinks() {
@@ -219,15 +206,14 @@
       snap.forEach((docSnap) => {
         const data = docSnap.data() || {};
         const email = normalizeEmail(data.email || docSnap.id);
-        const savedName = String(data.estudiante || data.name || '').trim();
-        const canonical = findLocalStudentByName(savedName);
-        const name = String(canonical?.name || savedName).trim();
-        const key = norm(name || data.estudianteKey || '');
-        if (email && name) links.set(email, {
-          id: data.estudianteKey || key || docSnap.id,
+        const studentId = String(data.studentId || '').trim();
+        const canonical = localStudents.find(student => student.id === studentId);
+        if (email && canonical) links.set(email, {
+          id: canonical.id,
+          studentId: canonical.id,
           sourceCollection: 'rip/wixStudentEmails',
-          name,
-          nameKey: key,
+          name: canonical.name,
+          nameKey: canonical.nameKey,
           emails: [email],
           active: true
         });
@@ -242,24 +228,30 @@
   async function saveLocalEmailLink(row) {
     const email = normalizeEmail(row?.correo);
     const name = String(row?.estudianteOficial || row?.estudiante || '').trim();
-    if (!email || !name) return;
+    const studentId = String(row?.studentId || row?.officialStudentId || '').trim();
+    const canonical = localStudents.find(student => student.id === studentId);
+    if (!email || !name || !canonical) {
+      throw new Error('No se puede guardar la relaciÃ³n Wix sin un studentId canÃ³nico verificado.');
+    }
     try {
       const env = await window.RIPFirebase.ready;
       const { doc, setDoc, serverTimestamp } = env.fs;
       await setDoc(doc(env.db, 'wixStudentEmails', email), {
         email,
-        estudiante: name,
-        estudianteKey: norm(name),
+        studentId,
+        estudiante: canonical.name,
+        estudianteKey: canonical.nameKey,
         estudianteWix: String(row.estudianteWix || '').trim(),
-        source: row.officialStudentCollection || 'rip/importador',
+        source: 'rip/students',
         updatedAt: serverTimestamp(),
         updatedBy: env.user?.email || ''
       }, { merge: true });
       localEmailLinks.set(email, {
-        id: norm(name),
+        id: studentId,
+        studentId,
         sourceCollection: 'rip/wixStudentEmails',
-        name,
-        nameKey: norm(name),
+        name: canonical.name,
+        nameKey: canonical.nameKey,
         emails: [email],
         active: true
       });
@@ -271,25 +263,8 @@
   function findLocalStudentByName(name) {
     const target = norm(name);
     if (!target) return null;
-    const targetParts = target.split(' ').filter(p => p.length >= 3);
-    const matches = localStudents.filter((student) => {
-      const candidate = student.nameKey || norm(student.name);
-      if (!candidate) return false;
-      if (candidate === target || candidate.includes(target)) return true;
-      if (targetParts.length >= 2) return targetParts.every(part => candidate.includes(part));
-      return targetParts.length === 1 && targetParts[0].length >= 5 && candidate.includes(targetParts[0]);
-    });
-    const unique = [];
-    const seen = new Set();
-    for (const student of matches) {
-      const key = student.nameKey || norm(student.name);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(student);
-    }
-    if (!unique.length) return null;
-    unique.sort((a, b) => studentNameScore(b.name) - studentNameScore(a.name));
-    return unique[0];
+    const matches = localStudents.filter(student => student.nameKey === target);
+    return matches.length === 1 ? matches[0] : null;
   }
   function normalizeEmail(value) {
     return String(value || '')
@@ -322,33 +297,7 @@
     const exact = officialStudentsByEmail.get(target);
     if (exact) return exact;
     const localExact = localEmailLinks.get(target);
-    if (localExact) return localExact;
-
-    const targetUser = target.split('@')[0] || target;
-    const matches = [];
-    for (const [candidate, student] of officialStudentsByEmail.entries()) {
-      const c = normalizeEmail(candidate);
-      if (!c) continue;
-      const cUser = c.split('@')[0] || c;
-      if (
-        c.includes(target) ||
-        target.includes(c) ||
-        (targetUser.length >= 5 && cUser.includes(targetUser)) ||
-        (cUser.length >= 5 && targetUser.includes(cUser))
-      ) {
-        matches.push(student);
-      }
-    }
-
-    const unique = [];
-    const seen = new Set();
-    for (const student of matches) {
-      const key = `${student.sourceCollection || ''}:${student.id || student.name || ''}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(student);
-    }
-    return unique.length === 1 ? unique[0] : null;
+    return localExact || null;
   }
 
   function pickObjectValue(data, names) {
@@ -363,7 +312,7 @@
   function collectEmails(data, id) {
     const raw = [];
     raw.push(id);
-    raw.push(pickObjectValue(data, ['email', 'correo', 'correo electronico', 'correo electrónico', 'mail', 'emailEstudiante', 'email estudiante', 'correoEstudiante', 'correo estudiante', 'emailAlumno', 'email alumno', 'correoAlumno', 'correo alumno', 'emailAcudiente', 'correoAcudiente', 'correo electronico envio de guias e informacion adicional', 'correo electrónico envío de guías e información adicional', 'correo_electronico_envio_de_guias_e_informacion_adicional']));
+    raw.push(pickObjectValue(data, ['email', 'correo', 'correo electronico', 'correo electrÃ³nico', 'mail', 'emailEstudiante', 'email estudiante', 'correoEstudiante', 'correo estudiante', 'emailAlumno', 'email alumno', 'correoAlumno', 'correo alumno', 'emailAcudiente', 'correoAcudiente', 'correo electronico envio de guias e informacion adicional', 'correo electrÃ³nico envÃ­o de guÃ­as e informaciÃ³n adicional', 'correo_electronico_envio_de_guias_e_informacion_adicional']));
     for (const key of ['emails', 'correos']) {
       const value = data?.[key];
       if (Array.isArray(value)) raw.push(...value);
@@ -380,7 +329,7 @@
     const full = String(pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName', 'estudiante', 'studentName', 'nombreEstudianteCompleto', 'nombre estudiante completo', 'nombre del estudiante', 'nombre_del_estudiante', 'nombre y apellido', 'nombre_y_apellido', 'nombres y apellidos', 'nombres_y_apellidos', 'nombre acudiente estudiante', 'alumno', 'cliente']) || '').trim();
     const firstEmail = collectEmails(data, id)[0] || '';
     const name = full || [first, last].filter(Boolean).join(' ').trim() || String(data?.nombre || data?.name || id || firstEmail).trim();
-    const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificación']);
+    const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificaciÃ³n']);
     const activeText = norm(activeRaw);
     const inactive = activeText.includes('inactivo') || activeText.includes('inactiva') || activeText.includes('exestudiante') || activeText.includes('retirado');
     const active = activeRaw === false ? false : !inactive;
@@ -402,7 +351,7 @@
   }
 
   function fromWixRow(row, idx) {
-    const correo = normalizeEmail(pick(row, ['Email', 'Correo electronico', 'Correo electrónico', 'Email del cliente']));
+    const correo = normalizeEmail(pick(row, ['Email', 'Correo electronico', 'Correo electrÃ³nico', 'Email del cliente']));
     const wixName = getWixName(row);
     const official = (correo ? findOfficialStudentByEmail(correo) : null) || findLocalStudentByName(wixName);
     const fechaW = pick(row, ['Hora de inicio de reserva', 'Fecha', 'Fecha de reserva', 'Start Time', 'Booking start time']);
@@ -413,6 +362,7 @@
       estudianteWix: wixName,
       estudianteOficial: official?.name || '',
       correo,
+      studentId: official?.id || '',
       officialStudentId: official?.id || '',
       officialStudentCollection: official?.sourceCollection || '',
       officialMatchStatus: official ? 'matched' : (correo ? 'missing' : 'no-email'),
@@ -450,6 +400,7 @@
     if (officialStudentsError) issues.push('sin validar estudiantes activos');
     if (!normalized.correo) issues.push('sin correo');
     if (!normalized.estudianteKey) issues.push('sin estudiante');
+    if (!normalized.studentId) issues.push('sin studentId canÃ³nico');
     if (!normalized.fecha) issues.push('sin fecha');
     if (!normalized.servicio) issues.push('sin servicio');
     if (normalized.fecha && !shouldCountClassDate(normalized.fecha)) issues.push(skipReason(normalized.fecha));
@@ -505,11 +456,13 @@
       if (local) {
         row.estudiante = local.name;
         row.estudianteOficial = local.name;
+        row.studentId = local.id || '';
         row.officialStudentId = local.id || local.nameKey || '';
         row.officialStudentCollection = local.sourceCollection || 'rip/local';
         row.officialMatchStatus = 'matched';
       } else {
         row.estudianteOficial = '';
+        row.studentId = '';
         row.officialStudentId = '';
         row.officialStudentCollection = '';
         row.officialMatchStatus = row.correo ? 'missing' : 'no-email';
@@ -581,7 +534,7 @@
     els.previewBody.innerHTML = previewRows.slice(0, 200).map((row) => `
       <tr data-index="${row.sourceIndex}" title="${escapeHTML(row.reason || '')}">
         <td><span class="status-pill ${row.status}">${escapeHTML(row.label)}</span></td>
-        <td contenteditable="true" data-field="estudiante" title="Wix: ${escapeHTML(row.estudianteWix || '')} · Correo: ${escapeHTML(row.correo || '')}">${escapeHTML(row.estudiante)}</td>
+        <td contenteditable="true" data-field="estudiante" title="Wix: ${escapeHTML(row.estudianteWix || '')} Â· Correo: ${escapeHTML(row.correo || '')}">${escapeHTML(row.estudiante)}</td>
         <td contenteditable="true" data-field="fechaW">${escapeHTML(row.fechaW)}</td>
         <td contenteditable="true" data-field="servicio">${escapeHTML(row.servicio)}</td>
         <td contenteditable="true" data-field="profesor">${escapeHTML(row.profesor)}</td>
@@ -623,7 +576,7 @@
     }).join('');
     return `<section class="calendar-month">
       <h4>${escapeHTML(title.charAt(0).toUpperCase() + title.slice(1))}</h4>
-      <div class="mini-sub">${stats.uploaded} subidos Â· ${stats.missing} faltan</div>
+      <div class="mini-sub">${stats.uploaded} subidos Ã‚Â· ${stats.missing} faltan</div>
       <div class="calendar-head"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
       <div class="calendar-mini">${days}</div>
     </section>`;

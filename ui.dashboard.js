@@ -92,7 +92,7 @@
   // =========================
   // Base de datos externa
   // =========================
-  const BD_URL = 'https://musicala.github.io/basededatosmusicala/';
+  const BD_URL = window.RIP_STUDENT_HUB_URL || '';
   let __bdData = null;      // null = no cargado, Array = cargado
   let __bdLoading = false;
 
@@ -303,7 +303,11 @@
     const rows = window.RIPCalculations?.markDuplicateClasses
       ? window.RIPCalculations.markDuplicateClasses(ctx?.state?.registro || [])
       : (ctx?.state?.registro || []);
-    return rows.filter(r => r?.duplicateReview && wanted.has(r.estudianteKey || norm(r.estudiante)));
+    return rows.filter(r => r?.duplicateReview && (
+      wanted.has(r.groupKey || '') ||
+      wanted.has(String(r.studentId || '').trim()) ||
+      wanted.has(r.estudianteKey || norm(r.estudiante))
+    ));
   }
 
   async function verifyAndDeleteDuplicateRows(ctx, title, items, onPickStudent, options) {
@@ -315,10 +319,10 @@
       return;
     }
     if (!window.RIPRepository?.deleteRegistroRow) {
-      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay conexi�n de edici�n para eliminar registros.', 'warn');
+      window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'No hay conexión de edición para eliminar registros.', 'warn');
       return;
     }
-    const msg = `Se eliminaran ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y se dejan para revision manual.` : ''} �Continuar?`;
+    const msg = `Se eliminarán ${deletable.length} clase(s) duplicada(s).${missingId ? ` ${missingId} no tienen ID y se dejan para revisión manual.` : ''} ¿Continuar?`;
     if (!deletable.length || !confirm(msg)) return;
     window.RIPUI?.shared?.toast?.(ctx?.el?.toastWrap, 'Eliminando duplicadas...', 'info');
     let deleted = 0;
@@ -371,7 +375,7 @@
           `<button type="button" id="btnCargarBD" class="btn small ghost" style="vertical-align:middle;">` +
           `🗄️ Cargar base de datos</button>`;
       } else if (isDuplicateList) {
-        el.fichaSub.innerHTML = 'Revisa los estudiantes y elimina solo las filas marcadas como duplicadas &nbsp;�&nbsp; <button type="button" id="btnDeleteDuplicateClasses" class="btn small danger" style="vertical-align:middle;">Verificar y eliminar duplicadas</button>';
+        el.fichaSub.innerHTML = 'Revisa los estudiantes y elimina solo las filas marcadas como duplicadas &nbsp;·&nbsp; <button type="button" id="btnDeleteDuplicateClasses" class="btn small danger" style="vertical-align:middle;">Verificar y eliminar duplicadas</button>';
       } else {
         el.fichaSub.textContent = 'Selecciona un estudiante para abrir su ficha';
       }
@@ -775,4 +779,3 @@
     restoreRegistroTableHead
   };
 })();
-
