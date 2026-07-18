@@ -353,6 +353,13 @@
         (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
       if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
     }
+    // Correcciones confirmadas de llaves heredadas. Se aplican después del
+    // directorio para que una llave antigua no vuelva a crear otra ficha.
+    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
+      const legacyKey = norm(legacy);
+      const targetKey = String(target || '').trim();
+      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
+    }
 
     const groupKeyOf = (record) => (calc?.getStudentGroupingKey
       ? calc.getStudentGroupingKey(record, aliasMap)

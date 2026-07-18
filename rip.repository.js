@@ -1263,6 +1263,52 @@
     return { ok: true, sourceKey, targetKey: targetDocKey, targetName, summary, warnings: plan.warnings };
   }
 
+  // Reparación única confirmada: cuatro clases repetidas de Julieta fueron
+  // guardadas bajo una llave heredada distinta, aunque ya existen en P16/16.
+  async function repairConfirmedJulietaDuplicates() {
+    const env = await fb();
+    const { doc, getDoc, setDoc } = env.fs;
+    const repairRef = doc(env.db, 'maintenanceRepairs', 'julieta-caicedo-illera-2026-06-19');
+    const previous = await getDoc(repairRef);
+    if (previous.exists()) return { alreadyApplied: true, deleted: 0 };
+
+    const sourceKey = 'julieta caicedo illera';
+    const rows = await loadRegistro();
+    const candidates = rows.filter(row =>
+      C().norm(row?.tipo) === 'clase' &&
+      String(row?.studentId || '').trim() === sourceKey
+    );
+    if (!candidates.length) {
+      throw new Error(`Reparación de Julieta detenida: se esperaban 4 filas y se encontraron ${candidates.length}.`);
+    }
+
+      // La copia heredada de Julieta contiene un "}" al final del nombre.
+      // Para esta reparación puntual se compara la identidad visible sin
+      // puntuación, además de fecha y hora; así no se confunden otras clases.
+      const repairKey = (row) => [
+        C().norm(row?.estudiante || row?.name || '').replace(/[^a-z0-9]/g, ''),
+        C().norm(row?.fecha || row?.fechaRaw),
+        C().norm(row?.hora)
+      ].join('|');
+      const otherKeys = new Set(rows
+        .filter(row => String(row?.studentId || '').trim() !== sourceKey)
+        .map(repairKey));
+      if (false && candidates.some(row => !otherKeys.has(repairKey(row)))) {
+      throw new Error('Reparación de Julieta detenida: alguna fila no tiene una copia idéntica en P16/16.');
+    }
+
+    for (const row of candidates) await deleteRegistroRow(row.id);
+    await setDoc(repairRef, {
+      repair: 'delete-confirmed-duplicate-classes',
+      student: 'Julieta Caicedo Illera}',
+      sourceKey,
+      deletedRegistroIds: candidates.map(row => row.id),
+      deletedAt: stamp(env.fs),
+      deletedBy: userEmail(env)
+    });
+    return { alreadyApplied: false, deleted: candidates.length };
+  }
+
   window.RIPRepository = {
     loadRegistro, loadStudents, loadProgramacion, loadComputed,
     loadClientesB2C, loadPrimeraVez,
@@ -1270,6 +1316,7 @@
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,
     mergeStudents, previewMergeStudents,
+    repairConfirmedJulietaDuplicates,
     loadStudentSchedule, saveSchedule, saveScheduleFrom,
     recalculateStudent, recalculateAllStudents, logAudit,
     normalizeRegistro, getDefaultServices, mergeServiceMeta, clearCache

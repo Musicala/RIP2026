@@ -40,7 +40,19 @@
     const annotated = String(record.groupKey || '').trim();
     if (annotated) return annotated;
     const explicit = String(record.studentId || record.canonicalStudentId || '').trim();
-    if (explicit) return explicit;
+    /*
+      Durante la transición hay programaciones antiguas cuyo campo
+      `studentId` contiene realmente el nameKey (p. ej. "ana perez"), no el
+      ID oficial. Si el directorio ya conoce ese alias, debe apuntar al mismo
+      grupo canónico que los movimientos migrados. Un ID oficial que no sea
+      alias se conserva tal cual.
+    */
+    if (explicit) {
+      const mappedExplicit = aliasMap && typeof aliasMap.get === 'function'
+        ? String(aliasMap.get(explicit) || aliasMap.get(norm(explicit)) || '').trim()
+        : '';
+      return mappedExplicit || explicit;
+    }
     const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
     if (aliasMap && typeof aliasMap.get === 'function') {
       const mapped = String(aliasMap.get(nameKey) || '').trim();
@@ -364,7 +376,9 @@
   function buildDuplicateClassKey(row) {
     if (norm(row?.tipo) !== 'clase') return '';
     return [
-      norm(row?.estudianteKey || row?.estudiante),
+      // El nombre visible es la referencia estable para detectar copias que
+      // se hayan guardado con distintas llaves heredadas del mismo estudiante.
+      norm(row?.estudiante || row?.name || row?.estudianteKey),
       norm(row?.fecha || row?.fechaRaw),
       norm(row?.hora),
       norm(row?.profesor)

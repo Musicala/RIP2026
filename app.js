@@ -3127,6 +3127,14 @@
         );
       }
 
+      if (window.RIP_RUN_CONFIRMED_REPAIRS === true && window.RIPRepository?.repairConfirmedJulietaDuplicates) {
+        const repair = await window.RIPRepository.repairConfirmedJulietaDuplicates();
+        if (repair.deleted) {
+          clearAppCaches();
+          return boot({ force: true });
+        }
+      }
+
       if (RIPUI.table?.applyAndRender) {
         RIPUI.table.applyAndRender(ctx, state);
       }

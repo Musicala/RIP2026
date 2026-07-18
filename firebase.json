@@ -1,0 +1,20 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      ".git/**",
+      ".agents/**",
+      ".claude/**",
+      ".vscode/**",
+      "tests/**",
+      "README_PDF_FIX.txt",
+      "membrete_b64_temp.txt"
+    ]
+  }
+}

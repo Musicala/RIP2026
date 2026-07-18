@@ -50,4 +50,12 @@
     Con false (transición actual) los guarda y los marca para revisión.
   */
   window.RIP_REQUIRE_STUDENT_ID = window.RIP_REQUIRE_STUDENT_ID || false;
+
+  // Alias legados confirmados manualmente. Conservan el historial bajo una
+  // sola ficha mientras termina la migración al studentId canónico.
+  window.RIP_LEGACY_STUDENT_KEY_ALIASES = {
+    ...(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {}),
+    'fundacion': 'fundacion san antonio (gmmmc)'
+  };
+  window.RIP_RUN_CONFIRMED_REPAIRS = true;
 })();
