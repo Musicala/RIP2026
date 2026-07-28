@@ -335,11 +335,17 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const s = norm(servicio);
-    if (isTrialCP(row)) return { clasif: 'CP de Clase de prueba', clasifPago: tipo === 'pago' ? 'CP de Clase de prueba' : '' };
-    if (isCourtesyCC(row)) return { clasif: 'CC de Clase de cortesia', clasifPago: tipo === 'pago' ? 'CC de Clase de cortesia' : '' };
-    if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
-    if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
+      /*
+        En pagos manda el servicio comprado. Un comentario puede explicar que
+        el paquete incluye una prueba, pero no convierte todo el paquete en
+        crédito de "Prueba".
+      */
+      const serviceOnly = { ...row, comentario: '' };
+      if (isTrialCP(serviceOnly)) return { clasif: 'CP de Clase de prueba', clasifPago: 'CP de Clase de prueba' };
+      if (isCourtesyCC(serviceOnly)) return { clasif: 'CC de Clase de cortesia', clasifPago: 'CC de Clase de cortesia' };
+      if (isTrial(serviceOnly)) return { clasif: 'Prueba', clasifPago: 'Prueba' };
+      if (isCourtesy(serviceOnly)) return { clasif: 'Cortesia', clasifPago: 'Cortesia' };
       if (s.includes('musigym')) return { clasif: 'Pago', clasifPago: 'Musigym' };
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
@@ -352,6 +358,10 @@
       if (s.includes('sede') && s.includes('grupal')) return { clasif: 'Pago', clasifPago: 'MS G' };
       return { clasif: 'Pago', clasifPago: 'Pago' };
     }
+    if (isTrialCP(row)) return { clasif: 'CP de Clase de prueba', clasifPago: '' };
+    if (isCourtesyCC(row)) return { clasif: 'CC de Clase de cortesia', clasifPago: '' };
+    if (isTrial(row)) return { clasif: 'Prueba', clasifPago: '' };
+    if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: '' };
     if (tipo === 'multa') return { clasif: 'Multa', clasifPago: '' };
     if (s.includes('musifamiliar')) return { clasif: 'MF', clasifPago: '' };
     if (s.includes('ensamble')) return { clasif: 'Ensamble', clasifPago: '' };

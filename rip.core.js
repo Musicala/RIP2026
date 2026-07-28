@@ -169,11 +169,13 @@
     if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
     const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
     const s = servicio;
-    if (isTrialCPText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: isPago ? 'CP de Clase de prueba' : '' };
-    if (isCourtesyCCText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: isPago ? 'CC de Clase de cortesia' : '' };
-    if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
-    if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
+      // En pagos, una mención incidental del comentario no reemplaza el
+      // servicio realmente comprado.
+      if (isTrialCPText(servicio, '', clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: 'CP de Clase de prueba' };
+      if (isCourtesyCCText(servicio, '', clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: 'CC de Clase de cortesia' };
+      if (isTrialText(servicio, '')) return { clasifAuto: 'Prueba', clasifPagoAuto: 'Prueba' };
+      if (isCourtesyText(servicio, '')) return { clasifAuto: 'Cortesia', clasifPagoAuto: 'Cortesia' };
       if (test(s, /musigym/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Musigym' };
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
@@ -186,6 +188,10 @@
       if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS G' };
       return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
     }
+    if (isTrialCPText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: '' };
+    if (isCourtesyCCText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: '' };
+    if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: '' };
+    if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: '' };
     if (test(s, /Musifamiliar/i)) return { clasifAuto: 'MF', clasifPagoAuto: '' };
     if (test(s, /Ensamble/i)) return { clasifAuto: 'Ensamble', clasifPagoAuto: '' };
     if (test(s, /FSA/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
