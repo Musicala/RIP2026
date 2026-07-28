@@ -50,6 +50,7 @@
       <button class="btn primary" id="btnRefresh">↻ Actualizar</button>
       <button class="btn ghost" id="btnTop2025" style="display:none">🗂️ 2025</button>
 
+      <button class="btn ghost" id="btnAccessSettings">Vincular docentes</button>
       <span class="pill" id="badgeMode">Firebase</span>
       <span class="pill soft" id="badgeCount">0 registros</span>
 
@@ -68,6 +69,7 @@
       <button id="viewTabPrimeraVez" class="tab">Primera vez</button>
       <button id="viewTabClientes" class="tab">Clientes</button>
       <button id="viewTabKpis" class="tab">KPIs</button>
+      <button id="viewTabPerformance" class="tab" hidden>🕘 Historial</button>
     </div>
   </div>
 
@@ -251,6 +253,55 @@
       <p class="muted" id="dashSubClas">Click en cualquier tarjeta para ver la lista.</p>
     </div>
     <div class="grid" id="dashGridClas"></div>
+  </section>
+
+  <section class="card" id="performanceView" style="display:none">
+    <div class="card-title">
+      <h3 id="performanceTitle">Historial de actividad</h3>
+      <p class="muted" id="performanceIntro">Tus cambios registrados con fecha, hora y correo.</p>
+    </div>
+    <div class="filters-actions">
+      <label class="flabel" for="performanceRange">Período</label>
+      <select id="performanceRange" class="fctrl" style="max-width:180px">
+        <option value="today">Hoy</option>
+        <option value="7d" selected>Últimos 7 días</option>
+        <option value="30d">Últimos 30 días</option>
+        <option value="all">Todo el historial</option>
+      </select>
+      <button class="btn primary" id="btnPerformanceRefresh">Actualizar</button>
+      <span class="status" id="performanceStatus">Carga el historial de actividad.</span>
+    </div>
+    <div class="filters-grid" id="performanceFilters" style="margin-top:12px">
+      <div class="fgrp" id="performanceUserWrap">
+        <div class="flabel">Persona</div>
+        <select id="performanceUser" class="fctrl"><option value="">Todas las personas</option></select>
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Día exacto</div>
+        <input id="performanceDate" class="fctrl" type="date">
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Actividad</div>
+        <select id="performanceAction" class="fctrl"><option value="">Todas las actividades</option></select>
+      </div>
+    </div>
+    <div class="kpis" id="performanceKpis" style="margin-top:14px"></div>
+    <div class="performance-layout">
+      <div class="performance-panel">
+        <strong>Actividad por hora</strong>
+        <div class="performance-hours" id="performanceHours"></div>
+      </div>
+      <div class="performance-panel">
+        <strong id="performanceTasksTitle">Tareas más realizadas</strong>
+        <div class="performance-tasks" id="performanceTasks"></div>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead><tr><th>Fecha y hora</th><th>Correo</th><th>Tarea</th><th>Detalle</th></tr></thead>
+        <tbody id="performanceBody"><tr><td colspan="4" class="empty-td">Carga el historial de actividad.</td></tr></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="card" id="primeraVezView" style="display:none">
@@ -612,15 +663,18 @@
 <script src="./firebase.config.js?v=2026.repair3"></script>
 <script src="./rip.calculations.js?v=2026.repair3"></script>
 <script src="./firebase.auth.js?v=2026.firebase"></script>
-<script src="./rip.repository.js?v=2026.repair8"></script>
+<script src="./rip.repository.js?v=2026.identity3"></script>
 <script src="./rip.identity.js?v=2026.studentid2"></script>
-<script src="./rip.core.js?v=2026.repair3"></script>
-<script src="./ui.shared.js?v=2026.clientes1"></script>
+<script src="./rip.core.js?v=2026.identity3"></script>
+<script src="./ui.shared.js?v=2026.performance1"></script>
 <script src="./ui.dashboard.js?v=2026.dias-sin-clase2"></script>
-<script src="./ui.ficha.js?v=2026.repair1"></script>
+<script src="./ui.performance.js?v=2026.performance1"></script>
+<script src="./ui.ficha.js?v=2026.identity3"></script>
 <script src="./ui.table.js?v=2026.studentid2"></script>
-<script src="./rip.programacion.js?v=2026.studentid2"></script>
-<script src="./app.js?v=2026.repair3"></script>
+<script src="./rip.programacion.js?v=2026.identity3"></script>
+<script src="./rip.programacion-active.js?v=2026.active-only1"></script>
+<script src="./app.js?v=2026.performance1"></script>
+<script src="./rip.access.js?v=2026.teacher-link1"></script>
 <script src="./rip.sync.js?v=2026.sync1"></script>
 <script src="./ui.editor.js?v=2026.firebase"></script>
 <script>

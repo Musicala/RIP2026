@@ -9,6 +9,12 @@
     'musicalaasesor@gmail.com'
   ];
 
+  // Administración con acceso a la auditoría completa y sus KPIs.
+  window.RIP_AUDIT_ADMIN_EMAILS = [
+    'catalina.medina.leal@gmail.com',
+    'alekcaballeromusic@gmail.com'
+  ];
+
   window.RIP_FIREBASE_CONFIG = window.RIP_FIREBASE_CONFIG || {
     apiKey: 'AIzaSyCaCizVkfWdx97LROV7PYQbFXLPMpxynBg',
     authDomain: 'rip-musicala.firebaseapp.com',

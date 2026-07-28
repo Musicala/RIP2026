@@ -155,7 +155,10 @@
         const student = {
           id: canonicalId,
           sourceCollection: 'rip/students',
-          name: String(raw.name || raw.estudiante || '').trim() || canonicalId,
+          // El directorio puede conservar campos del formulario original.
+          // Si existen, son más fiables que `name`, que en algunos registros
+          // heredados quedó con el nombre del acudiente que hizo la reserva.
+          name: getOfficialStudentName(raw) || canonicalId,
           nameKey: String(raw.nameKey || raw.estudianteKey || '').trim(),
           emails,
           active: true
@@ -417,12 +420,44 @@
     return Array.from(new Set(raw.flatMap(extractEmails).concat(raw.map(normalizeEmail)).filter(v => v.includes('@'))));
   }
 
+  function getOfficialStudentName(data) {
+    // Primero los campos que explícitamente nombran al estudiante/alumno.
+    // No se incluyen campos de acudiente o cliente: Wix suele registrar ahí
+    // a la mamá/papá que pagó, no a quien tomó la clase.
+    const full = String(pickObjectValue(data, [
+      'nombreEstudianteCompleto', 'nombre estudiante completo',
+      'nombre del estudiante', 'nombre_del_estudiante',
+      'studentName', 'student name',
+      'nombre y apellido', 'nombre_y_apellido',
+      'nombres y apellidos', 'nombres_y_apellidos',
+      'alumno',
+      'estudiante'
+    ]) || '').trim();
+    if (full) return full;
+
+    const first = String(pickObjectValue(data, [
+      'nombresEstudiante', 'nombres estudiante',
+      'nombreEstudiante', 'nombre estudiante',
+      'nombresAlumno', 'nombres alumno',
+      'nombreAlumno', 'nombre alumno',
+      'firstName', 'first name', 'nombres', 'nombre', 'name'
+    ]) || '').trim();
+    const last = String(pickObjectValue(data, [
+      'apellidosEstudiante', 'apellidos estudiante',
+      'apellidoEstudiante', 'apellido estudiante',
+      'apellidosAlumno', 'apellidos alumno',
+      'apellidoAlumno', 'apellido alumno',
+      'lastName', 'last name', 'apellidos', 'apellido'
+    ]) || '').trim();
+    return [first, last].filter(Boolean).join(' ').trim() || String(
+      pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName']) || ''
+    ).trim();
+  }
+
   function normalizeOfficialStudent(data, id, sourceCollection) {
-    const first = String(pickObjectValue(data, ['nombre', 'name', 'nombres', 'firstName', 'first name', 'nombreEstudiante', 'nombre estudiante', 'nombreAlumno', 'nombre alumno']) || '').trim();
-    const last = String(pickObjectValue(data, ['apellido', 'apellidos', 'lastName', 'last name', 'apellidoEstudiante', 'apellido estudiante', 'apellidoAlumno', 'apellido alumno']) || '').trim();
-    const full = String(pickObjectValue(data, ['nombre completo', 'nombreCompleto', 'fullName', 'displayName', 'estudiante', 'studentName', 'nombreEstudianteCompleto', 'nombre estudiante completo', 'nombre del estudiante', 'nombre_del_estudiante', 'nombre y apellido', 'nombre_y_apellido', 'nombres y apellidos', 'nombres_y_apellidos', 'nombre acudiente estudiante', 'alumno', 'cliente']) || '').trim();
+    const name = getOfficialStudentName(data) || String(data?.nombre || data?.name || id || '').trim();
     const firstEmail = collectEmails(data, id)[0] || '';
-    const name = full || [first, last].filter(Boolean).join(' ').trim() || String(data?.nombre || data?.name || id || firstEmail).trim();
+    const resolvedName = name || firstEmail;
     const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificación']);
     const activeText = norm(activeRaw);
     const inactive = activeText.includes('inactivo') || activeText.includes('inactiva') || activeText.includes('exestudiante') || activeText.includes('retirado');
@@ -431,7 +466,7 @@
       // studentId canonico si el doc lo trae; el id del doc solo como respaldo.
       id: String(data?.studentId || '').trim() || id,
       sourceCollection,
-      name,
+      name: resolvedName,
       emails: collectEmails(data, id),
       active,
       raw: data

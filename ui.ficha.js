@@ -870,13 +870,12 @@
     setText(el.fichaSub, `Registro ${year || '2026'} (solo lectura)`);
     setText(el.fichaStudent, student ? student.name : '—');
 
-    const lastRow = rows[0] || null;
     const lastPago = getLastPagoRow(rows);
     const lastClase = getLastClaseRow(rows);
     const { saldoTotal, items } = buildSaldoBreakdown(rows);
     const pagosStats = getPagosStats(rows);
 
-    setText(el.fichaFecha, lastRow ? (lastRow.fechaRaw || '—') : '—');
+    setText(el.fichaFecha, lastClase ? (lastClase.fechaRaw || lastClase.fecha || '—') : '—');
 
     setText(
       el.fichaUltPago,
@@ -885,36 +884,24 @@
         : '—'
     );
 
-    setText(
-      el.fichaProxPago,
-      lastClase
-        ? `${lastClase.fechaRaw || '—'}${lastClase.servicio ? ' · ' + lastClase.servicio : ''}`
-        : '—'
-    );
+    // La próxima clase la completa Programación con una fecha realmente futura.
+    // No usar aquí la última clase del registro como si fuera la siguiente.
+    setText(el.fichaProxPago, '—');
     setText(el.fichaUltPagoValor, pagosStats.lastPagoValor ? fmtMoney(pagosStats.lastPagoValor) : '—');
     setText(el.fichaTotalPagos, pagosStats.totalPagos ? fmtMoney(pagosStats.totalPagos) : '—');
     setText(el.fichaPrimeraVez, primeraVezText(getPrimeraVezForStudent(ctx, student)));
 
     // Status badge
     if (el.fichaStatusBadge) {
-      const parseDate = (raw) => {
-        if (!raw) return null;
-        const m = String(raw).match(/(\d{4})-(\d{2})-(\d{2})/);
-        if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
-        return null;
-      };
-      const lastDate = parseDate(lastRow?.fechaRaw);
-      const daysSinceLast = lastDate ? Math.floor((Date.now() - lastDate.getTime()) / 86400000) : null;
-      let statusLabel, statusClass;
-      if (daysSinceLast === null) {
-        statusLabel = 'Sin registro'; statusClass = 'inactivo';
-      } else if (daysSinceLast <= 45) {
-        statusLabel = 'Activo'; statusClass = 'activo';
-      } else if (saldoTotal > 0) {
-        statusLabel = 'Activo en pausa'; statusClass = 'pausa';
-      } else {
-        statusLabel = 'Inactivo'; statusClass = 'inactivo';
-      }
+      const statusLabel = window.RIPCalculations?.calculateStudentStatus
+        ? window.RIPCalculations.calculateStudentStatus(rows)
+        : 'Sin registro';
+      const statusNorm = norm(statusLabel);
+      const statusClass = statusNorm.startsWith('activo en pausa')
+        ? 'pausa'
+        : (statusNorm === 'activo' || statusNorm.startsWith('activo no registro'))
+          ? 'activo'
+          : 'inactivo';
       el.fichaStatusBadge.textContent = statusLabel;
       el.fichaStatusBadge.className = `ficha-status-badge ${statusClass}`;
     }

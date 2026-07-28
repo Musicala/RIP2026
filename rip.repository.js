@@ -117,7 +117,7 @@
   ];
   async function fb() { return window.RIPFirebase.ready; }
   function stamp(fs) { return fs.serverTimestamp(); }
-  function userEmail(env) { return env.user?.email || ''; }
+  function userEmail(env) { return String(env.user?.email || '').trim().toLowerCase(); }
   function identity() { return window.RIPIdentity || null; }
 
   function isCanonicalId(value) {
@@ -273,7 +273,7 @@
     const list = Array.isArray(names) ? names : [names];
     for (const name of list) {
       for (const key of Array.from(collectionCache.keys())) {
-        if (key.startsWith(`${name}|`)) collectionCache.delete(key);
+        if (key.startsWith(`${name}|`) || key.startsWith(`${name}:`)) collectionCache.delete(key);
       }
       if (name === 'registro') registroCache = null;
     }
@@ -307,6 +307,20 @@
   async function loadComputed() { return loadCollection('studentComputed'); }
   async function loadClientesB2C() { return loadCollection('clientesB2C', 'fechaTs'); }
   async function loadPrimeraVez() { return loadCollection('primeraVez', 'fechaClaseTs'); }
+  async function loadAuditLog(userEmail = '') {
+    const email = String(userEmail || '').trim().toLowerCase();
+    if (!email) return loadCollection('auditLog', 'createdAt');
+    const key = collectionCacheKey(`auditLog:${email}`, 'createdAt');
+    if (collectionCache.has(key)) return collectionCache.get(key);
+    const env = await fb();
+    const { collection, getDocs, query, where, orderBy } = env.fs;
+    const promise = getDocs(query(
+      collection(env.db, 'auditLog'), where('userEmail', '==', email), orderBy('createdAt', 'desc')
+    )).then(snap => snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      .catch((err) => { collectionCache.delete(key); throw err; });
+    collectionCache.set(key, promise);
+    return promise;
+  }
 
   async function loadPaymentMeta() {
     const [students, registro] = await Promise.all([loadStudents(), loadCollection('registro')]);
@@ -359,7 +373,13 @@
       if (row.estudianteKey && row.estudianteKey !== canonical) {
         const legacyRef = doc(env.db, 'students', row.estudianteKey);
         const legacySnap = await getDoc(legacyRef);
-        if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
+        const legacyData = legacySnap.exists() ? legacySnap.data() : null;
+        const aliasNeedsRepair = legacyData && (
+          String(legacyData.legacyAliasOf || '') !== canonical ||
+          String(legacyData.officialStudentId || '') !== canonical ||
+          String(legacyData.studentId || '') !== canonical
+        );
+        if (aliasNeedsRepair) {
           await setDoc(legacyRef, {
             officialStudentId: canonical,
             studentId: canonical,
@@ -475,7 +495,12 @@
     if (canonical && displayNameKey && displayNameKey !== canonical) {
       const legacyRef = doc(env.db, 'studentComputed', displayNameKey);
       const legacySnap = await getDoc(legacyRef);
-      if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
+      const legacyData = legacySnap.exists() ? legacySnap.data() : null;
+      const aliasNeedsRepair = legacyData && (
+        String(legacyData.legacyAliasOf || '') !== canonical ||
+        String(legacyData.canonicalStudentId || '') !== canonical
+      );
+      if (aliasNeedsRepair) {
         await setDoc(legacyRef, {
           legacyAliasOf: canonical,
           canonicalStudentId: canonical,
@@ -1311,7 +1336,7 @@
 
   window.RIPRepository = {
     loadRegistro, loadStudents, loadProgramacion, loadComputed,
-    loadClientesB2C, loadPrimeraVez,
+      loadClientesB2C, loadPrimeraVez, loadAuditLog,
     addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow,
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,

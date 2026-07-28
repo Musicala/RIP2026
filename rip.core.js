@@ -15,6 +15,7 @@
   'use strict';
 
   const RIPCore = {};
+  let activeAliasMap = new Map();
 
   // =========================
   // Config (ajusta URLs)
@@ -336,6 +337,69 @@
   };
   const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
 
+  function buildStudentAliasMap(students) {
+    const candidatesByName = new Map();
+    const directAliases = new Map();
+
+    const addCandidate = (nameKey, canonical) => {
+      const name = norm(nameKey);
+      const target = String(canonical || '').trim();
+      if (!name || !target) return;
+      if (!candidatesByName.has(name)) candidatesByName.set(name, new Set());
+      candidatesByName.get(name).add(target);
+    };
+
+    for (const s of students || []) {
+      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const legacyTarget = String(s.legacyAliasOf || '').trim();
+      const declaredCanonical = String(s.officialStudentId || s.canonicalStudentId || '').trim();
+      const selfId = String(s.id || '').trim();
+      const studentId = String(s.studentId || '').trim();
+      const canonical = legacyTarget || declaredCanonical || (studentId && studentId === selfId ? studentId : '');
+
+      addCandidate(nameKey, canonical);
+
+      if (legacyTarget) {
+        [selfId, studentId, declaredCanonical].forEach((alias) => {
+          const aliasKey = String(alias || '').trim();
+          if (aliasKey && aliasKey !== legacyTarget) directAliases.set(aliasKey, legacyTarget);
+        });
+      }
+    }
+
+    const aliasMap = new Map(directAliases);
+    for (const [nameKey, candidates] of candidatesByName.entries()) {
+      if (candidates.size === 1) aliasMap.set(nameKey, Array.from(candidates)[0]);
+    }
+
+    // Correcciones confirmadas tienen prioridad incluso si el nombre es ambiguo.
+    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
+      const legacyKey = norm(legacy);
+      const targetKey = String(target || '').trim();
+      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
+    }
+
+    return aliasMap;
+  }
+
+  const resolveActiveStudentKey = (key) => {
+    const raw = String(key || '').trim();
+    if (!raw) return '';
+    return String(activeAliasMap.get(raw) || activeAliasMap.get(norm(raw)) || raw).trim();
+  };
+
+  const activeGroupKeyOf = (record) => {
+    const calc = window.RIPCalculations;
+    return calc?.getStudentGroupingKey
+      ? calc.getStudentGroupingKey(record, activeAliasMap)
+      : (record?.groupKey || record?.studentId || record?.estudianteKey || norm(record?.estudiante));
+  };
+
+  RIPCore.setIdentityDirectory = (students) => {
+    activeAliasMap = buildStudentAliasMap(students);
+    return activeAliasMap;
+  };
+
   function buildFirebasePack(registro, students, programacion, computed) {
     const calc = window.RIPCalculations;
 
@@ -346,20 +410,7 @@
       de un estudiante — con o sin studentId propio — agrupan bajo la misma
       llave canónica y dos homónimos con IDs distintos jamás se mezclan.
     */
-    const aliasMap = new Map();
-    for (const s of students || []) {
-      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
-      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
-        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
-      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
-    }
-    // Correcciones confirmadas de llaves heredadas. Se aplican después del
-    // directorio para que una llave antigua no vuelva a crear otra ficha.
-    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
-      const legacyKey = norm(legacy);
-      const targetKey = String(target || '').trim();
-      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
-    }
+    const aliasMap = RIPCore.setIdentityDirectory(students);
 
     const groupKeyOf = (record) => (calc?.getStudentGroupingKey
       ? calc.getStudentGroupingKey(record, aliasMap)
@@ -408,7 +459,13 @@
       if (ts > prev) lastClassTsByStudent.set(r.groupKey, ts);
     }
     const today = startOfDay(new Date());
-    const computedMap = new Map((computed || []).map(c => [groupKeyOf(c) || c.id, c]));
+    const computedMap = new Map();
+    for (const c of computed || []) {
+      const key = groupKeyOf(c) || c.id;
+      if (!key) continue;
+      const previous = computedMap.get(key);
+      if (!previous || (previous.legacyAliasOf && !c.legacyAliasOf)) computedMap.set(key, c);
+    }
     const allStudents = Array.from(set.entries()).map(([key, name]) => {
       const c = computedMap.get(key) || {};
       const paramClasif = paramsMap.get(key) || '';
@@ -1015,9 +1072,12 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     const calc = window.RIPCalculations;
-    // Coincide por studentId canónico O por llave heredada (transición).
+    const targetKey = resolveActiveStudentKey(studentKey);
+    // Usa el mismo resolutor canónico del tablero. El fallback solo cubre
+    // cargas antiguas que todavía no han recibido el directorio de identidad.
     const studentRows = (registro || []).filter((r) => (
-      calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey
+      activeGroupKeyOf(r) === targetKey ||
+      (!activeAliasMap.size && (calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey))
     ));
     const subset = getMusigymRows(studentRows);
     for (const r of subset) {
@@ -1065,9 +1125,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   return registro.filter((r) => {
     if (estudianteKey) {
       const calc = window.RIPCalculations;
-      const belongs = calc?.matchesStudentKey
-        ? calc.matchesStudentKey(r, estudianteKey)
-        : r.estudianteKey === estudianteKey;
+      const targetKey = resolveActiveStudentKey(estudianteKey);
+      const belongs = activeGroupKeyOf(r) === targetKey ||
+        (!activeAliasMap.size && (calc?.matchesStudentKey
+          ? calc.matchesStudentKey(r, estudianteKey)
+          : r.estudianteKey === estudianteKey));
       if (!belongs) return false;
     }
 

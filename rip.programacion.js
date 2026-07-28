@@ -581,6 +581,8 @@
     setText(ctx.el.progStudentNext, stats.nextISO || '—');
     setText(ctx.el.progStudentFuture, String(stats.futureCount ?? 0));
     setText(ctx.el.progStudentAlert, getAlertTextFromSchedule(clean, today));
+    // El resumen de la ficha debe mostrar la misma próxima fecha futura.
+    setText(ctx.el.fichaProxPago, stats.nextISO || '—');
 
     paintStudentScheduleGrid(ctx, state);
   }
