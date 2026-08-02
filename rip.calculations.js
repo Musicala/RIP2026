@@ -309,12 +309,15 @@
   function computeMovimiento(row) {
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
-    const comentario = norm(row?.comentario);
+    const existing = Number(row?.movimiento ?? row?.movimientoSaldo);
     if (isTrialCP(row) && tipo === 'pago') return 1;
     if (isCourtesyCC(row) && tipo === 'pago') return 1;
     if (isTrialCP(row) && tipo === 'clase') return -1;
     if (isCourtesyCC(row) && tipo === 'clase') return -1;
     if (isTrialOrCourtesy(row) && tipo === 'clase') return 0;
+    // Un movimiento importado/cargado explícitamente prevalece sobre la
+    // inferencia general. Las reglas especiales anteriores sí lo sustituyen.
+    if (Number.isFinite(existing) && existing !== 0) return existing;
     if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
     if (tipo === 'pago') {
@@ -335,17 +338,24 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const s = norm(servicio);
+    const existingClasif = String(row?.clasif || '').trim();
+    const existingClasifPago = String(row?.clasifPago || '').trim();
+    // "No clasificado" es el resultado automático de una versión anterior,
+    // no una decisión manual/importada. Debe poder recalcularse cuando ahora
+    // se reconoce el servicio (por ejemplo, "MS: Piano" → "MS P").
+    const hasMeaningfulExistingClasif = existingClasif && ![
+      'no clasificado', 'sin clasificacion', 'sin clasificación', 'n/a', '-'
+    ].includes(norm(existingClasif));
+    if (hasMeaningfulExistingClasif) return { clasif: existingClasif, clasifPago: existingClasifPago };
+    if (tipo === 'multa') return { clasif: 'Multa', clasifPago: '' };
+    if (isTrialCP(row)) return { clasif: 'CP de Clase de prueba', clasifPago: tipo === 'pago' ? 'CP de Clase de prueba' : '' };
+    if (isCourtesyCC(row)) return { clasif: 'CC de Clase de cortesia', clasifPago: tipo === 'pago' ? 'CC de Clase de cortesia' : '' };
+    if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
+    if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
-      /*
-        En pagos manda el servicio comprado. Un comentario puede explicar que
-        el paquete incluye una prueba, pero no convierte todo el paquete en
-        crédito de "Prueba".
-      */
-      const serviceOnly = { ...row, comentario: '' };
-      if (isTrialCP(serviceOnly)) return { clasif: 'CP de Clase de prueba', clasifPago: 'CP de Clase de prueba' };
-      if (isCourtesyCC(serviceOnly)) return { clasif: 'CC de Clase de cortesia', clasifPago: 'CC de Clase de cortesia' };
-      if (isTrial(serviceOnly)) return { clasif: 'Prueba', clasifPago: 'Prueba' };
-      if (isCourtesy(serviceOnly)) return { clasif: 'Cortesia', clasifPago: 'Cortesia' };
+      // Taller/OpenHouse no vende una familia separada de paquete: conserva
+      // Taller como clasificación para que comparta vacacional-flex.
+      if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
       if (s.includes('musigym')) return { clasif: 'Pago', clasifPago: 'Musigym' };
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
@@ -358,11 +368,6 @@
       if (s.includes('sede') && s.includes('grupal')) return { clasif: 'Pago', clasifPago: 'MS G' };
       return { clasif: 'Pago', clasifPago: 'Pago' };
     }
-    if (isTrialCP(row)) return { clasif: 'CP de Clase de prueba', clasifPago: '' };
-    if (isCourtesyCC(row)) return { clasif: 'CC de Clase de cortesia', clasifPago: '' };
-    if (isTrial(row)) return { clasif: 'Prueba', clasifPago: '' };
-    if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: '' };
-    if (tipo === 'multa') return { clasif: 'Multa', clasifPago: '' };
     if (s.includes('musifamiliar')) return { clasif: 'MF', clasifPago: '' };
     if (s.includes('ensamble')) return { clasif: 'Ensamble', clasifPago: '' };
     if (s.includes('fsa')) return { clasif: 'FSA', clasifPago: '' };
@@ -585,49 +590,18 @@
       return String(a?.fecha || a?.fechaRaw || '').localeCompare(String(b?.fecha || b?.fechaRaw || ''));
     });
     let lastPackageTotal = 0;
-    const activeByKey = new Map();
-    const pendingByKey = new Map();
-    const queue = (map, key) => {
-      if (!map.has(key)) map.set(key, []);
-      return map.get(key);
-    };
 
     for (const row of rows) {
       if (row?.duplicateReview) continue;
       const mov = Number(row?.movimientoSaldo ?? row?.movimiento) || 0;
       const key = packageKey(row);
       if (!isMatricula(row) && isPago(row) && mov > 0 && mov <= 24) {
-        const pack = { total: Math.round(mov), remaining: Math.round(mov) };
-        lastPackageTotal = pack.total;
-        const active = activeByKey.get(key);
-        if (active && active.remaining > 0) queue(pendingByKey, key).push(pack);
-        else activeByKey.set(key, pack);
-        continue;
-      }
-      if (norm(row?.tipo) !== 'clase' || mov >= 0) continue;
-      let activeKey = key;
-      let active = activeByKey.get(activeKey) || activeByKey.get('*') || null;
-      if (!active && pendingByKey.has(key)) {
-        active = queue(pendingByKey, key).shift() || null;
-        activeKey = key;
-        if (active) activeByKey.set(activeKey, active);
-      }
-      if (!active && pendingByKey.has('*')) {
-        active = queue(pendingByKey, '*').shift() || null;
-        activeKey = '*';
-        if (active) activeByKey.set(activeKey, active);
-      }
-      if (!active) continue;
-      active.remaining = Math.max(0, active.remaining - 1);
-      if (active.remaining <= 0) {
-        const next = queue(pendingByKey, activeKey).shift() || null;
-        if (next) activeByKey.set(activeKey, next);
-        else activeByKey.delete(activeKey);
+        // La programación se limita por el último paquete válido comprado,
+        // no por el saldo ni por paquetes anteriores aún disponibles.
+        lastPackageTotal = Math.round(mov);
       }
     }
-
-    const activeTotals = Array.from(activeByKey.values()).filter(p => p.remaining > 0).map(p => p.total);
-    return activeTotals[activeTotals.length - 1] || lastPackageTotal || 24;
+    return lastPackageTotal || 24;
   }
 
   function calculateProgramacionStatus(fechas, todayISO, expectedTotal) {

@@ -35,7 +35,34 @@ service cloud.firestore {
     // reglas con match superpuesto se combinan con OR, un match restrictivo
     // aparte no lo protegería del catch-all; se mantiene bajo el mismo
     // allowlist del personal.
-    match /{document=**} {
+    function isAuditAdmin() {
+      return request.auth != null
+        && request.auth.token.email in [
+          "catalina.medina.leal@gmail.com",
+          "alekcaballeromusic@gmail.com"
+        ];
+    }
+
+    // La bitácora es inmutable desde el navegador. Administración la puede
+    // auditar completa; el resto del equipo solo puede leer sus propios eventos.
+    match /auditLog/{auditId} {
+      allow create: if isAllowed()
+        && request.resource.data.userEmail == request.auth.token.email;
+      allow read: if isAuditAdmin()
+        || (isAllowed() && resource.data.userEmail == request.auth.token.email);
+      allow update, delete: if false;
+    }
+
+    // Se enumeran para no debilitar auditLog con un match global.
+    match /{collection}/{document} {
+      allow read, write: if isAllowed()
+        && collection in [
+          'registro', 'students', 'programacion', 'studentComputed',
+          'clientesB2C', 'primeraVez', 'maintenanceRepairs', 'wixStudentEmails', 'users'
+        ];
+    }
+
+    match /{collection}/{document}/{subcollection}/{subdocument} {
       allow read, write: if isAllowed();
     }
   }

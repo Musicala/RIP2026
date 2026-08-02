@@ -15,7 +15,6 @@
   'use strict';
 
   const RIPCore = {};
-  let activeAliasMap = new Map();
 
   // =========================
   // Config (ajusta URLs)
@@ -165,17 +164,19 @@
     const pago = String(pagoRaw || '').trim();
     const clasif = String(clasifRaw || '').trim();
     const clasifPago = String(clasifPagoRaw || '').trim();
-    if (clasif) return { clasifAuto: clasif, clasifPagoAuto: clasifPago || '' };
+    const hasMeaningfulExistingClasif = clasif && ![
+      'no clasificado', 'sin clasificacion', 'sin clasificación', 'n/a', '-'
+    ].includes(norm(clasif));
+    if (hasMeaningfulExistingClasif) return { clasifAuto: clasif, clasifPagoAuto: clasifPago || '' };
     if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
     const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
     const s = servicio;
+    if (isTrialCPText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: isPago ? 'CP de Clase de prueba' : '' };
+    if (isCourtesyCCText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: isPago ? 'CC de Clase de cortesia' : '' };
+    if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
+    if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
-      // En pagos, una mención incidental del comentario no reemplaza el
-      // servicio realmente comprado.
-      if (isTrialCPText(servicio, '', clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: 'CP de Clase de prueba' };
-      if (isCourtesyCCText(servicio, '', clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: 'CC de Clase de cortesia' };
-      if (isTrialText(servicio, '')) return { clasifAuto: 'Prueba', clasifPagoAuto: 'Prueba' };
-      if (isCourtesyText(servicio, '')) return { clasifAuto: 'Cortesia', clasifPagoAuto: 'Cortesia' };
+      if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
       if (test(s, /musigym/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Musigym' };
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
@@ -188,10 +189,6 @@
       if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS G' };
       return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
     }
-    if (isTrialCPText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CP de Clase de prueba', clasifPagoAuto: '' };
-    if (isCourtesyCCText(servicio, comentarioRaw, clasif, clasifPago)) return { clasifAuto: 'CC de Clase de cortesia', clasifPagoAuto: '' };
-    if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: '' };
-    if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: '' };
     if (test(s, /Musifamiliar/i)) return { clasifAuto: 'MF', clasifPagoAuto: '' };
     if (test(s, /Ensamble/i)) return { clasifAuto: 'Ensamble', clasifPagoAuto: '' };
     if (test(s, /FSA/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
@@ -216,6 +213,7 @@
     if (/^clase$/i.test(tipo) && isTrialCPText(servicio, comentario)) return -1;
     if (/^clase$/i.test(tipo) && isCourtesyCCText(servicio, comentario)) return -1;
     if (/^clase$/i.test(tipo) && isTrialOrCourtesyText(servicio, comentario)) return 0;
+    // Conserva la corrección importada salvo las reglas especiales anteriores.
     if (Number.isFinite(existing) && existing !== 0) return existing;
     if (isCourtesyText(servicio, comentario)) return 0;
     if (/^clase$/i.test(tipo)) return -1;
@@ -343,69 +341,6 @@
   };
   const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
 
-  function buildStudentAliasMap(students) {
-    const candidatesByName = new Map();
-    const directAliases = new Map();
-
-    const addCandidate = (nameKey, canonical) => {
-      const name = norm(nameKey);
-      const target = String(canonical || '').trim();
-      if (!name || !target) return;
-      if (!candidatesByName.has(name)) candidatesByName.set(name, new Set());
-      candidatesByName.get(name).add(target);
-    };
-
-    for (const s of students || []) {
-      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
-      const legacyTarget = String(s.legacyAliasOf || '').trim();
-      const declaredCanonical = String(s.officialStudentId || s.canonicalStudentId || '').trim();
-      const selfId = String(s.id || '').trim();
-      const studentId = String(s.studentId || '').trim();
-      const canonical = legacyTarget || declaredCanonical || (studentId && studentId === selfId ? studentId : '');
-
-      addCandidate(nameKey, canonical);
-
-      if (legacyTarget) {
-        [selfId, studentId, declaredCanonical].forEach((alias) => {
-          const aliasKey = String(alias || '').trim();
-          if (aliasKey && aliasKey !== legacyTarget) directAliases.set(aliasKey, legacyTarget);
-        });
-      }
-    }
-
-    const aliasMap = new Map(directAliases);
-    for (const [nameKey, candidates] of candidatesByName.entries()) {
-      if (candidates.size === 1) aliasMap.set(nameKey, Array.from(candidates)[0]);
-    }
-
-    // Correcciones confirmadas tienen prioridad incluso si el nombre es ambiguo.
-    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
-      const legacyKey = norm(legacy);
-      const targetKey = String(target || '').trim();
-      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
-    }
-
-    return aliasMap;
-  }
-
-  const resolveActiveStudentKey = (key) => {
-    const raw = String(key || '').trim();
-    if (!raw) return '';
-    return String(activeAliasMap.get(raw) || activeAliasMap.get(norm(raw)) || raw).trim();
-  };
-
-  const activeGroupKeyOf = (record) => {
-    const calc = window.RIPCalculations;
-    return calc?.getStudentGroupingKey
-      ? calc.getStudentGroupingKey(record, activeAliasMap)
-      : (record?.groupKey || record?.studentId || record?.estudianteKey || norm(record?.estudiante));
-  };
-
-  RIPCore.setIdentityDirectory = (students) => {
-    activeAliasMap = buildStudentAliasMap(students);
-    return activeAliasMap;
-  };
-
   function buildFirebasePack(registro, students, programacion, computed) {
     const calc = window.RIPCalculations;
 
@@ -416,7 +351,20 @@
       de un estudiante — con o sin studentId propio — agrupan bajo la misma
       llave canónica y dos homónimos con IDs distintos jamás se mezclan.
     */
-    const aliasMap = RIPCore.setIdentityDirectory(students);
+    const aliasMap = new Map();
+    for (const s of students || []) {
+      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+    }
+    // Correcciones confirmadas de llaves heredadas. Se aplican después del
+    // directorio para que una llave antigua no vuelva a crear otra ficha.
+    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
+      const legacyKey = norm(legacy);
+      const targetKey = String(target || '').trim();
+      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
+    }
 
     const groupKeyOf = (record) => (calc?.getStudentGroupingKey
       ? calc.getStudentGroupingKey(record, aliasMap)
@@ -465,13 +413,7 @@
       if (ts > prev) lastClassTsByStudent.set(r.groupKey, ts);
     }
     const today = startOfDay(new Date());
-    const computedMap = new Map();
-    for (const c of computed || []) {
-      const key = groupKeyOf(c) || c.id;
-      if (!key) continue;
-      const previous = computedMap.get(key);
-      if (!previous || (previous.legacyAliasOf && !c.legacyAliasOf)) computedMap.set(key, c);
-    }
+    const computedMap = new Map((computed || []).map(c => [groupKeyOf(c) || c.id, c]));
     const allStudents = Array.from(set.entries()).map(([key, name]) => {
       const c = computedMap.get(key) || {};
       const paramClasif = paramsMap.get(key) || '';
@@ -1078,12 +1020,9 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     const calc = window.RIPCalculations;
-    const targetKey = resolveActiveStudentKey(studentKey);
-    // Usa el mismo resolutor canónico del tablero. El fallback solo cubre
-    // cargas antiguas que todavía no han recibido el directorio de identidad.
+    // Coincide por studentId canónico O por llave heredada (transición).
     const studentRows = (registro || []).filter((r) => (
-      activeGroupKeyOf(r) === targetKey ||
-      (!activeAliasMap.size && (calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey))
+      calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey
     ));
     const subset = getMusigymRows(studentRows);
     for (const r of subset) {
@@ -1131,11 +1070,9 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   return registro.filter((r) => {
     if (estudianteKey) {
       const calc = window.RIPCalculations;
-      const targetKey = resolveActiveStudentKey(estudianteKey);
-      const belongs = activeGroupKeyOf(r) === targetKey ||
-        (!activeAliasMap.size && (calc?.matchesStudentKey
-          ? calc.matchesStudentKey(r, estudianteKey)
-          : r.estudianteKey === estudianteKey));
+      const belongs = calc?.matchesStudentKey
+        ? calc.matchesStudentKey(r, estudianteKey)
+        : r.estudianteKey === estudianteKey;
       if (!belongs) return false;
     }
 

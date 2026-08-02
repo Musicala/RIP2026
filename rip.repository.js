@@ -373,13 +373,7 @@
       if (row.estudianteKey && row.estudianteKey !== canonical) {
         const legacyRef = doc(env.db, 'students', row.estudianteKey);
         const legacySnap = await getDoc(legacyRef);
-        const legacyData = legacySnap.exists() ? legacySnap.data() : null;
-        const aliasNeedsRepair = legacyData && (
-          String(legacyData.legacyAliasOf || '') !== canonical ||
-          String(legacyData.officialStudentId || '') !== canonical ||
-          String(legacyData.studentId || '') !== canonical
-        );
-        if (aliasNeedsRepair) {
+        if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
           await setDoc(legacyRef, {
             officialStudentId: canonical,
             studentId: canonical,
@@ -495,12 +489,7 @@
     if (canonical && displayNameKey && displayNameKey !== canonical) {
       const legacyRef = doc(env.db, 'studentComputed', displayNameKey);
       const legacySnap = await getDoc(legacyRef);
-      const legacyData = legacySnap.exists() ? legacySnap.data() : null;
-      const aliasNeedsRepair = legacyData && (
-        String(legacyData.legacyAliasOf || '') !== canonical ||
-        String(legacyData.canonicalStudentId || '') !== canonical
-      );
-      if (aliasNeedsRepair) {
+      if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== canonical) {
         await setDoc(legacyRef, {
           legacyAliasOf: canonical,
           canonicalStudentId: canonical,
