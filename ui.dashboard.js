@@ -257,6 +257,15 @@
     return s.finalClasif || s.paramClasif || s.statusText || 'Sin estado';
   }
 
+  // Mantiene el color de los días alineado con el estado del estudiante.
+  function saldoStatusTone(s) {
+    const status = norm(saldoStatusText(s));
+    if (status.includes('sin registro')) return 'info';
+    if (status.includes('pausa') || status.includes('inactivo')) return 'warn';
+    if (status.includes('activo')) return 'ok';
+    return '';
+  }
+
   function saldoLastClassDate(ctx, s) {
     const key = s.key || norm(s.name);
     const rows = (ctx?.state?.registro || []).filter(r => r.estudianteKey === key);
@@ -382,6 +391,7 @@
     }
 
     const isSaldoList = isDuplicateList || (items || []).some(s => typeof s.saldo === 'number');
+    const isSeAcaboList = norm(title).includes('se acabo');
     const tableHead = el.tablaContainer?.querySelector('thead');
 
     if (bdEligible) {
@@ -434,7 +444,7 @@
           <tr>
             <th>Estado</th>
             <th>Estudiante</th>
-            <th>Saldo pendiente</th>
+            <th>${isSeAcaboList ? 'Días sin clase' : 'Saldo pendiente'}</th>
             ${isDuplicateList ? '<th>Duplicadas</th>' : ''}
             <th>Ultima clase</th>
             <th>Programacion</th>
@@ -444,9 +454,13 @@
       }
       el.tableBody.innerHTML = (items || []).map((s) => `
         <tr>
-          <td><span class="pill soft">${escapeHTML(saldoStatusText(s))}</span></td>
+          <td>${isSeAcaboList
+            ? `<span class="pilltag ${saldoStatusTone(s)}">${escapeHTML(saldoStatusText(s))}</span>`
+            : `<span class="pill soft">${escapeHTML(saldoStatusText(s))}</span>`}</td>
           <td style="font-weight:800">${escapeHTML(s.name)}</td>
-          <td style="font-weight:800">${escapeHTML(`${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`)}</td>
+          <td style="font-weight:800">${isSeAcaboList
+            ? (() => { const days = daysSinceValue(s); return days >= 0 ? `<span class="pilltag ${saldoStatusTone(s)}">${escapeHTML(`${days} días`)}</span>` : '—'; })()
+            : escapeHTML(`${s.saldo > 0 ? '+' : ''}${fmtMoney(s.saldo)}`)}</td>
           ${isDuplicateList ? `<td><span class="tag duplicate">${Number(s.duplicateCount) || 0}</span></td>` : ''}
           <td>${escapeHTML(saldoLastClassDate(ctx, s) || '—')}</td>
           <td>${escapeHTML(saldoProgramacionText(ctx, s))}</td>

@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-<link rel="stylesheet" href="./styles.css?v=2026.progcolors1"/>
+<link rel="stylesheet" href="./styles.css?v=2026.courtesy1"/>
 
 </head>
 
@@ -50,6 +50,7 @@
       <button class="btn primary" id="btnRefresh">↻ Actualizar</button>
       <button class="btn ghost" id="btnTop2025" style="display:none">🗂️ 2025</button>
 
+      <button class="btn ghost" id="btnAccessSettings">Vincular docentes</button>
       <span class="pill" id="badgeMode">Firebase</span>
       <span class="pill soft" id="badgeCount">0 registros</span>
 
@@ -68,6 +69,8 @@
       <button id="viewTabPrimeraVez" class="tab">Primera vez</button>
       <button id="viewTabClientes" class="tab">Clientes</button>
       <button id="viewTabKpis" class="tab">KPIs</button>
+      <button id="viewTabPerformance" class="tab" hidden>🕘 Historial</button>
+      <button id="viewTabReconciliation" class="tab">🔗 Conciliación</button>
     </div>
   </div>
 
@@ -251,6 +254,62 @@
       <p class="muted" id="dashSubClas">Click en cualquier tarjeta para ver la lista.</p>
     </div>
     <div class="grid" id="dashGridClas"></div>
+  </section>
+
+  <section class="card" id="performanceView" style="display:none">
+    <div class="card-title">
+      <h3 id="performanceTitle">Historial de actividad</h3>
+      <p class="muted" id="performanceIntro">Tus cambios registrados con fecha, hora y correo.</p>
+    </div>
+    <div class="filters-actions">
+      <label class="flabel" for="performanceRange">Período</label>
+      <select id="performanceRange" class="fctrl" style="max-width:180px">
+        <option value="today">Hoy</option>
+        <option value="7d" selected>Últimos 7 días</option>
+        <option value="30d">Últimos 30 días</option>
+        <option value="all">Todo el historial</option>
+      </select>
+      <button class="btn primary" id="btnPerformanceRefresh">Actualizar</button>
+      <span class="status" id="performanceStatus">Carga el historial de actividad.</span>
+    </div>
+    <div class="filters-grid" id="performanceFilters" style="margin-top:12px">
+      <div class="fgrp" id="performanceUserWrap">
+        <div class="flabel">Persona</div>
+        <select id="performanceUser" class="fctrl"><option value="">Todas las personas</option></select>
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Día exacto</div>
+        <input id="performanceDate" class="fctrl" type="date">
+      </div>
+      <div class="fgrp">
+        <div class="flabel">Actividad</div>
+        <select id="performanceAction" class="fctrl"><option value="">Todas las actividades</option></select>
+      </div>
+    </div>
+    <div class="kpis" id="performanceKpis" style="margin-top:14px"></div>
+    <div class="performance-layout">
+      <div class="performance-panel">
+        <strong>Actividad por hora</strong>
+        <div class="performance-hours" id="performanceHours"></div>
+      </div>
+      <div class="performance-panel">
+        <strong id="performanceTasksTitle">Tareas más realizadas</strong>
+        <div class="performance-tasks" id="performanceTasks"></div>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table class="tbl">
+        <thead><tr><th>Fecha y hora</th><th>Correo</th><th>Tarea</th><th>Detalle</th></tr></thead>
+        <tbody id="performanceBody"><tr><td colspan="4" class="empty-td">Carga el historial de actividad.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="reconciliationView" style="display:none">
+    <div class="card-title"><h3>Conciliación de IDs</h3><p class="muted">Une variantes bajo un nombre maestro aunque todavía no tengan ID. El directorio consulta Bitácoras y Estudiantes; cuando aparezca el ID canónico se asigna una sola vez al grupo.</p></div>
+    <div class="filters-actions"><button class="btn primary" id="btnReconciliationRefresh">Actualizar revisión</button><button class="btn ghost" id="btnReconciliationLinkPending">Vincular coincidencias exactas</button><span class="status"><strong id="reconciliationCount">0</strong> grupos pendientes</span></div>
+    <datalist id="reconciliationOptions"></datalist>
+    <div class="table-wrap" style="margin-top:14px"><table class="tbl"><thead><tr><th>Persona</th><th>ID actual</th><th>Registros</th><th>Revisión</th><th>ID canónico destino</th><th></th></tr></thead><tbody id="reconciliationBody"><tr><td colspan="6" class="empty-td">Carga la revisión.</td></tr></tbody></table></div>
   </section>
 
   <section class="card" id="primeraVezView" style="display:none">
@@ -450,6 +509,10 @@
       </div>
 
       <div id="fichaServiciosBlock" class="ficha-interest-block"></div>
+      <details class="ficha-ids" id="fichaIdsBlock">
+        <summary>IDs asociados</summary>
+        <div id="fichaStudentIds" class="ficha-ids-list"></div>
+      </details>
 
     </div>
 
@@ -609,18 +672,22 @@
 <script src="./membrete_assets.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="./firebase.config.js?v=2026.studentid2"></script>
-<script src="./rip.calculations.js?v=2026.studentid2"></script>
+<script src="./firebase.config.js?v=2026.repair3"></script>
+<script src="./rip.calculations.js?v=2026.reconciliation8"></script>
 <script src="./firebase.auth.js?v=2026.firebase"></script>
-<script src="./rip.repository.js?v=2026.studentid2"></script>
+<script src="./rip.repository.js?v=2026.reconciliation8"></script>
 <script src="./rip.identity.js?v=2026.studentid2"></script>
-<script src="./rip.core.js?v=2026.studentid2"></script>
-<script src="./ui.shared.js?v=2026.clientes1"></script>
-<script src="./ui.dashboard.js?v=2026.studentid2"></script>
-<script src="./ui.ficha.js?v=2026.studentid2"></script>
+<script src="./rip.core.js?v=2026.reconciliation8"></script>
+<script src="./ui.shared.js?v=2026.performance1"></script>
+<script src="./ui.dashboard.js?v=2026.dias-sin-clase2"></script>
+<script src="./ui.performance.js?v=2026.performance1"></script>
+<script src="./ui.reconciliation.js?v=2026.reconciliation8"></script>
+<script src="./ui.ficha.js?v=2026.courtesy1"></script>
 <script src="./ui.table.js?v=2026.studentid2"></script>
-<script src="./rip.programacion.js?v=2026.studentid2"></script>
-<script src="./app.js?v=2026.studentid2"></script>
+<script src="./rip.programacion.js?v=2026.safe-schedule1"></script>
+<script src="./rip.programacion-active.js?v=2026.active-only1"></script>
+<script src="./app.js?v=2026.reconciliation4"></script>
+<script src="./rip.access.js?v=2026.teacher-link1"></script>
 <script src="./rip.sync.js?v=2026.sync1"></script>
 <script src="./ui.editor.js?v=2026.firebase"></script>
 <script>

@@ -38,6 +38,12 @@ test('sin studentId usa aliasMap (nameKey → canónico)', () => {
   assert.strictEqual(key, CANONICAL_A);
 });
 
+test('programación legada con studentId=nameKey usa el alias canónico', () => {
+  const aliasMap = new Map([['juan gomez', CANONICAL_A]]);
+  const key = calc.getStudentGroupingKey({ studentId: 'juan gomez', estudianteKey: 'juan gomez' }, aliasMap);
+  assert.strictEqual(key, CANONICAL_A);
+});
+
 test('fallback histórico: estudianteKey / nombre normalizado', () => {
   assert.strictEqual(calc.getStudentGroupingKey({ estudianteKey: 'ana perez' }), 'ana perez');
   assert.strictEqual(calc.getStudentGroupingKey({ estudiante: 'Ana Pérez' }), 'ana perez');

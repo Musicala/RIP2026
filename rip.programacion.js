@@ -60,7 +60,10 @@
   }
 
   function getPackageKey(row) {
-    const value = isPagoRow(row) ? row?.clasifPago : row?.clasif;
+    // Taller/OpenHouse es un pago cuya familia queda vacía y cuya
+    // clasificación principal es Taller; usarla como fallback lo mantiene
+    // compatible con TV/MS G/MS SP en vacacional-flex.
+    const value = isPagoRow(row) ? (row?.clasifPago || row?.clasif) : row?.clasif;
     return normalizePackageKey(value);
   }
 
@@ -218,6 +221,7 @@
 
   function getAlertHTML(row) {
     if (!row) return '<span class="tag">—</span>';
+    if (row.scheduleExpired) return `<span class="tag danger">Programación vencida</span>`;
     if (row.noSchedule) return `<span class="tag danger">Sin programación</span>`;
     if (row.lowFuture) return `<span class="tag warn">Por completar</span>`;
     return `<span class="tag ok">OK completo</span>`;
@@ -225,14 +229,17 @@
 
   function getAlertText(row) {
     if (!row) return '—';
+    if (row.scheduleExpired) return 'Programación vencida';
     if (row.noSchedule) return 'Sin programación';
     if (row.lowFuture) return 'Por completar';
     return 'OK';
   }
 
-  function getAlertTextFromSchedule(fechas, today, limit = MAX_CLASSES) {
+  function getAlertTextFromSchedule(fechas, today, limit = MAX_CLASSES, studentIsActive = false) {
     const clean = normalizeFechas(fechas);
     if (!clean.length) return 'Sin programación';
+
+    if (studentIsActive && !clean.some(f => f >= today)) return 'Programación vencida';
 
     if (clean.length < (Number(limit) || MAX_CLASSES)) return 'Por completar';
     return 'OK';
@@ -240,9 +247,9 @@
 
   function getGroupedRows(rows = []) {
     return {
-      none: rows.filter(r => (r.filled || 0) === 0),
-      partial: rows.filter(r => (r.filled || 0) > 0 && (r.filled || 0) < (Number(r.limit) || MAX_CLASSES)),
-      complete: rows.filter(r => (r.filled || 0) >= (Number(r.limit) || MAX_CLASSES))
+      none: rows.filter(r => r.noSchedule),
+      partial: rows.filter(r => !r.noSchedule && (r.filled || 0) > 0 && (r.filled || 0) < (Number(r.limit) || MAX_CLASSES)),
+      complete: rows.filter(r => !r.noSchedule && (r.filled || 0) >= (Number(r.limit) || MAX_CLASSES))
     };
   }
 
@@ -468,9 +475,10 @@
       const iso = String(raw || '').trim();
       const miss = !iso;
       const future = iso && today && iso >= today;
+      const past = iso && today && iso < today;
 
       return `
-        <div class="dateCell ${miss ? 'miss' : ''} ${future ? 'future' : ''} ${editable ? 'dateCell-editable' : ''}"
+        <div class="dateCell ${miss ? 'miss' : ''} ${future ? 'future' : ''} ${past ? 'past' : ''} ${editable ? 'dateCell-editable' : ''}"
              data-cell-index="${i}"
              tabindex="${editable ? '0' : '-1'}"
              role="${editable ? 'button' : 'presentation'}"
@@ -517,18 +525,10 @@
     showToast('Guardando fecha…', 'info');
 
     try {
-      // Construir el array completo con el cambio
-      const merged = fillToMax(currentArr);
-      merged[index] = newVal || '';
-
-      const cleanDates = merged.slice(0, getStudentClassLimit(state, studentName)).map(v => v || '');
-
-      const res = await apiCall({
-        action: 'saveSchedule',
-        token: API_TOKEN,
-        student: studentName,
-        dates: JSON.stringify(cleanDates)
-      });
+      // Una celda se guarda como cambio puntual sobre la versión más reciente
+      // de Firestore. No se reenvía la copia local completa del calendario.
+      const saved = await window.RIPRepository.saveScheduleDate(studentName, index, newVal || '');
+      const res = { ok: true, fechas: saved?.fechas || [] };
 
       if (!res?.ok) {
         showToast(res?.message || res?.error || 'Error guardando.', 'warn');
@@ -536,7 +536,7 @@
       }
 
       // Actualizar cache
-      cacheSchedule(state, studentName, cleanDates);
+      cacheSchedule(state, studentName, res.fechas || currentArr);
       showToast(`Clase #${index + 1} actualizada ✓`, 'ok');
 
       // Re-pintar la grilla con los datos nuevos
@@ -580,7 +580,9 @@
     setText(ctx.el.progStudentName, row?.name || studentName || '—');
     setText(ctx.el.progStudentNext, stats.nextISO || '—');
     setText(ctx.el.progStudentFuture, String(stats.futureCount ?? 0));
-    setText(ctx.el.progStudentAlert, getAlertTextFromSchedule(clean, today));
+    const alert = getAlertTextFromSchedule(clean, today, limit, !!row?.isActive);
+    setText(ctx.el.progStudentAlert, alert);
+    ctx.el.progStudentAlert?.classList.toggle('prog-status-danger', alert === 'Programación vencida' || alert === 'Sin programación');
 
     paintStudentScheduleGrid(ctx, state);
   }
@@ -731,6 +733,7 @@
       setText(ctx.el.progStudentFuture, String(row.futureCount ?? 0));
       setText(ctx.el.progStudentAlert, getAlertText(row));
     }
+    ctx.el.progStudentAlert?.classList.toggle('prog-status-danger', !!row?.noSchedule);
 
     if (ctx.el.programacionEmbed) ctx.el.programacionEmbed.innerHTML = '';
     hide(ctx.el.programacionEmbed);
@@ -1321,20 +1324,34 @@
       rowsByStudent.get(key).push(row);
       if (!studentMap.has(key)) studentMap.set(key, row.estudiante || key);
     });
+    const activeStudentByKey = new Map();
+    (students || []).forEach(s => {
+      const key = String(aliasMap.get(String(s.nameKey || s.estudianteKey || '').trim()) || '').trim()
+        || keyOf(s);
+      if (!key) return;
+      const manualStatus = String(s.estadoManual || s.paramClasif || '').trim();
+      if (manualStatus) activeStudentByKey.set(key, norm(manualStatus).startsWith('activo'));
+    });
     const dashboard = Array.from(studentMap.entries()).map(([key, name]) => {
       const sch = bySchedule.get(key) || {};
       const fechas = normalizeFechas(sch.fechas || []);
       const limit = calc?.getStudentClassLimit ? calc.getStudentClassLimit(rowsByStudent.get(key) || []) : MAX_CLASSES;
-      const st = calc.calculateProgramacionStatus(fechas, today, limit);
+      const studentStatus = calc.calculateStudentStatus(rowsByStudent.get(key) || []);
+      const isActive = activeStudentByKey.has(key)
+        ? activeStudentByKey.get(key)
+        : norm(studentStatus).startsWith('activo');
+      const st = calc.calculateProgramacionStatus(fechas, today, limit, isActive);
       return {
         name,
         estado: st.status,
+        scheduleExpired: st.status === 'Programacion vencida' || st.status === 'Programación vencida',
         fechas,
         filled: fechas.length,
         limit,
         nextISO: st.nextClassDate || '',
         futureCount: st.futureCount || 0,
-        noSchedule: st.status === 'Sin programacion' || st.status === 'Sin programación',
+        noSchedule: st.status === 'Sin programacion' || st.status === 'Sin programación' || st.status === 'Programacion vencida' || st.status === 'Programación vencida',
+        isActive,
         lowFuture: st.status === 'Pocas futuras' || st.status === 'Por completar',
         complete: st.status === 'OK'
       };

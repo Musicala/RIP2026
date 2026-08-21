@@ -63,6 +63,9 @@
     clientesLoaded: false,
     primeraVez: [],
     primeraVezLoaded: false,
+    auditLog: [],
+    auditLoaded: false,
+    audit: { email: '', isAdmin: false },
     selectedServicios: new Set(),
     currentStudentKey: '',
     currentStudentName: '',
@@ -90,6 +93,10 @@
   ctx.state = state;
   let syncTimer = null;
   let syncWriteTimer = null;
+  // Acumula los cambios de una misma operación (por ejemplo, un pago puede
+  // crear filas de registro y el comprobante B2C) para refrescar solo lo que
+  // realmente cambió, una vez terminado el lote.
+  const pendingFirestoreEntities = new Set();
   let combinedSearchCache = null;
   let quickSearchRenderTimer = null;
 
@@ -144,11 +151,39 @@
   async function refreshAfterFirestoreWrite(detail = {}) {
     const s = state.syncSettings || readSyncSettings();
     if (s.mode !== 'afterEdit') return;
+    if (detail.entity) pendingFirestoreEntities.add(detail.entity);
     if (syncWriteTimer) clearTimeout(syncWriteTimer);
     syncWriteTimer = setTimeout(async () => {
       try {
         toast(ctx.el.toastWrap, 'Cambio guardado. Actualizando...', 'info');
-        await boot({ force: true });
+        const entities = new Set(pendingFirestoreEntities);
+        pendingFirestoreEntities.clear();
+
+        // Las escrituras del repositorio ya invalidan su colección. No se
+        // limpia la caché global aquí: así Firestore solo cobra las lecturas
+        // de las colecciones afectadas, no una recarga completa del RIP.
+        if (entities.has('students')) {
+          // Una fusión puede modificar varias colecciones y alias; es el
+          // único caso que requiere reconstruir todo el estado.
+          await boot({ force: true });
+        } else {
+          if (entities.has('registro')) {
+            const pack = await RIPCore.loadAll({ includeHistorical: false });
+            state.registro = pack.registro || state.registro;
+            state.paramsMap = pack.paramsMap || state.paramsMap;
+            state.allStudents = pack.allStudents || state.allStudents;
+            state.searchStudents = dedupeByNormalizedName(
+              mergeSearchIndexWithCurrentStudents([], state.allStudents || [])
+            );
+            RIPUI.table?.applyAndRender?.(ctx, state);
+            renderDashboards();
+          }
+          if (entities.has('programacion') || entities.has('registro')) {
+            await loadProgramacionSummary();
+          }
+          if (entities.has('primeraVez')) await loadPrimeraVez(true);
+          if (entities.has('clientesB2C')) await loadClientesB2C(true);
+        }
         toast(ctx.el.toastWrap, 'Datos actualizados.', 'ok');
       } catch (err) {
         console.error(err, detail);
@@ -322,6 +357,8 @@
     hide(ctx.el.searchView);
     hide(ctx.el.clientesView);
     hide(ctx.el.primeraVezView);
+    hide(ctx.el.performanceView);
+    hide(ctx.el.reconciliationView);
     hide(ctx.el.dashboardClasView);
     hide(ctx.el.dashboardSaldoView);
     hide(ctx.el.dashboardProgView);
@@ -368,6 +405,12 @@
       return;
     }
 
+    if (mode === 'performance') {
+      ctx.el.dashTitle.textContent = 'Rendimiento';
+      ctx.el.dashSub.textContent = 'Actividad del equipo por hora, tarea y persona.';
+      return;
+    }
+
     if (mode === 'clas') {
       ctx.el.dashTitle.textContent = 'Dashboard · Clasificación';
       ctx.el.dashSub.textContent = 'Agrupado por Activos / Por revisar / Inactivos. Click para ver lista de estudiantes.';
@@ -395,6 +438,8 @@
     ctx.el.viewTabPrimeraVez?.classList.toggle('active', mode === 'primeraVez');
     ctx.el.viewTabClientes?.classList.toggle('active', mode === 'clientes');
     ctx.el.viewTabKpis?.classList.toggle('active', mode === 'kpis');
+    ctx.el.viewTabPerformance?.classList.toggle('active', mode === 'performance');
+    ctx.el.viewTabReconciliation?.classList.toggle('active', mode === 'reconciliation');
 
     ctx.el.dashTabClas?.classList.toggle('active', mode === 'clas');
     ctx.el.dashTabSaldo?.classList.toggle('active', mode === 'saldo');
@@ -420,6 +465,8 @@
     state.clientesLoaded = false;
     state.primeraVez = [];
     state.primeraVezLoaded = false;
+    state.auditLog = [];
+    state.auditLoaded = false;
     state.selectedServicios = new Set();
     state.currentStudentKey = '';
     state.currentStudentName = '';
@@ -1219,6 +1266,40 @@
   // =========================
   // Navegación de vistas
   // =========================
+  async function loadPerformance(force = false) {
+    if (state.auditLoaded && !force) {
+      RIPUI.performance?.render?.(ctx, state.auditLog);
+      return state.auditLog;
+    }
+    setText(ctx.el.performanceStatus, 'Cargando historial de actividad...');
+    try {
+      if (force) window.RIPRepository?.clearCache?.('auditLog');
+      state.auditLog = await window.RIPRepository.loadAuditLog(
+        state.audit.isAdmin ? '' : state.audit.email
+      );
+      state.auditLoaded = true;
+      RIPUI.performance?.render?.(ctx, state.auditLog);
+      setText(ctx.el.performanceStatus, `${state.auditLog.length} cambios cargados.`);
+      return state.auditLog;
+    } catch (err) {
+      console.error(err);
+      state.auditLoaded = false;
+      setText(ctx.el.performanceStatus, 'No se pudo cargar el historial de actividad.');
+      return [];
+    }
+  }
+
+  async function loadReconciliation(force = false) {
+    if (force) window.RIPRepository?.clearCache?.(['registro', 'students']);
+    const [records, directory] = await Promise.all([
+      window.RIPRepository.loadRegistro(), window.RIPRepository.loadReconciliationDirectory()
+    ]);
+    RIPUI.reconciliation?.render?.(ctx, {
+      records, students: directory.students, remoteStudents: directory.remote,
+      refresh: async () => { await boot({ force: true }); await loadReconciliation(true); }
+    });
+  }
+
   function showDashboard(mode) {
     state.dashMode = mode || 'review';
 
@@ -1236,6 +1317,14 @@
     if (state.dashMode === 'primeraVez') {
       show(ctx.el.primeraVezView);
       loadPrimeraVez(false);
+    }
+    if (state.dashMode === 'performance') {
+      show(ctx.el.performanceView);
+      loadPerformance(false);
+    }
+    if (state.dashMode === 'reconciliation') {
+      show(ctx.el.reconciliationView);
+      loadReconciliation(false).catch(err => toast(ctx.el.toastWrap, err?.message || 'No se pudo cargar conciliación.', 'warn'));
     }
     if (state.dashMode === 'clas') show(ctx.el.dashboardClasView);
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
@@ -1461,7 +1550,7 @@
         saldoPendiente: item.saldo,
         lastClassDate: lastClass?.fecha || lastClass?.fechaRaw || item.lastClass || '',
         programacionText: prog
-          ? (prog.noSchedule ? 'Sin programacion' : `${prog.futureCount || 0} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`)
+          ? (prog.scheduleExpired ? 'Programación vencida' : prog.noSchedule ? 'Sin programacion' : `${prog.futureCount || 0} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`)
           : 'Sin programacion'
       };
     });
@@ -1481,7 +1570,9 @@
 
   function getReviewProgramacionText(studentName) {
     const prog = (state.prog?.data?.dashboard || []).find(row => norm(row.name) === norm(studentName));
-    if (!prog || prog.noSchedule) return 'Sin programacion';
+    if (!prog) return 'Sin programacion';
+    if (prog.scheduleExpired) return 'Programación vencida';
+    if (prog.noSchedule) return 'Sin programacion';
     const future = Number(prog.futureCount) || 0;
     if (!future) return 'Sin futuras';
     return `${future} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`;
@@ -2750,6 +2841,14 @@
     ctx.el.viewTabPrimeraVez?.addEventListener('click', () => showDashboard('primeraVez'));
     ctx.el.viewTabClientes?.addEventListener('click', () => showDashboard('clientes'));
     ctx.el.viewTabKpis?.addEventListener('click', () => showDashboard('kpis'));
+    ctx.el.viewTabPerformance?.addEventListener('click', () => showDashboard('performance'));
+    ctx.el.viewTabReconciliation?.addEventListener('click', () => showDashboard('reconciliation'));
+    ctx.el.btnReconciliationRefresh?.addEventListener('click', () => loadReconciliation(true));
+    ctx.el.btnPerformanceRefresh?.addEventListener('click', () => loadPerformance(true));
+    ctx.el.performanceRange?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
+    ctx.el.performanceUser?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
+    ctx.el.performanceDate?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
+    ctx.el.performanceAction?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
 
     ctx.el.dashTabClas?.addEventListener('click', () => showDashboard('kpis'));
     ctx.el.dashTabSaldo?.addEventListener('click', () => showDashboard('saldo'));
@@ -3127,6 +3226,14 @@
         );
       }
 
+      if (window.RIP_RUN_CONFIRMED_REPAIRS === true && window.RIPRepository?.repairConfirmedJulietaDuplicates) {
+        const repair = await window.RIPRepository.repairConfirmedJulietaDuplicates();
+        if (repair.deleted) {
+          clearAppCaches();
+          return boot({ force: true });
+        }
+      }
+
       if (RIPUI.table?.applyAndRender) {
         RIPUI.table.applyAndRender(ctx, state);
       }
@@ -3200,6 +3307,22 @@
   // =========================
   ctx.el.btnSyncSettings?.addEventListener('click', openSyncSettingsModal);
   wireTopUI();
+  window.RIPFirebase?.ready?.then((env) => {
+    const email = String(env?.user?.email || '').trim().toLowerCase();
+    const admins = (window.RIP_AUDIT_ADMIN_EMAILS || []).map(x => String(x).toLowerCase());
+    state.audit = { email, isAdmin: admins.includes(email) };
+    if (ctx.el.viewTabPerformance) ctx.el.viewTabPerformance.hidden = !email;
+    // Conciliación se muestra siempre. El acceso a los datos y a las escrituras
+    // continúa protegido por el inicio de sesión y las reglas de Firestore.
+    if (ctx.el.viewTabReconciliation) ctx.el.viewTabReconciliation.hidden = false;
+    if (ctx.el.performanceUserWrap) ctx.el.performanceUserWrap.hidden = !state.audit.isAdmin;
+    if (ctx.el.performanceTitle) ctx.el.performanceTitle.textContent = state.audit.isAdmin
+      ? 'Auditoría y rendimiento del equipo'
+      : 'Mi historial de actividad';
+    if (ctx.el.performanceIntro) ctx.el.performanceIntro.textContent = state.audit.isAdmin
+      ? 'Audita cambios por hora, tarea y persona. Cada fila muestra correo y fecha/hora.'
+      : 'Tus cambios registrados con fecha y hora.';
+  }).catch((err) => console.warn('No se pudo configurar el historial de auditoría.', err));
   boot({ force: false });
   setupSyncTimer();
 })();

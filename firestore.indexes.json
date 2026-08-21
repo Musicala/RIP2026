@@ -35,6 +35,10 @@
     ] },
     { "collectionGroup": "studentComputed", "queryScope": "COLLECTION", "fields": [
       { "fieldPath": "saldo", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "auditLog", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userEmail", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
     ] }
   ],
   "fieldOverrides": []

@@ -263,6 +263,14 @@ input, select, button, textarea { font: inherit; }
 .pilltag.warn { color: var(--danger); background: var(--danger-bg);  border-color: rgba(220,38,38,.2); }
 .pilltag.info { color: var(--info);   background: var(--info-bg);    border-color: rgba(37,99,235,.18); }
 
+.performance-layout { display:grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr); gap:14px; margin-top:14px; }
+.performance-panel { border:1px solid var(--bd); border-radius:var(--r); background:var(--panel); padding:14px; }
+.performance-hours { min-height:108px; display:flex; align-items:flex-end; gap:4px; margin-top:12px; overflow-x:auto; }
+.performance-hour { min-width:20px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:5px; color:var(--muted); font-size:10px; }
+.performance-hour-bar { width:14px; border-radius:5px 5px 2px 2px; background:var(--info); opacity:.85; }
+.performance-tasks { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+@media (max-width: 760px) { .performance-layout { grid-template-columns:1fr; } }
+
 /* ─── Tabs ───────────────────────────────────── */
 .dashTabs .tab,
 .tabs .tab {
@@ -1003,6 +1011,11 @@ tr:hover td { background: rgba(26,59,110,.03); }
 .cycle-6 { background: #db2777; }
 .cycle-7 { background: #6b7280; }
 .cycle-matricula { background: #94a3b8; }
+.cycle-courtesy {
+  background: #f8fafc;
+  border: 1.5px solid #94a3b8;
+  box-shadow: none;
+}
 
 /* Clases que se deben (movimiento negativo) */
 tr.row-debt td {
@@ -1087,6 +1100,19 @@ tr.row-duplicate:hover td,
 .dateCell.miss .val { color: var(--danger); }
 .dateCell.future { border-color: rgba(37,99,235,.18); background: var(--info-bg); }
 .dateCell.future .val { color: var(--info); }
+.dateCell.past {
+  border-color: rgba(107,114,128,.20);
+  background: rgba(107,114,128,.08);
+  opacity: .62;
+}
+.dateCell.past .val { color: var(--muted); text-decoration: line-through; }
+.prog-status-danger { color: var(--danger); font-weight: 700; }
+
+/* IDs técnicos: disponibles para revisión sin competir con la ficha principal. */
+.ficha-ids { margin-top: 14px; color: var(--muted); font-size: 11px; }
+.ficha-ids summary { cursor: pointer; width: fit-content; font-weight: 600; }
+.ficha-ids-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ficha-id { padding: 3px 6px; border: 1px solid var(--bd); border-radius: 5px; background: rgba(17,24,39,.035); color: var(--muted); font-size: 10px; word-break: break-all; }
 
 /* Editable cells */
 .dateCell-editable {

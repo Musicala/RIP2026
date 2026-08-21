@@ -463,6 +463,7 @@
     const html = rows
       .slice(0, 1800)
       .map((r) => {
+        const isCourtesy = Boolean(window.RIPCalculations?.isCourtesy?.(r) || window.RIPCalculations?.isCourtesyCC?.(r));
         const tipo = inferTipoLabel(r);
         const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
@@ -477,9 +478,11 @@
         const cycleMeta = cycleMetaById.get(rid) || null;
         const isMatricula = isMatriculaPago(r) || cycleIdxRaw < 0;
         const cycleIdx = Number.isFinite(cycleIdxRaw) ? cycleIdxRaw : 0;
-        const cycleClass = isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`;
+        const cycleClass = isCourtesy ? 'cycle-courtesy' : (isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`);
         const specialCode = cycleMeta?.code || getSpecialCode(r, cycleIdx);
-        const cycleLabel = isMatricula
+        const cycleLabel = isCourtesy
+          ? 'CC'
+          : isMatricula
           ? 'M'
           : cycleMeta?.kind === 'unpaid'
             ? '!'
@@ -492,7 +495,9 @@
             : cycleMeta?.kind === 'pago'
               ? `${specialCode} +${cycleMeta.total || mov}`
               : specialCode;
-        const cycleTitle = isMatricula
+        const cycleTitle = isCourtesy
+          ? 'Clase de cortesía (CC) · no consume pago'
+          : isMatricula
           ? 'Matrícula (sin conteo)'
           : cycleMeta?.kind === 'unpaid'
             ? 'Clase pendiente de pago'
@@ -861,6 +866,35 @@
     `;
   }
 
+  function renderAssociatedIds(ctx, student, rows = []) {
+    const el = ctx?.el;
+    if (!el?.fichaStudentIds) return;
+
+    const ids = new Set();
+    const add = (value) => {
+      const id = String(value || '').trim();
+      if (id) ids.add(id);
+    };
+
+    add(student?.key);
+    add(student?.studentId);
+    add(student?.officialStudentId);
+    add(student?.canonicalStudentId);
+    (student?.linkedStudentIds || []).forEach(add);
+    (rows || []).forEach(row => {
+      add(row?.studentId);
+      add(row?.officialStudentId);
+      add(row?.canonicalStudentId);
+      (row?.linkedStudentIds || []).forEach(add);
+    });
+
+    const values = Array.from(ids);
+    el.fichaStudentIds.innerHTML = values.length
+      ? values.map(id => `<code class="ficha-id">${escapeHTML(id)}</code>`).join('')
+      : '<span class="muted">No hay IDs asociados.</span>';
+    if (el.fichaIdsBlock) el.fichaIdsBlock.hidden = false;
+  }
+
 
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
@@ -932,6 +966,7 @@
     }
 
     renderFichaServicios(ctx, student, rows);
+    renderAssociatedIds(ctx, student, rows);
   }
 
   function renderSimpleSummary(ctx, studentName, year, rowsSlice) {
@@ -956,6 +991,7 @@
       `;
     }
     if (el.fichaServiciosBlock) el.fichaServiciosBlock.innerHTML = '';
+    renderAssociatedIds(ctx, { key: ctx?.state?.currentStudentKey || '' }, []);
   }
 
   async function syncProgramacionIfAvailable(ctx, state, studentName, year) {

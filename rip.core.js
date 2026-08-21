@@ -164,7 +164,10 @@
     const pago = String(pagoRaw || '').trim();
     const clasif = String(clasifRaw || '').trim();
     const clasifPago = String(clasifPagoRaw || '').trim();
-    if (clasif) return { clasifAuto: clasif, clasifPagoAuto: clasifPago || '' };
+    const hasMeaningfulExistingClasif = clasif && ![
+      'no clasificado', 'sin clasificacion', 'sin clasificación', 'n/a', '-'
+    ].includes(norm(clasif));
+    if (hasMeaningfulExistingClasif) return { clasifAuto: clasif, clasifPagoAuto: clasifPago || '' };
     if (/^multa$/i.test(tipo)) return { clasifAuto: 'Multa', clasifPagoAuto: '' };
     const isPago = /^pago$/i.test(tipo) || (!/^clase$/i.test(tipo) && hasText(pago));
     const s = servicio;
@@ -173,6 +176,7 @@
     if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
     if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
+      if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
       if (test(s, /musigym/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Musigym' };
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
@@ -209,6 +213,7 @@
     if (/^clase$/i.test(tipo) && isTrialCPText(servicio, comentario)) return -1;
     if (/^clase$/i.test(tipo) && isCourtesyCCText(servicio, comentario)) return -1;
     if (/^clase$/i.test(tipo) && isTrialOrCourtesyText(servicio, comentario)) return 0;
+    // Conserva la corrección importada salvo las reglas especiales anteriores.
     if (Number.isFinite(existing) && existing !== 0) return existing;
     if (isCourtesyText(servicio, comentario)) return 0;
     if (/^clase$/i.test(tipo)) return -1;
@@ -347,11 +352,37 @@
       llave canónica y dos homónimos con IDs distintos jamás se mezclan.
     */
     const aliasMap = new Map();
+    const canonicalAliases = new Map(); // old canonical ID -> chosen canonical ID
+    for (const s of students || []) {
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (!canonical) continue;
+      for (const linkedId of Array.isArray(s.linkedStudentIds) ? s.linkedStudentIds : []) {
+        const alias = String(linkedId || '').trim();
+        if (alias && alias !== canonical) canonicalAliases.set(alias, canonical);
+      }
+    }
     for (const s of students || []) {
       const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
       const canonical = String(s.officialStudentId || s.canonicalStudentId ||
         (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
-      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+      // Los documentos marcados como alias no compiten con la ficha principal.
+      if (nameKey && canonical && !s.legacyAliasOf && !canonicalAliases.has(canonical) && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+      // Una conciliación explícita conserva los IDs anteriores aquí. Mapearlos
+      // al principal permite abrir la ficha desde cualquier enlace histórico.
+      if (canonical) {
+        for (const linkedId of Array.isArray(s.linkedStudentIds) ? s.linkedStudentIds : []) {
+          const alias = String(linkedId || '').trim();
+          if (alias && alias !== canonical) aliasMap.set(alias, canonical);
+        }
+      }
+    }
+    // Correcciones confirmadas de llaves heredadas. Se aplican después del
+    // directorio para que una llave antigua no vuelva a crear otra ficha.
+    for (const [legacy, target] of Object.entries(window.RIP_LEGACY_STUDENT_KEY_ALIASES || {})) {
+      const legacyKey = norm(legacy);
+      const targetKey = String(target || '').trim();
+      if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
     }
 
     const groupKeyOf = (record) => (calc?.getStudentGroupingKey
@@ -365,7 +396,9 @@
       // canónico ya representa al estudiante (evita duplicados en listas).
       const nameKey = String(s.nameKey || '').trim() || norm(s.name || '');
       const key = String(aliasMap.get(nameKey) || '').trim() || nameKey || String(s.key || s.id || '').trim();
-      if (s.legacyAliasOf && aliasMap.get(nameKey)) {
+      const ownCanonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if ((s.legacyAliasOf || canonicalAliases.has(ownCanonical)) && aliasMap.get(nameKey)) {
         if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
         continue;
       }
@@ -434,6 +467,7 @@
 
   function buildProgramacionDashboard(programacion, allStudents, registro) {
     const calc = window.RIPCalculations;
+    const isActiveStudent = (student) => norm(student?.finalClasif || student?.paramClasif || '').startsWith('activo');
     const scheduleKeyOf = (p) => (calc?.getStudentGroupingKey
       ? calc.getStudentGroupingKey(p)
       : (p.estudianteKey || p.studentId || norm(p.estudiante)));
@@ -458,17 +492,19 @@
       const fechas = Array.isArray(sch.fechas) ? sch.fechas : [];
       const limit = calc?.getStudentClassLimit ? calc.getStudentClassLimit(rowsByStudent.get(s.key) || []) : 24;
       const status = calc?.calculateProgramacionStatus
-        ? calc.calculateProgramacionStatus(fechas, today, limit)
+        ? calc.calculateProgramacionStatus(fechas, today, limit, isActiveStudent(s))
         : { status: 'Sin programacion', futureCount: 0, nextClassDate: '' };
       return {
         name: s.name,
         estado: status.status,
+        isActive: isActiveStudent(s),
+        scheduleExpired: status.status === 'Programacion vencida' || status.status === 'Programación vencida',
         fechas,
         filled: fechas.filter(Boolean).length,
         limit,
         nextISO: status.nextClassDate || '',
         futureCount: status.futureCount || 0,
-        noSchedule: status.status === 'Sin programacion' || status.status === 'Sin programación',
+        noSchedule: status.status === 'Sin programacion' || status.status === 'Sin programación' || status.status === 'Programacion vencida' || status.status === 'Programación vencida',
         lowFuture: status.status === 'Pocas futuras' || status.status === 'Por completar',
         complete: status.status === 'OK'
       };
