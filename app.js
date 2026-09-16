@@ -358,6 +358,7 @@
     hide(ctx.el.clientesView);
     hide(ctx.el.primeraVezView);
     hide(ctx.el.performanceView);
+    hide(ctx.el.reconciliationView);
     hide(ctx.el.dashboardClasView);
     hide(ctx.el.dashboardSaldoView);
     hide(ctx.el.dashboardProgView);
@@ -438,6 +439,7 @@
     ctx.el.viewTabClientes?.classList.toggle('active', mode === 'clientes');
     ctx.el.viewTabKpis?.classList.toggle('active', mode === 'kpis');
     ctx.el.viewTabPerformance?.classList.toggle('active', mode === 'performance');
+    ctx.el.viewTabReconciliation?.classList.toggle('active', mode === 'reconciliation');
 
     ctx.el.dashTabClas?.classList.toggle('active', mode === 'clas');
     ctx.el.dashTabSaldo?.classList.toggle('active', mode === 'saldo');
@@ -1287,6 +1289,17 @@
     }
   }
 
+  async function loadReconciliation(force = false) {
+    if (force) window.RIPRepository?.clearCache?.(['registro', 'students']);
+    const [records, directory] = await Promise.all([
+      window.RIPRepository.loadRegistro(), window.RIPRepository.loadReconciliationDirectory()
+    ]);
+    RIPUI.reconciliation?.render?.(ctx, {
+      records, students: directory.students, remoteStudents: directory.remote,
+      refresh: async () => { await boot({ force: true }); await loadReconciliation(true); }
+    });
+  }
+
   function showDashboard(mode) {
     state.dashMode = mode || 'review';
 
@@ -1308,6 +1321,10 @@
     if (state.dashMode === 'performance') {
       show(ctx.el.performanceView);
       loadPerformance(false);
+    }
+    if (state.dashMode === 'reconciliation') {
+      show(ctx.el.reconciliationView);
+      loadReconciliation(false).catch(err => toast(ctx.el.toastWrap, err?.message || 'No se pudo cargar conciliación.', 'warn'));
     }
     if (state.dashMode === 'clas') show(ctx.el.dashboardClasView);
     if (state.dashMode === 'saldo') show(ctx.el.dashboardSaldoView);
@@ -1533,7 +1550,7 @@
         saldoPendiente: item.saldo,
         lastClassDate: lastClass?.fecha || lastClass?.fechaRaw || item.lastClass || '',
         programacionText: prog
-          ? (prog.noSchedule ? 'Sin programacion' : `${prog.futureCount || 0} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`)
+          ? (prog.scheduleExpired ? 'Programación vencida' : prog.noSchedule ? 'Sin programacion' : `${prog.futureCount || 0} futuras${prog.nextISO ? ' · prox. ' + prog.nextISO : ''}`)
           : 'Sin programacion'
       };
     });
@@ -1553,10 +1570,12 @@
 
   function getReviewProgramacionText(studentName) {
     const prog = (state.prog?.data?.dashboard || []).find(row => norm(row.name) === norm(studentName));
-    if (!prog || prog.noSchedule) return 'Sin programacion';
+    if (!prog) return 'Sin programacion';
+    if (prog.scheduleExpired) return 'Programación vencida';
+    if (prog.noSchedule) return 'Sin programacion';
     const future = Number(prog.futureCount) || 0;
     if (!future) return 'Sin futuras';
-    return `${future} futuras${prog.nextClassDate ? ' · prox. ' + prog.nextClassDate : ''}`;
+    return `${future} futuras${prog.nextISO ? ' · prox. ' + prog.nextISO : ''}`;
   }
 
   function isTrialOrCourtesyRow(row) {
@@ -2376,7 +2395,7 @@
     return `
       <div class="pdf-ficha-template">
         <div class="pdf-ft-header-img">
-          <img src="${typeof MEMBRETE_HEADER_B64 !== 'undefined' ? MEMBRETE_HEADER_B64 : './membrete_img_0.png'}" alt="Musicala" style="width:100%;display:block;"/>
+          <img src="./membrete.png" alt="Membrete Musicala" style="width:100%;display:block;"/>
           <div class="pdf-ft-header-overlay">
             <span>Exportado el <strong>${escH(exportDate)}</strong></span>
           </div>
@@ -2823,6 +2842,8 @@
     ctx.el.viewTabClientes?.addEventListener('click', () => showDashboard('clientes'));
     ctx.el.viewTabKpis?.addEventListener('click', () => showDashboard('kpis'));
     ctx.el.viewTabPerformance?.addEventListener('click', () => showDashboard('performance'));
+    ctx.el.viewTabReconciliation?.addEventListener('click', () => showDashboard('reconciliation'));
+    ctx.el.btnReconciliationRefresh?.addEventListener('click', () => loadReconciliation(true));
     ctx.el.btnPerformanceRefresh?.addEventListener('click', () => loadPerformance(true));
     ctx.el.performanceRange?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
     ctx.el.performanceUser?.addEventListener('change', () => RIPUI.performance?.render?.(ctx, state.auditLog));
@@ -3291,6 +3312,9 @@
     const admins = (window.RIP_AUDIT_ADMIN_EMAILS || []).map(x => String(x).toLowerCase());
     state.audit = { email, isAdmin: admins.includes(email) };
     if (ctx.el.viewTabPerformance) ctx.el.viewTabPerformance.hidden = !email;
+    // Conciliación se muestra siempre. El acceso a los datos y a las escrituras
+    // continúa protegido por el inicio de sesión y las reglas de Firestore.
+    if (ctx.el.viewTabReconciliation) ctx.el.viewTabReconciliation.hidden = false;
     if (ctx.el.performanceUserWrap) ctx.el.performanceUserWrap.hidden = !state.audit.isAdmin;
     if (ctx.el.performanceTitle) ctx.el.performanceTitle.textContent = state.audit.isAdmin
       ? 'Auditoría y rendimiento del equipo'

@@ -50,12 +50,11 @@
   window.RIP_PRICES_TSV_URL = window.RIP_PRICES_TSV_URL || 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRw8VZmjjgmjRSeriTc2ITE1VtuwDtxCMntos5N8kljm0svs5nMe-nb07vJSx2L6vRo9iT_S7CCIEZe/pub?gid=1700804701&single=true&output=tsv';
 
   /*
-    Modo estricto de identidad (activar DESPUÉS de correr las migraciones):
-    con true, RIP rechaza clases/pagos/primeraVez nuevos sin studentId
-    canónico (homónimos y estudiantes no inscritos exigen resolución manual).
-    Con false (transición actual) los guarda y los marca para revisión.
+    Modo estricto de identidad: ningún registro nuevo puede crear una ficha
+    por nombre. Si no se obtiene un studentId canónico (por ID, correo o
+    nombre único), se detiene para revisión manual.
   */
-  window.RIP_REQUIRE_STUDENT_ID = window.RIP_REQUIRE_STUDENT_ID || false;
+  window.RIP_REQUIRE_STUDENT_ID = true;
 
   // Alias legados confirmados manualmente. Conservan el historial bajo una
   // sola ficha mientras termina la migración al studentId canónico.

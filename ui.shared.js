@@ -125,6 +125,7 @@
       viewTabClientes: $('viewTabClientes'),
       viewTabKpis: $('viewTabKpis'),
       viewTabPerformance: $('viewTabPerformance'),
+      viewTabReconciliation: $('viewTabReconciliation'),
       dashTabClas: $('dashTabClas'),
       dashTabSaldo: $('dashTabSaldo'),
       dashTabProg: $('dashTabProg'),
@@ -181,6 +182,11 @@
       primeraVezBody: $('primeraVezBody'),
       dashboardClasView: $('dashboardClasView'),
       performanceView: $('performanceView'),
+      reconciliationView: $('reconciliationView'),
+      reconciliationBody: $('reconciliationBody'),
+      reconciliationCount: $('reconciliationCount'),
+      reconciliationOptions: $('reconciliationOptions'),
+      btnReconciliationRefresh: $('btnReconciliationRefresh'),
       performanceTitle: $('performanceTitle'),
       performanceIntro: $('performanceIntro'),
       performanceRange: $('performanceRange'),
@@ -251,6 +257,8 @@
       fichaProxPago: $('fichaProxPago'),
       fichaSaldosMini: $('fichaSaldosMini'),
       fichaServiciosBlock: $('fichaServiciosBlock'),
+      fichaIdsBlock: $('fichaIdsBlock'),
+      fichaStudentIds: $('fichaStudentIds'),
       btnFichaDeleteDuplicates: $('btnFichaDeleteDuplicates'),
 
       // Programación dentro de ficha

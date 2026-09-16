@@ -292,6 +292,7 @@
     const activeByKey = new Map();
     const pendingPackagesByKey = new Map();
     const pendingClassIdsByKey = new Map();
+    const specialCreditsByPaymentId = new Map();
     const getQueue = (map, key) => {
       if (!map.has(key)) map.set(key, []);
       return map.get(key);
@@ -343,7 +344,7 @@
       .map((x) => x.r);
 
     for (const r of bottomToTop) {
-      const matricula = isMatriculaPago(r);
+      const matricula = isMatriculaPago(r) || Boolean(r?.matriculaEnrollmentRedeemed);
       const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
       const rid = getRowId(r);
       const packageKey = getPackageKey(r);
@@ -376,6 +377,15 @@
       if (!matricula && isPagoRow(r) && mov > 0) {
         cycle += 1;
         const pack = makePackage(cycle, mov, r);
+        // Un crédito CC/CP solo se puede consumir por la clase que la regla
+        // cronológica ya marcó como posterior a su pago. Nunca se usa para
+        // cubrir una clase anterior que estuviera pendiente.
+        if (window.RIPCalculations?.isTrialCP?.(r) || window.RIPCalculations?.isCourtesyCC?.(r)) {
+          specialCreditsByPaymentId.set(rid, pack);
+          cycleById.set(rid, cycle);
+          cycleMetaById.set(rid, { kind: 'pago', cycle, total: pack.total, code: pack.code, key: packageKey });
+          continue;
+        }
         let activePackage = activeByKey.get(packageKey) || null;
         if (activePackage && activePackage.remaining > 0) getQueue(pendingPackagesByKey, packageKey).push(pack);
         else {
@@ -418,6 +428,11 @@
 
       let activeKey = packageKey;
       let activePackage = activeByKey.get(activeKey) || null;
+      const specialPaymentId = String(r?.trialCourtesyPaymentId || '');
+      if (r?.trialCourtesyRedeemed && specialPaymentId && specialCreditsByPaymentId.has(specialPaymentId)) {
+        activePackage = specialCreditsByPaymentId.get(specialPaymentId);
+        activeKey = `special:${specialPaymentId}`;
+      }
       if (!activePackage) {
         activeKey = '*';
         activePackage = activeByKey.get(activeKey) || null;
@@ -442,6 +457,10 @@
 
       if (!matricula && isClaseRow(r) && mov < 0 && activePackage) {
         assignClassToPackage(rid, activePackage);
+        if (activeKey.startsWith('special:')) {
+          specialCreditsByPaymentId.delete(specialPaymentId);
+          continue;
+        }
         if (activePackage.remaining <= 0) {
           const nextPackage = getQueue(pendingPackagesByKey, activeKey).shift() || null;
           if (nextPackage) activeByKey.set(activeKey, nextPackage);
@@ -463,6 +482,7 @@
     const html = rows
       .slice(0, 1800)
       .map((r) => {
+        const isCourtesy = Boolean((window.RIPCalculations?.isCourtesy?.(r) || window.RIPCalculations?.isCourtesyCC?.(r)) && !r?.trialCourtesyRedeemed);
         const tipo = inferTipoLabel(r);
         const mov = Number(r.movimientoSaldo ?? r.movimiento) || 0;
         const movClass = mov < 0 ? 'mov-neg' : mov > 0 ? 'mov-pos' : 'mov-zero';
@@ -475,11 +495,13 @@
         const rid = getRowId(r);
         const cycleIdxRaw = Number(cycleById.get(rid));
         const cycleMeta = cycleMetaById.get(rid) || null;
-        const isMatricula = isMatriculaPago(r) || cycleIdxRaw < 0;
+        const isMatricula = isMatriculaPago(r) || Boolean(r?.matriculaEnrollmentRedeemed) || cycleIdxRaw < 0;
         const cycleIdx = Number.isFinite(cycleIdxRaw) ? cycleIdxRaw : 0;
-        const cycleClass = isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`;
+        const cycleClass = isCourtesy ? 'cycle-courtesy' : (isMatricula ? 'cycle-matricula' : `cycle-${cycleIdx % 8}`);
         const specialCode = cycleMeta?.code || getSpecialCode(r, cycleIdx);
-        const cycleLabel = isMatricula
+        const cycleLabel = isCourtesy
+          ? 'CC'
+          : isMatricula
           ? 'M'
           : cycleMeta?.kind === 'unpaid'
             ? '!'
@@ -492,7 +514,9 @@
             : cycleMeta?.kind === 'pago'
               ? `${specialCode} +${cycleMeta.total || mov}`
               : specialCode;
-        const cycleTitle = isMatricula
+        const cycleTitle = isCourtesy
+          ? 'Clase de cortesía (CC) · no consume pago'
+          : isMatricula
           ? 'Matrícula (sin conteo)'
           : cycleMeta?.kind === 'unpaid'
             ? 'Clase pendiente de pago'
@@ -723,6 +747,25 @@
       }
     }
 
+    // Los pagos heredados como “Pago” son crédito sin modalidad. En lugar
+    // de mostrar dos cifras que obliguen a hacer la resta mental (Pago +8,
+    // MV P -5), se aplican a las modalidades con clases pendientes. Así la
+    // ficha muestra directamente MV P +3.
+    const genericPaymentLabel = Array.from(totals.keys()).find(label => norm(label) === 'pago');
+    let genericPaymentCredit = genericPaymentLabel ? Math.max(0, Number(totals.get(genericPaymentLabel)) || 0) : 0;
+    if (genericPaymentCredit > 0) {
+      const pendingModalities = Array.from(totals.entries())
+        .filter(([label, value]) => norm(label) !== 'pago' && !isTrialCPLabel(label) && value < 0)
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      for (const [label, value] of pendingModalities) {
+        if (genericPaymentCredit <= 0) break;
+        const used = Math.min(genericPaymentCredit, Math.abs(value));
+        totals.set(label, value + used);
+        genericPaymentCredit -= used;
+      }
+      totals.set(genericPaymentLabel, genericPaymentCredit);
+    }
+
     const duplicateReviewCount = (rows || []).filter(r => r?.duplicateReview).length;
 
     const items = Array.from(totals.entries())
@@ -861,6 +904,35 @@
     `;
   }
 
+  function renderAssociatedIds(ctx, student, rows = []) {
+    const el = ctx?.el;
+    if (!el?.fichaStudentIds) return;
+
+    const ids = new Set();
+    const add = (value) => {
+      const id = String(value || '').trim();
+      if (id) ids.add(id);
+    };
+
+    add(student?.key);
+    add(student?.studentId);
+    add(student?.officialStudentId);
+    add(student?.canonicalStudentId);
+    (student?.linkedStudentIds || []).forEach(add);
+    (rows || []).forEach(row => {
+      add(row?.studentId);
+      add(row?.officialStudentId);
+      add(row?.canonicalStudentId);
+      (row?.linkedStudentIds || []).forEach(add);
+    });
+
+    const values = Array.from(ids);
+    el.fichaStudentIds.innerHTML = values.length
+      ? values.map(id => `<code class="ficha-id">${escapeHTML(id)}</code>`).join('')
+      : '<span class="muted">No hay IDs asociados.</span>';
+    if (el.fichaIdsBlock) el.fichaIdsBlock.hidden = false;
+  }
+
 
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
@@ -920,18 +992,23 @@
     }
 
     if (el.fichaSaldosMini) {
-      const allItems = [{ label: 'Saldo final', value: saldoTotal }].concat(items || []);
-      const chipsHTML = allItems.map((item) => {
+      const finalClass = saldoTotal > 0 ? 'pos' : saldoTotal < 0 ? 'neg' : 'zero';
+      const finalSign = saldoTotal > 0 ? '+' : '';
+      const detailsHTML = (items || []).map((item) => {
         const v = item.value;
         const cls = v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero';
         const sign = v > 0 ? '+' : '';
         const extra = item.count ? ` <b>${item.count}</b>` : ` <b>${sign}${v}</b>`;
         return `<span class="saldo-chip ${cls} ${item.count ? 'warn' : ''}">${escapeHTML(String(item.label || '').trim())}${extra}</span>`;
       }).join('');
-      el.fichaSaldosMini.innerHTML = chipsHTML;
+      el.fichaSaldosMini.innerHTML = `
+        <span class="saldo-chip saldo-final ${finalClass}">Saldo final <b>${finalSign}${saldoTotal}</b></span>
+        ${detailsHTML ? `<div class="saldo-modalidades">${detailsHTML}</div>` : ''}
+      `;
     }
 
     renderFichaServicios(ctx, student, rows);
+    renderAssociatedIds(ctx, student, rows);
   }
 
   function renderSimpleSummary(ctx, studentName, year, rowsSlice) {
@@ -956,6 +1033,7 @@
       `;
     }
     if (el.fichaServiciosBlock) el.fichaServiciosBlock.innerHTML = '';
+    renderAssociatedIds(ctx, { key: ctx?.state?.currentStudentKey || '' }, []);
   }
 
   async function syncProgramacionIfAvailable(ctx, state, studentName, year) {

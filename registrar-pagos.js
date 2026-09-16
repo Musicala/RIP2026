@@ -87,6 +87,10 @@
           <input id="usuario${n}" class="control" list="studentsList" placeholder="Escribe para buscar...">
         </label>
         <label class="field">
+          <span>Correo <small>(para identificarlo)</small></span>
+          <input id="correo${n}" class="control" type="email" placeholder="correo@ejemplo.com">
+        </label>
+        <label class="field">
           <span>Servicio</span>
           <input id="servicio${n}" class="control" list="servicesList" placeholder="Servicio...">
         </label>
@@ -264,6 +268,7 @@
       const n = section.dataset.userId;
       return {
         estudiante: $(`usuario${n}`)?.value || '',
+        correo:     $(`correo${n}`)?.value  || '',
         servicio:   $(`servicio${n}`)?.value || '',
         precio:     $(`precio${n}`)?.value   || '',
         ciclo:      $(`ciclo${n}`)?.value    || ''

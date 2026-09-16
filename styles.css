@@ -982,6 +982,9 @@ tr:hover td { background: rgba(26,59,110,.03); }
 .saldo-chip.zero { background: rgba(107,114,128,.07); border-color: rgba(107,114,128,.18); color: var(--muted); }
 .saldo-chip.pos  { background: var(--ok-bg); border-color: rgba(5,150,105,.2); color: var(--ok); }
 .saldo-chip.warn { background: var(--warn-bg); border-color: rgba(217,119,6,.24); color: var(--amber); }
+.saldo-final { font-size: 13px; padding: 7px 11px; }
+.saldo-modalidades { display: flex; flex-basis: 100%; gap: 7px; flex-wrap: wrap; }
+.saldo-modalidades .saldo-chip { font-size: 11px; padding: 4px 8px; }
 
 /* ─── Pago/sesiones por plan (color) ─────────── */
 .cycle-dot {
@@ -1011,6 +1014,11 @@ tr:hover td { background: rgba(26,59,110,.03); }
 .cycle-6 { background: #db2777; }
 .cycle-7 { background: #6b7280; }
 .cycle-matricula { background: #94a3b8; }
+.cycle-courtesy {
+  background: #f8fafc;
+  border: 1.5px solid #94a3b8;
+  box-shadow: none;
+}
 
 /* Clases que se deben (movimiento negativo) */
 tr.row-debt td {
@@ -1095,6 +1103,19 @@ tr.row-duplicate:hover td,
 .dateCell.miss .val { color: var(--danger); }
 .dateCell.future { border-color: rgba(37,99,235,.18); background: var(--info-bg); }
 .dateCell.future .val { color: var(--info); }
+.dateCell.past {
+  border-color: rgba(107,114,128,.20);
+  background: rgba(107,114,128,.08);
+  opacity: .62;
+}
+.dateCell.past .val { color: var(--muted); text-decoration: line-through; }
+.prog-status-danger { color: var(--danger); font-weight: 700; }
+
+/* IDs técnicos: disponibles para revisión sin competir con la ficha principal. */
+.ficha-ids { margin-top: 14px; color: var(--muted); font-size: 11px; }
+.ficha-ids summary { cursor: pointer; width: fit-content; font-weight: 600; }
+.ficha-ids-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ficha-id { padding: 3px 6px; border: 1px solid var(--bd); border-radius: 5px; background: rgba(17,24,39,.035); color: var(--muted); font-size: 10px; word-break: break-all; }
 
 /* Editable cells */
 .dateCell-editable {
@@ -1670,6 +1691,10 @@ tr.urgency-info:hover td { background: rgba(37,99,235,.09) !important; }
 #reviewKpiGrid .kpi:nth-child(3) { border-top: 3px solid #9CA3AF; }
 #reviewKpiGrid .kpi:nth-child(4) { border-top: 3px solid var(--info); }
 #reviewKpiGrid .kpi:nth-child(5) { border-top: 3px solid #8B5CF6; }
+
+.reconciliation-email-editor { display: flex; gap: 6px; min-width: 250px; align-items: center; }
+.reconciliation-email-editor .control { min-width: 0; flex: 1; }
+.reconciliation-email-editor .btn { flex: 0 0 auto; }
 
 /* ─── PDF Ficha Template (nueva plantilla bonita) ─── */
 .pdf-ficha-template {

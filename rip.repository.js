@@ -141,6 +141,24 @@
     return window.RIP_REQUIRE_STUDENT_ID === true;
   }
 
+  function assertStudentNameIsNotEmail(row) {
+    const name = String(row?.estudiante || '').trim();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name)) {
+      throw new Error(
+        `El correo "${name}" no puede guardarse como estudiante. ` +
+        'Busca o corrige el nombre antes de registrar la clase.'
+      );
+    }
+  }
+
+  function normalizeWixEmail(value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+  }
+
+  function isValidEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  }
+
   // Intenta completar row.studentId con el ID canónico del directorio local
   // (rip students, sincronizado desde estudiantes-musicala). Nunca adivina:
   // con homónimos detiene el guardado para revisión manual (si el modo
@@ -158,6 +176,10 @@
     try {
       resolved = await id.resolveStudentId({
         name: row.estudiante,
+        // El correo distingue variantes de nombre y homónimos. Los
+        // cargadores de Wix y pagos lo entregan en `correo`.
+        email: row.correo || row.email || '',
+        emails: Array.isArray(row.emails) ? row.emails : [],
         aliases: [row.estudianteKey].filter(Boolean)
       });
     } catch (_err) {
@@ -246,7 +268,13 @@
     base.estudianteKey = calc.norm(base.estudiante);
     // studentId canónico: viaja tal cual (nunca se normaliza). Si no viene,
     // attachStudentId() lo intenta resolver en el momento de guardar.
-    base.studentId = String(data.studentId || data.officialStudentId || '').trim();
+    const suppliedStudentId = String(data.studentId || data.officialStudentId || '').trim();
+    // El directorio histórico también usa correos como ID canónico. Solo se
+    // descarta la llave heredada cuando es exactamente el nombre normalizado.
+    base.studentId = suppliedStudentId && calc.norm(suppliedStudentId) !== base.estudianteKey
+      ? suppliedStudentId
+      : '';
+    base.correo = String(data.correo || data.email || '').trim().toLowerCase().replace(/\s+/g, '');
     base.servicioKey = calc.norm(base.servicio);
     base.profesorKey = calc.norm(base.profesor);
     base.movimiento = calc.computeMovimiento(base);
@@ -303,6 +331,42 @@
   }
 
   async function loadStudents() { return loadCollection('students'); }
+  // Directory used by reconciliation: local Bitacoras copy first, then a
+  // read-only lookup in Estudiantes when the sync has not arrived yet.
+  async function loadReconciliationDirectory() {
+    const students = await loadStudents();
+    const remote = [];
+    let remoteError = '';
+    const config = window.MUSICALA_STUDENTS_FIREBASE_CONFIG;
+    if (!config) return { students, remote, remoteError };
+    try {
+      const CDN = 'https://www.gstatic.com/firebasejs/10.12.5/';
+      const [appMod, fsMod] = await Promise.all([import(CDN + 'firebase-app.js'), import(CDN + 'firebase-firestore.js')]);
+      const appName = 'rip-reconciliation-students';
+      const app = appMod.getApps().some(a => a.name === appName) ? appMod.getApp(appName) : appMod.initializeApp(config, appName);
+      const db = fsMod.getFirestore(app);
+      const collections = window.MUSICALA_STUDENTS_COLLECTIONS || ['students', 'estudiantes'];
+      const seen = new Set();
+      for (const collectionName of collections) try {
+        const snap = await fsMod.getDocs(fsMod.collection(db, collectionName));
+        snap.forEach((docSnap) => {
+          const raw = docSnap.data() || {};
+          const name = String(raw.name || raw.estudiante || raw.nombre || raw.nombreCompleto || '').trim();
+          if (!name) return;
+          const explicitId = String(raw.studentId || raw.officialStudentId || '').trim();
+          const unique = `${explicitId || docSnap.id}::${C().norm(name)}`;
+          if (seen.has(unique)) return;
+          seen.add(unique);
+          remote.push({ id: explicitId, studentId: raw.studentId || '', officialStudentId: raw.officialStudentId || '', name,
+            nameKey: raw.nameKey || raw.estudianteKey || C().norm(name), identitySource: 'estudiantes-musicala-direct' });
+        });
+      } catch (err) { console.warn(`[RIP] No se pudo leer ${collectionName} para conciliacion.`, err); }
+    } catch (err) {
+      remoteError = err?.message || 'No se pudo consultar Estudiantes.';
+      console.warn('[RIP] Directorio remoto de conciliacion no disponible.', err);
+    }
+    return { students, remote, remoteError };
+  }
   async function loadProgramacion() { return loadCollection('programacion'); }
   async function loadComputed() { return loadCollection('studentComputed'); }
   async function loadClientesB2C() { return loadCollection('clientesB2C', 'fechaTs'); }
@@ -357,13 +421,26 @@
     const canonical = String(row.studentId || '').trim();
 
     if (canonical) {
+      const canonicalRef = doc(env.db, 'students', canonical);
+      const canonicalSnap = await getDoc(canonicalRef);
+      const canonicalBefore = canonicalSnap.exists() ? canonicalSnap.data() : {};
+      // El directorio sincronizado desde Estudiantes es la fuente del nombre
+      // visible. Una variante de Wix puede identificar a la misma persona,
+      // pero nunca debe reemplazar su nombre maestro.
+      const keepDirectoryName = String(canonicalBefore.identitySource || '') === 'estudiantes-musicala';
+      const displayName = keepDirectoryName
+        ? String(canonicalBefore.name || canonicalBefore.estudiante || row.estudiante).trim()
+        : row.estudiante;
+      const displayNameKey = keepDirectoryName
+        ? String(canonicalBefore.nameKey || canonicalBefore.estudianteKey || C().norm(displayName)).trim()
+        : row.estudianteKey;
       await setDoc(doc(env.db, 'students', canonical), {
         studentId: canonical,
         officialStudentId: canonical,
-        name: row.estudiante,
-        estudiante: row.estudiante,
-        nameKey: row.estudianteKey,
-        estudianteKey: row.estudianteKey,
+        name: displayName,
+        estudiante: displayName,
+        nameKey: displayNameKey,
+        estudianteKey: displayNameKey,
         schemaVersion: 2,
         updatedAt: stamp(env.fs),
         updatedBy: userEmail(env),
@@ -433,11 +510,14 @@
     const { collection, doc, getDocs, query, where, getDoc, setDoc } = env.fs;
     const inputKey = keyFor(studentId);
     if (!inputKey) return null;
+    const provisionalCluster = String(studentId || '').trim().startsWith('cluster:') ? String(studentId).trim() : '';
 
     // Resolver canónico y nameKey del estudiante.
-    let canonical = isCanonicalId(inputKey) ? inputKey : '';
+    let canonical = provisionalCluster ? '' : (isCanonicalId(inputKey) ? inputKey : '');
     let nameKey = canonical ? '' : inputKey;
-    if (canonical) {
+    if (provisionalCluster) {
+      nameKey = provisionalCluster.slice('cluster:'.length);
+    } else if (canonical) {
       try {
         const index = await identity()?.ensureIndex();
         nameKey = index?.byCanonicalId?.get(canonical)?.nameKey || '';
@@ -445,22 +525,14 @@
     } else {
       try {
         const resolved = await identity()?.resolveStudentId({ name: inputKey, aliases: [inputKey] });
-        if (resolved?.studentId && !resolved.ambiguous) {
-          canonical = resolved.studentId;
-          // Cuando la entrada es un correo/alias, el canónico se resuelve pero
-          // `nameKey` aún contenía ese alias. Entonces la recalculación buscaba
-          // estudianteKey == correo y omitía todo el historial antiguo que
-          // permanece bajo la llave de nombre. Recuperamos la llave publicada
-          // por la identidad antes de consultar registro.
-          const index = await identity()?.ensureIndex();
-          nameKey = index?.byCanonicalId?.get(canonical)?.nameKey || nameKey;
-        }
+        if (resolved?.studentId && !resolved.ambiguous) canonical = resolved.studentId;
       } catch (_err) { /* sin índice: se recalcula bajo la llave heredada */ }
     }
 
     // Filas por AMBAS llaves (histórico + canónico), unidas sin duplicar.
     const rowQueries = [];
-    if (nameKey) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', nameKey))));
+    if (provisionalCluster) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('identityClusterKey', '==', provisionalCluster))));
+    else if (nameKey) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', nameKey))));
     if (canonical) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('studentId', '==', canonical))));
     if (!rowQueries.length) rowQueries.push(getDocs(query(collection(env.db, 'registro'), where('estudianteKey', '==', inputKey))));
     const rowSnaps = await Promise.all(rowQueries);
@@ -551,6 +623,7 @@
     const env = await fb();
     const { collection, addDoc } = env.fs;
     const row = normalizeRegistro(data);
+    assertStudentNameIsNotEmail(row);
     await attachStudentId(row);
     row.createdAt = stamp(env.fs);
     row.updatedAt = stamp(env.fs);
@@ -573,6 +646,10 @@
     const skipped = [];
     const studentIds = new Set();
     const sourceRows = Array.isArray(rows) ? rows : [];
+
+    // Validar todo el lote antes de escribir: así un CSV con un correo sin
+    // nombre no deja una carga a medias ni vuelve a crear esa falsa ficha.
+    sourceRows.forEach(data => assertStudentNameIsNotEmail(normalizeRegistro(data)));
 
     for (let index = 0; index < sourceRows.length; index++) {
       const row = normalizeRegistro(sourceRows[index]);
@@ -620,6 +697,7 @@
         index: index + 1,
         estudiante: String(u.estudiante || '').trim(),
         studentId: String(u.studentId || '').trim(),
+        correo: String(u.correo || u.email || '').trim().toLowerCase().replace(/\s+/g, ''),
         servicio: String(u.servicio || '').trim(),
         precio: calc.safeNum(u.precio),
         ciclo: String(u.ciclo || '').trim()
@@ -628,7 +706,12 @@
     // Resolver studentId canónico por usuario (sin adivinar homónimos).
     for (const u of valid) {
       if (!u.studentId) {
-        const helper = { estudiante: u.estudiante, estudianteKey: calc.norm(u.estudiante), studentId: '' };
+        const helper = {
+          estudiante: u.estudiante,
+          estudianteKey: calc.norm(u.estudiante),
+          correo: u.correo,
+          studentId: ''
+        };
         await attachStudentId(helper);
         u.studentId = helper.studentId || '';
       }
@@ -663,6 +746,7 @@
         tipo: 'Pago',
         estudiante: item.estudiante,
         studentId: item.studentId || '',
+        correo: item.correo || '',
         fecha,
         fechaRaw: fecha,
         servicio: item.servicio,
@@ -802,6 +886,7 @@
     const beforeSnap = await getDoc(ref);
     const before = beforeSnap.exists() ? beforeSnap.data() : {};
     const row = normalizeRegistro({ ...before, ...data });
+    assertStudentNameIsNotEmail(row);
     await attachStudentId(row);
     row.updatedAt = stamp(env.fs);
     row.updatedBy = userEmail(env);
@@ -826,6 +911,131 @@
     await logAudit('registro', recordId, 'delete', before, null);
     notifyFirestoreChange({ entity: 'registro', action: 'delete', id: recordId, studentId: before?.studentId || before?.estudianteKey || '' });
     return { ok: true };
+  }
+
+  // El correo de Wix participa en la resolución de identidad al importar
+  // clases. Se reemplaza (no se acumula) para evitar que un correo antiguo
+  // termine vinculando una reserva nueva a la ficha equivocada.
+  async function updateStudentWixEmail(studentId, rawEmail) {
+    const canonical = String(studentId || '').trim();
+    const wixEmail = normalizeWixEmail(rawEmail);
+    if (!isCanonicalId(canonical)) throw new Error('El ID del estudiante no es canónico.');
+    if (!isValidEmail(wixEmail)) throw new Error('Escribe un correo válido de Wix.');
+
+    const index = await identity()?.ensureIndex?.();
+    const owners = Array.from(index?.byEmail?.get(wixEmail) || []);
+    const otherOwner = owners.find(id => id !== canonical);
+    if (otherOwner) {
+      throw new Error('Ese correo ya está asignado a otra ficha canónica. Corrige o desvincula la otra ficha antes de guardarlo.');
+    }
+
+    const env = await fb();
+    const { doc, getDoc, setDoc } = env.fs;
+    const ref = doc(env.db, 'students', canonical);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('No encontré la ficha canónica del estudiante.');
+    const before = snap.data();
+    await setDoc(ref, {
+      email: wixEmail,
+      emails: [wixEmail],
+      wixEmail,
+      updatedAt: stamp(env.fs),
+      updatedBy: userEmail(env)
+    }, { merge: true });
+    clearCache('students');
+    identity()?.invalidate?.();
+    const after = { ...before, email: wixEmail, emails: [wixEmail], wixEmail };
+    await logAudit('students', canonical, 'update-wix-email', before, after);
+    notifyFirestoreChange({ entity: 'students', action: 'update-wix-email', id: canonical, studentId: canonical });
+    return { ok: true, studentId: canonical, email: wixEmail };
+  }
+
+  /* Vincula filas históricas a una identidad canónica elegida explícitamente
+     en Conciliación. Solo modifica los IDs de los documentos seleccionados;
+     jamás borra filas ni infiere homónimos. */
+  async function reconcileRegistroStudentIds({ recordIds, targetStudentId = '', targetName = '', expectedNameKey = '', expectedNameKeys = [] } = {}) {
+    const env = await fb();
+    const ids = Array.from(new Set(Array.isArray(recordIds) ? recordIds.map(String).filter(Boolean) : []));
+    const target = String(targetStudentId || '').trim();
+    const canonical = isCanonicalId(target) ? target : '';
+    const displayName = String(targetName || '').trim();
+    const targetKey = C().norm(displayName || (!canonical ? target : ''));
+    const provisionalCluster = canonical ? '' : `cluster:${targetKey}`;
+    const expected = C().norm(expectedNameKey);
+    const expectedKeys = new Set([expected, ...(Array.isArray(expectedNameKeys) ? expectedNameKeys.map(C().norm) : [])].filter(Boolean));
+    if (!ids.length) throw new Error('No hay registros seleccionados para conciliar.');
+    if (!canonical && !targetKey) throw new Error('Selecciona un estudiante o nombre maestro valido.');
+    const { doc, getDoc, setDoc } = env.fs;
+    const changed = [];
+    const linkedIds = new Set([canonical].filter(Boolean));
+    const rowsToUpdate = [];
+    for (const id of ids) {
+      const ref = doc(env.db, 'registro', id);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) continue;
+      const before = snap.data();
+      const nameKey = C().norm(before.estudianteKey || before.estudiante || before.name);
+      if (expectedKeys.size && !expectedKeys.has(nameKey)) throw new Error(`El registro ${id} no pertenece al nombre conciliado.`);
+      [before.studentId, before.canonicalStudentId, ...(Array.isArray(before.linkedStudentIds) ? before.linkedStudentIds : [])]
+        .map(value => String(value || '').trim()).filter(Boolean).forEach(value => linkedIds.add(value));
+      if (canonical && String(before.studentId || before.canonicalStudentId || '').trim() === canonical) continue;
+      rowsToUpdate.push({ id, ref, before });
+    }
+    // Gather every legacy identifier before writing any row, so all linked
+    // rows receive the same complete alias list (not one ID each).
+    for (const { id, ref, before } of rowsToUpdate) {
+      const after = {
+        estudiante: displayName || before.estudiante,
+        estudianteKey: targetKey || C().norm(before.estudiante || ''),
+        // Sin canónico se conservan los IDs originales; solo se añade una
+        // llave de cluster provisional para mostrarlos en una sola ficha.
+        studentId: canonical || String(before.studentId || '').trim(),
+        canonicalStudentId: canonical || String(before.canonicalStudentId || '').trim(),
+        ...(provisionalCluster ? { identityClusterKey: provisionalCluster } : {}),
+        // El canónico manda; los IDs anteriores se conservan para auditoría,
+        // futuras búsquedas y para no perder ningún enlace histórico.
+        linkedStudentIds: Array.from(linkedIds),
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env),
+        reconciledAt: stamp(env.fs),
+        reconciledBy: userEmail(env)
+      };
+      await setDoc(ref, after, { merge: true });
+      await logAudit('registro', id, canonical ? 'reconcile-student-id' : 'reconcile-student-name', before, { ...before, ...after });
+      changed.push(id);
+    }
+    if (changed.length || canonical) {
+      await setDoc(doc(env.db, 'students', canonical || targetKey), {
+        ...(canonical ? { studentId: canonical, officialStudentId: canonical } : {}),
+        ...(displayName ? { name: displayName, nameKey: targetKey } : {}),
+        ...(provisionalCluster ? { identityClusterKey: provisionalCluster, identityStatus: 'provisional' } : {}),
+        linkedStudentIds: Array.from(linkedIds),
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env)
+      }, { merge: true });
+      // A canonical chosen explicitly in reconciliation becomes the single
+      // visible ficha. The other selected canonical directory docs remain as
+      // aliases, preserving their IDs and preventing empty duplicate fichas.
+      if (canonical) {
+        for (const legacyId of linkedIds) {
+          if (!isCanonicalId(legacyId) || legacyId === canonical) continue;
+          const legacyRef = doc(env.db, 'students', legacyId);
+          const legacySnap = await getDoc(legacyRef);
+          if (!legacySnap.exists()) continue;
+          await setDoc(legacyRef, {
+            legacyAliasOf: canonical,
+            mergedInto: canonical,
+            canonicalStudentId: canonical,
+            updatedAt: stamp(env.fs),
+            updatedBy: userEmail(env)
+          }, { merge: true });
+        }
+      }
+    }
+    clearCache('registro');
+    if (changed.length) await recalculateStudent(canonical || provisionalCluster || targetKey);
+    notifyFirestoreChange({ entity: 'registro', action: canonical ? 'reconcile-student-id' : 'reconcile-student-cluster', studentId: canonical || provisionalCluster || targetKey, recordIds: changed });
+    return { ok: true, changed: changed.length, recordIds: changed, targetStudentId: canonical, targetName: displayName };
   }
 
   function normalizePrimeraVez(data) {
@@ -1017,10 +1227,80 @@
   }
 
   async function saveScheduleFrom(studentId, startIndex, fechas) {
-    const current = await loadStudentSchedule(studentId);
-    const merged = Array.isArray(current.fechas) ? current.fechas.slice() : [];
-    (fechas || []).forEach((f, i) => { merged[Number(startIndex) + i] = f; });
-    return saveSchedule(studentId, merged);
+    const firstIndex = Math.max(0, Number(startIndex || 1) - 1);
+    return patchSchedule(studentId, (merged) => {
+      (fechas || []).forEach((f, i) => { merged[firstIndex + i] = f; });
+      return merged;
+    });
+  }
+
+  /*
+    Cambia una sola fecha sin volver a guardar el calendario que tenía abierto
+    otra persona. Esto evita que una pantalla desactualizada borre clases de
+    meses anteriores o posteriores al editar una celda.
+  */
+  async function saveScheduleDate(studentId, index, fecha) {
+    const targetIndex = Math.max(0, Number(index) || 0);
+    return patchSchedule(studentId, (merged) => {
+      merged[targetIndex] = String(fecha || '').trim();
+      return merged;
+    });
+  }
+
+  // Aplica una modificación parcial sobre la última versión de Firestore.
+  // La transacción se reintenta si otro usuario guardó entre la lectura y la
+  // escritura; así no se pisan datos concurrentes.
+  async function patchSchedule(studentId, applyPatch) {
+    const env = await fb();
+    const resolved = await resolveScheduleDoc(env, studentId);
+    const key = resolved.canonical || resolved.docId;
+    if (!key) throw new Error('Falta estudiante para guardar programación.');
+    const { doc, getDoc, setDoc, runTransaction } = env.fs;
+    const ref = doc(env.db, 'programacion', key);
+    let before = {};
+    let after = {};
+
+    await runTransaction(env.db, async (transaction) => {
+      const snap = await transaction.get(ref);
+      before = snap.exists() ? snap.data() : {};
+      const current = Array.isArray(before.fechas) ? before.fechas.slice() : [];
+      const patched = typeof applyPatch === 'function' ? applyPatch(current) : current;
+      const cleanFechas = Array.isArray(patched)
+        ? patched.map(x => String(x || '').trim()).filter(Boolean).sort()
+        : [];
+      after = {
+        ...before,
+        studentId: resolved.canonical || key,
+        canonicalStudentId: resolved.canonical || '',
+        estudiante: resolved.displayName,
+        estudianteKey: resolved.nameKey || (isCanonicalId(key) ? '' : key),
+        fechas: cleanFechas,
+        maxClasses: Math.max(Number(before.maxClasses) || 0, cleanFechas.length || 0, 24),
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env)
+      };
+      transaction.set(ref, after, { merge: true });
+    });
+
+    // Conservar el alias por nombre durante la migración a studentId.
+    if (resolved.canonical && resolved.nameKey && resolved.nameKey !== resolved.canonical) {
+      const legacyRef = doc(env.db, 'programacion', resolved.nameKey);
+      const legacySnap = await getDoc(legacyRef);
+      if (legacySnap.exists() && String(legacySnap.data()?.legacyAliasOf || '') !== resolved.canonical) {
+        await setDoc(legacyRef, {
+          legacyAliasOf: resolved.canonical,
+          canonicalStudentId: resolved.canonical,
+          updatedAt: stamp(env.fs),
+          updatedBy: userEmail(env)
+        }, { merge: true });
+      }
+    }
+
+    clearCache('programacion');
+    await recalculateStudent(key);
+    await logAudit('programacion', key, 'update', before, after);
+    notifyFirestoreChange({ entity: 'programacion', action: 'update', id: key, studentId: after.studentId });
+    return after;
   }
 
   /*
@@ -1141,11 +1421,27 @@
     const targetStudentRef = doc(env.db, 'students', targetDocKey);
     const targetStudentSnap = await getDoc(targetStudentRef);
     const targetStudentBefore = targetStudentSnap.exists() ? targetStudentSnap.data() : null;
+    // Una fusión no es solo histórica: el nombre que se fusiona debe seguir
+    // resolviendo al mismo studentId cuando alguien lo escriba de nuevo en
+    // Registro. Sin este alias, la siguiente clase podía volver a abrir una
+    // segunda identidad por el nombre anterior.
+    const sourceStudentSnap = await getDoc(doc(env.db, 'students', sourceKey));
+    const sourceStudent = sourceStudentSnap.exists() ? sourceStudentSnap.data() : {};
+    const persistentAliases = new Set([
+      ...(Array.isArray(targetStudentBefore?.aliases) ? targetStudentBefore.aliases : []),
+      sourceKey,
+      calc.norm(sourceStudentIdOrName),
+      calc.norm(sourceStudent?.name || sourceStudent?.estudiante || ''),
+      String(sourceStudent?.nameKey || sourceStudent?.estudianteKey || '').trim()
+    ].map(value => String(value || '').trim()).filter(Boolean));
+    // El nombre actual no hace falta como alias; ya existe en nameKey.
+    persistentAliases.delete(targetNameKey);
     await setDoc(targetStudentRef, {
       ...(targetStudentBefore || {}),
       name: targetName,
       nameKey: targetStudentBefore?.nameKey || targetNameKey,
       ...(targetCanonical ? { studentId: targetCanonical, officialStudentId: targetCanonical } : {}),
+      aliases: Array.from(persistentAliases).sort(),
       mergedFrom: Array.from(new Set([...(targetStudentBefore?.mergedFrom || []), sourceKey])),
       updatedAt: stamp(env.fs),
       updatedBy: userEmail(env)
@@ -1333,14 +1629,14 @@
   }
 
   window.RIPRepository = {
-    loadRegistro, loadStudents, loadProgramacion, loadComputed,
+    loadRegistro, loadStudents, loadReconciliationDirectory, loadProgramacion, loadComputed,
       loadClientesB2C, loadPrimeraVez, loadAuditLog,
-    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow,
+    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow, reconcileRegistroStudentIds, updateStudentWixEmail,
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,
     mergeStudents, previewMergeStudents,
     repairConfirmedJulietaDuplicates,
-    loadStudentSchedule, saveSchedule, saveScheduleFrom,
+    loadStudentSchedule, saveSchedule, saveScheduleFrom, saveScheduleDate,
     recalculateStudent, recalculateAllStudents, logAudit,
     normalizeRegistro, getDefaultServices, mergeServiceMeta, clearCache
   };

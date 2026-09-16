@@ -71,12 +71,17 @@
       if (!raw) continue;
       const docId = toText(raw.id);
       const official = toText(raw.officialStudentId);
+      const mergedInto = toText(raw.legacyAliasOf || raw.mergedIntoStudentId);
       // Un doc es "canónico" si viene del sync de identidad (studentId == id)
       // o si es un doc legado que ya conoce su officialStudentId.
-      const canonicalId =
+      const canonicalId = mergedInto || (
+        // Una ficha previamente fusionada es un alias: todos sus nombres,
+        // correos y registros deben resolver al destino, no revivir el ID
+        // anterior como una segunda persona.
         (toText(raw.studentId) === docId && toText(raw.identitySource) === 'estudiantes-musicala')
           ? docId
-          : (official || (looksLikeCanonicalId(docId) ? docId : ''));
+          : (official || (looksLikeCanonicalId(docId) ? docId : ''))
+      );
 
       if (!canonicalId) continue;
 
@@ -90,7 +95,7 @@
         emails: [],
         aliases: []
       };
-      if (name && (!existing.name || toText(raw.identitySource) === 'estudiantes-musicala')) {
+      if (name && (!existing.name || (toText(raw.identitySource) === 'estudiantes-musicala' && !mergedInto))) {
         existing.name = name;
         existing.nameKey = nameKey;
       }
@@ -99,7 +104,14 @@
         const clean = normalizeEmail(email);
         if (clean && !existing.emails.includes(clean)) existing.emails.push(clean);
       }
-      const aliases = Array.isArray(raw.aliases) ? raw.aliases : [];
+      // `mergedFrom` existe en fusiones anteriores a la introducción del
+      // campo aliases. También debe resolver a la ficha destino; de otro
+      // modo, al volver a escribir el nombre anterior en Registro se crea
+      // otra identidad por nombre.
+      const aliases = [
+        ...(Array.isArray(raw.aliases) ? raw.aliases : []),
+        ...(Array.isArray(raw.mergedFrom) ? raw.mergedFrom : [])
+      ];
       for (const alias of aliases) {
         const clean = toText(alias);
         if (clean && !existing.aliases.includes(clean)) existing.aliases.push(clean);
@@ -145,6 +157,17 @@
       : { id: '', candidates };
   }
 
+  // Un mismo correo puede pertenecer al acudiente de varios hermanos. En ese
+  // caso el correo por sí solo no identifica a nadie, pero sí puede acotarse
+  // de forma segura cuando el nombre de la reserva coincide con UNA de las
+  // fichas que comparten el correo.
+  function uniqueNameMatchWithin(index, candidates, name) {
+    const nameKey = norm(name || '');
+    if (!nameKey || !candidates || candidates.length < 2) return { id: '', candidates: [] };
+    const matches = candidates.filter((id) => norm(index.byCanonicalId.get(id)?.nameKey || index.byCanonicalId.get(id)?.name) === nameKey);
+    return uniqueMatch(new Set(matches));
+  }
+
   /*
     resolveWithIndex(index, hints) — resolución sincrónica con un índice ya
     construido (testeable en Node sin Firebase).
@@ -183,6 +206,8 @@
       const match = uniqueMatch(index.byEmail.get(email));
       if (match.id) return { ...result, studentId: match.id, source: 'email' };
       if (match.candidates.length > 1) {
+        const byName = uniqueNameMatchWithin(index, match.candidates, hints.name);
+        if (byName.id) return { ...result, studentId: byName.id, source: 'email+name' };
         return { ...result, ambiguous: true, candidates: match.candidates, source: 'email_ambiguous' };
       }
     }

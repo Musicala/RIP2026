@@ -39,6 +39,10 @@
     if (!record) return '';
     const annotated = String(record.groupKey || '').trim();
     if (annotated) return annotated;
+    // Una conciliación provisional une varias identidades sin declarar cuál
+    // ID es el oficial todavía. Tiene prioridad sobre cualquier ID heredado.
+    const cluster = String(record.identityClusterKey || '').trim();
+    if (cluster) return cluster;
     const explicit = String(record.studentId || record.canonicalStudentId || '').trim();
     /*
       Durante la transición hay programaciones antiguas cuyo campo
@@ -68,8 +72,10 @@
     const target = String(key || '').trim();
     if (!target) return false;
     if (String(record.groupKey || '').trim() === target) return true;
+    if (String(record.identityClusterKey || '').trim() === target) return true;
     if (String(record.studentId || '').trim() === target) return true;
     if (String(record.canonicalStudentId || '').trim() === target) return true;
+    if (Array.isArray(record.linkedStudentIds) && record.linkedStudentIds.some(id => String(id || '').trim() === target)) return true;
     const nameKey = String(record.estudianteKey || '').trim() || norm(record.estudiante || record.name);
     if (nameKey === target) return true;
     // Compatibilidad: llaves de nombre pueden llegar sin normalizar.
@@ -509,8 +515,62 @@
     return d;
   }
 
-  function markMusigymSubscriptions(records) {
+  // CC/CP son créditos de una sola clase. La habilitación no puede cubrir
+  // una clase anterior: se redime únicamente en la primera clase cronológica
+  // posterior (el pago va primero cuando ambos registros son del mismo día).
+  function markTrialCourtesyRedemptions(records) {
     const rows = markDuplicateClasses(records || []);
+    const byStudent = new Map();
+    const rowId = (row, index) => String(row?.id || row?.recordHash || `${row?.fecha || row?.fechaRaw || ''}|${row?.hora || ''}|${row?.servicio || ''}|${index}`);
+    const timeOf = (row) => {
+      const date = Number(row?.fechaTs) || parseDate(row?.fecha || row?.fechaRaw)?.getTime() || 0;
+      const m = String(row?.hora || '').match(/(\d{1,2}):(\d{2})/);
+      return { date, minutes: m ? Number(m[1]) * 60 + Number(m[2]) : 0 };
+    };
+    rows.forEach((row, index) => {
+      const key = getStudentGroupingKey(row) || String(row?.estudianteKey || norm(row?.estudiante));
+      if (!key) return;
+      if (!byStudent.has(key)) byStudent.set(key, []);
+      byStudent.get(key).push({ row, index });
+    });
+
+    const redeemed = new Map();
+    for (const entries of byStudent.values()) {
+      entries.sort((a, b) => {
+        const ta = timeOf(a.row);
+        const tb = timeOf(b.row);
+        if (ta.date !== tb.date) return ta.date - tb.date;
+        if (ta.minutes !== tb.minutes) return ta.minutes - tb.minutes;
+        const pa = norm(a.row?.tipo) === 'pago' ? 0 : 1;
+        const pb = norm(b.row?.tipo) === 'pago' ? 0 : 1;
+        return pa - pb || a.index - b.index;
+      });
+      const credits = [];
+      for (const entry of entries) {
+        const row = entry.row;
+        const code = isTrialCP(row) ? 'CP' : (isCourtesyCC(row) ? 'CC' : '');
+        if (norm(row?.tipo) === 'pago' && code && !row?.duplicateReview) {
+          credits.push({ code, paymentId: rowId(row, entry.index) });
+          continue;
+        }
+        if (norm(row?.tipo) !== 'clase' || row?.duplicateReview || !credits.length) continue;
+        const credit = credits.shift();
+        redeemed.set(entry.index, credit);
+      }
+    }
+    return rows.map((row, index) => {
+      const credit = redeemed.get(index);
+      return credit ? {
+        ...row,
+        trialCourtesyRedeemed: true,
+        trialCourtesyCode: credit.code,
+        trialCourtesyPaymentId: credit.paymentId
+      } : row;
+    });
+  }
+
+  function markMusigymSubscriptions(records) {
+    const rows = markAnnualEnrollmentClasses(records || []);
     const subscriptionsByStudent = new Map();
     const getStudentKey = (row) => row?.estudianteKey || norm(row?.estudiante);
     const getDate = (row) => {
@@ -553,6 +613,34 @@
         musigymSubscriptionRedeemed: true,
         musigymSubscriptionLabel: active.label
       };
+    });
+  }
+
+  // ME = matrícula anual. Durante sus doce meses de vigencia las sesiones
+  // corresponden a práctica/estudio, no a clases que consuman saldo.
+  function markAnnualEnrollmentClasses(records) {
+    const rows = markTrialCourtesyRedemptions(records || []);
+    const validUntilByStudent = new Map();
+    const isME = (row) => /\bme\b/i.test(String(row?.servicio || ''));
+    const getDate = (row) => {
+      const ts = Number(row?.fechaTs) || 0;
+      return ts ? new Date(ts) : parseDate(row?.fecha || row?.fechaRaw);
+    };
+    const studentKey = (row) => row?.studentId || row?.estudianteKey || norm(row?.estudiante);
+    for (const row of rows) {
+      if (norm(row?.tipo) !== 'pago' || !isME(row)) continue;
+      const date = getDate(row);
+      const key = studentKey(row);
+      if (!date || !key) continue;
+      const until = addMonths(new Date(date.getFullYear(), date.getMonth(), date.getDate()), 12).getTime();
+      validUntilByStudent.set(key, Math.max(validUntilByStudent.get(key) || 0, until));
+    }
+    return rows.map((row) => {
+      if (row?.duplicateReview || norm(row?.tipo) !== 'clase' || !isME(row)) return row;
+      const date = getDate(row);
+      const until = validUntilByStudent.get(studentKey(row)) || 0;
+      if (!date || !until || date.getTime() >= until) return row;
+      return { ...row, movimientoSaldo: 0, matriculaEnrollmentRedeemed: true };
     });
   }
 
@@ -604,12 +692,18 @@
     return lastPackageTotal || 24;
   }
 
-  function calculateProgramacionStatus(fechas, todayISO, expectedTotal) {
+  function calculateProgramacionStatus(fechas, todayISO, expectedTotal, studentIsActive = false) {
     const clean = Array.isArray(fechas) ? fechas.map(x => String(x || '').trim()).filter(Boolean).sort() : [];
     const today = todayISO || toISODate(new Date());
     const limit = Math.max(1, Math.round(Number(expectedTotal) || 24));
     if (!clean.length) return { status: 'Sin programacion', futureCount: 0, nextClassDate: '', filled: 0, limit };
     const future = clean.filter(f => f >= today);
+    // Una agenda que ya terminó no es una programación útil para un estudiante
+    // activo: se agrupa con "Sin programación", pero conserva este estado para
+    // hacer visible el problema y permitir corregirlo.
+    if (studentIsActive && !future.length) {
+      return { status: 'Programacion vencida', futureCount: 0, nextClassDate: '', filled: clean.length, limit };
+    }
     if (clean.length >= limit) return { status: 'OK', futureCount: future.length, nextClassDate: future[0] || '', filled: clean.length, limit };
     return { status: 'Por completar', futureCount: future.length, nextClassDate: future[0] || '', filled: clean.length, limit };
   }
@@ -681,7 +775,7 @@
     getStudentGroupingKey, matchesStudentKey,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,
-    markDuplicateClasses, markMusigymSubscriptions, isMusigymRow, isMusigymSubscription,
+    markDuplicateClasses, markTrialCourtesyRedemptions, markAnnualEnrollmentClasses, markMusigymSubscriptions, isMusigymRow, isMusigymSubscription,
     calculateStudentBalance, calculateStudentFicha, calculateStudentStatus,
     getStudentClassLimit, calculateProgramacionStatus, isActiveInterestRow, calculateStudentInterest, recalculateStudentFromRecords,
     recalculateAllStudents

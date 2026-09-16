@@ -352,11 +352,30 @@
       llave canónica y dos homónimos con IDs distintos jamás se mezclan.
     */
     const aliasMap = new Map();
+    const canonicalAliases = new Map(); // old canonical ID -> chosen canonical ID
+    for (const s of students || []) {
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (!canonical) continue;
+      for (const linkedId of Array.isArray(s.linkedStudentIds) ? s.linkedStudentIds : []) {
+        const alias = String(linkedId || '').trim();
+        if (alias && alias !== canonical) canonicalAliases.set(alias, canonical);
+      }
+    }
     for (const s of students || []) {
       const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
       const canonical = String(s.officialStudentId || s.canonicalStudentId ||
         (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
-      if (nameKey && canonical && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+      // Los documentos marcados como alias no compiten con la ficha principal.
+      if (nameKey && canonical && !s.legacyAliasOf && !canonicalAliases.has(canonical) && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+      // Una conciliación explícita conserva los IDs anteriores aquí. Mapearlos
+      // al principal permite abrir la ficha desde cualquier enlace histórico.
+      if (canonical) {
+        for (const linkedId of Array.isArray(s.linkedStudentIds) ? s.linkedStudentIds : []) {
+          const alias = String(linkedId || '').trim();
+          if (alias && alias !== canonical) aliasMap.set(alias, canonical);
+        }
+      }
     }
     // Correcciones confirmadas de llaves heredadas. Se aplican después del
     // directorio para que una llave antigua no vuelva a crear otra ficha.
@@ -377,7 +396,9 @@
       // canónico ya representa al estudiante (evita duplicados en listas).
       const nameKey = String(s.nameKey || '').trim() || norm(s.name || '');
       const key = String(aliasMap.get(nameKey) || '').trim() || nameKey || String(s.key || s.id || '').trim();
-      if (s.legacyAliasOf && aliasMap.get(nameKey)) {
+      const ownCanonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if ((s.legacyAliasOf || canonicalAliases.has(ownCanonical)) && aliasMap.get(nameKey)) {
         if (s.estadoManual || s.paramClasif) paramsMap.set(key, s.estadoManual || s.paramClasif);
         continue;
       }
@@ -438,16 +459,21 @@
       allStudents,
       searchStudents: allStudents,
       paramsMap,
-      programacion: { dashboard: buildProgramacionDashboard(programacion, allStudents, registroRows), today: new Date().toISOString().slice(0, 10) },
+      programacion: { dashboard: buildProgramacionDashboard(programacion, allStudents, registroRows, aliasMap), today: new Date().toISOString().slice(0, 10) },
       computed,
       meta: { source: 'firebase' }
     };
   }
 
-  function buildProgramacionDashboard(programacion, allStudents, registro) {
+  function buildProgramacionDashboard(programacion, allStudents, registro, aliasMap = new Map()) {
     const calc = window.RIPCalculations;
+    const isActiveStudent = (student) => norm(student?.finalClasif || student?.paramClasif || '').startsWith('activo');
+    // La programación puede conservar una llave histórica de nombre mientras
+    // los movimientos ya tienen studentId canónico. Debe pasar por el mismo
+    // mapa de alias que se aplicó a registro; de lo contrario una misma
+    // persona aparece sin programación en la ficha canónica.
     const scheduleKeyOf = (p) => (calc?.getStudentGroupingKey
-      ? calc.getStudentGroupingKey(p)
+      ? calc.getStudentGroupingKey(p, aliasMap)
       : (p.estudianteKey || p.studentId || norm(p.estudiante)));
     const schedules = new Map();
     for (const p of programacion || []) {
@@ -470,17 +496,19 @@
       const fechas = Array.isArray(sch.fechas) ? sch.fechas : [];
       const limit = calc?.getStudentClassLimit ? calc.getStudentClassLimit(rowsByStudent.get(s.key) || []) : 24;
       const status = calc?.calculateProgramacionStatus
-        ? calc.calculateProgramacionStatus(fechas, today, limit)
+        ? calc.calculateProgramacionStatus(fechas, today, limit, isActiveStudent(s))
         : { status: 'Sin programacion', futureCount: 0, nextClassDate: '' };
       return {
         name: s.name,
         estado: status.status,
+        isActive: isActiveStudent(s),
+        scheduleExpired: status.status === 'Programacion vencida' || status.status === 'Programación vencida',
         fechas,
         filled: fechas.filter(Boolean).length,
         limit,
         nextISO: status.nextClassDate || '',
         futureCount: status.futureCount || 0,
-        noSchedule: status.status === 'Sin programacion' || status.status === 'Sin programación',
+        noSchedule: status.status === 'Sin programacion' || status.status === 'Sin programación' || status.status === 'Programacion vencida' || status.status === 'Programación vencida',
         lowFuture: status.status === 'Pocas futuras' || status.status === 'Por completar',
         complete: status.status === 'OK'
       };

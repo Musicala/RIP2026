@@ -284,7 +284,7 @@
     const row = (ctx?.state?.prog?.data?.dashboard || []).find(p => norm(p.name) === norm(s.name));
     if (!row) return 'Sin programacion';
     if (row.noSchedule) return 'Sin programacion';
-    return `${row.futureCount || 0} futuras${row.nextClassDate ? ' · prox. ' + row.nextClassDate : ''}`;
+    return `${row.futureCount || 0} futuras${row.nextISO ? ' · prox. ' + row.nextISO : ''}`;
   }
 
   // =========================

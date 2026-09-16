@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-<link rel="stylesheet" href="./styles.css?v=2026.progcolors1"/>
+<link rel="stylesheet" href="./styles.css?v=2026.courtesy1"/>
 
 </head>
 
@@ -70,6 +70,7 @@
       <button id="viewTabClientes" class="tab">Clientes</button>
       <button id="viewTabKpis" class="tab">KPIs</button>
       <button id="viewTabPerformance" class="tab" hidden>🕘 Historial</button>
+      <button id="viewTabReconciliation" class="tab">🔗 Conciliación</button>
     </div>
   </div>
 
@@ -304,6 +305,15 @@
     </div>
   </section>
 
+  <section class="card" id="reconciliationView" style="display:none">
+    <div class="card-title"><h3>Conciliación de IDs</h3><p class="muted">Une variantes bajo un nombre maestro aunque todavía no tengan ID. El directorio consulta Bitácoras y Estudiantes; cuando aparezca el ID canónico se asigna una sola vez al grupo.</p></div>
+    <div class="filters-actions"><button class="btn primary" id="btnReconciliationRefresh">Actualizar revisión</button><button class="btn ghost" id="btnReconciliationLinkPending">Vincular coincidencias exactas</button><span class="status"><strong id="reconciliationCount">0</strong> grupos pendientes</span></div>
+    <datalist id="reconciliationOptions"></datalist>
+    <div class="table-wrap" style="margin-top:14px"><table class="tbl"><thead><tr><th>Persona</th><th>ID actual</th><th>Registros</th><th>Revisión</th><th>ID canónico destino</th><th></th></tr></thead><tbody id="reconciliationBody"><tr><td colspan="6" class="empty-td">Carga la revisión.</td></tr></tbody></table></div>
+    <div class="card-title" style="margin-top:22px"><h3>Directorio de identidades</h3><p class="muted"><strong id="reconciliationDirectoryCount">0</strong> estudiantes canónicos. Puedes corregir aquí el correo con el que Wix sube sus clases; el sistema evita asignarlo a otra ficha.</p></div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Estudiante</th><th>ID canónico</th><th>Correo Wix</th><th>Otros IDs relacionados</th><th>Nombres / alias</th><th>Registros</th></tr></thead><tbody id="reconciliationDirectoryBody"><tr><td colspan="6" class="empty-td">Carga la revisión.</td></tr></tbody></table></div>
+  </section>
+
   <section class="card" id="primeraVezView" style="display:none">
     <div class="card-title">
       <h3>Primera vez</h3>
@@ -501,6 +511,10 @@
       </div>
 
       <div id="fichaServiciosBlock" class="ficha-interest-block"></div>
+      <details class="ficha-ids" id="fichaIdsBlock">
+        <summary>IDs asociados</summary>
+        <div id="fichaStudentIds" class="ficha-ids-list"></div>
+      </details>
 
     </div>
 
@@ -660,20 +674,21 @@
 <script src="./membrete_assets.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="./firebase.config.js?v=2026.repair3"></script>
-<script src="./rip.calculations.js?v=2026.classification-repair1"></script>
+<script src="./firebase.config.js?v=2026.identity-email1"></script>
+<script src="./rip.calculations.js?v=2026.me-saldo1"></script>
 <script src="./firebase.auth.js?v=2026.firebase"></script>
-<script src="./rip.repository.js?v=2026.performance1"></script>
-<script src="./rip.identity.js?v=2026.studentid2"></script>
-<script src="./rip.core.js?v=2026.classification-repair1"></script>
+<script src="./rip.repository.js?v=2026.wix-email1"></script>
+<script src="./rip.identity.js?v=2026.identity-alias2"></script>
+<script src="./rip.core.js?v=2026.reconciliation8"></script>
 <script src="./ui.shared.js?v=2026.performance1"></script>
 <script src="./ui.dashboard.js?v=2026.dias-sin-clase2"></script>
 <script src="./ui.performance.js?v=2026.performance1"></script>
-<script src="./ui.ficha.js?v=2026.repair1"></script>
+<script src="./ui.reconciliation.js?v=2026.reconciliation11"></script>
+<script src="./ui.ficha.js?v=2026.me-saldo1"></script>
 <script src="./ui.table.js?v=2026.studentid2"></script>
-<script src="./rip.programacion.js?v=2026.classification-rules1"></script>
+<script src="./rip.programacion.js?v=2026.safe-schedule1"></script>
 <script src="./rip.programacion-active.js?v=2026.active-only1"></script>
-<script src="./app.js?v=2026.performance1"></script>
+<script src="./app.js?v=2026.reconciliation4"></script>
 <script src="./rip.access.js?v=2026.teacher-link1"></script>
 <script src="./rip.sync.js?v=2026.sync1"></script>
 <script src="./ui.editor.js?v=2026.firebase"></script>
