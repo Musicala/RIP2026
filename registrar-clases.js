@@ -262,16 +262,19 @@
         const data = docSnap.data() || {};
         const email = normalizeEmail(data.email || docSnap.id);
         const savedName = String(data.estudiante || data.name || '').trim();
-        const canonical = findLocalStudentByName(savedName);
+        const savedStudentId = String(data.studentId || data.officialStudentId || data.canonicalStudentId || '').trim();
+        const canonical = (localStudents || []).find((student) => String(student.id || '').trim() === savedStudentId)
+          || findLocalStudentByName(savedName);
         const name = String(canonical?.name || savedName).trim();
         const key = norm(name || data.estudianteKey || '');
         if (email && name) links.set(email, {
-          id: data.estudianteKey || key || docSnap.id,
+          id: String(canonical?.id || savedStudentId || data.estudianteKey || key || docSnap.id),
           sourceCollection: 'rip/wixStudentEmails',
           name,
           nameKey: key,
           emails: [email],
-          active: true
+          active: true,
+          assignmentMode: String(data.assignmentMode || '').trim().toLowerCase()
         });
       });
       localEmailLinks = links;
@@ -287,9 +290,17 @@
     if (!email || !name) return;
     try {
       const env = await window.RIPFirebase.ready;
-      const { doc, setDoc, serverTimestamp } = env.fs;
-      await setDoc(doc(env.db, 'wixStudentEmails', email), {
+      const { doc, getDoc, setDoc, serverTimestamp } = env.fs;
+      const linkRef = doc(env.db, 'wixStudentEmails', email);
+      const existing = await getDoc(linkRef);
+      // Una asignacion manual es una decision de identidad (por ejemplo, un
+      // correo compartido por familiares); una importacion automatica no la
+      // puede reemplazar.
+      if (existing.exists() && String(existing.data()?.assignmentMode || '').trim().toLowerCase() === 'manual') return;
+      await setDoc(linkRef, {
         email,
+        studentId: String(row.officialStudentId || '').trim(),
+        officialStudentId: String(row.officialStudentId || '').trim(),
         estudiante: name,
         estudianteKey: norm(name),
         estudianteWix: String(row.estudianteWix || '').trim(),
@@ -298,12 +309,13 @@
         updatedBy: env.user?.email || ''
       }, { merge: true });
       localEmailLinks.set(email, {
-        id: norm(name),
+        id: String(row.officialStudentId || norm(name)),
         sourceCollection: 'rip/wixStudentEmails',
         name,
         nameKey: norm(name),
         emails: [email],
-        active: true
+        active: true,
+        assignmentMode: 'automatic'
       });
     } catch (err) {
       console.warn('No se pudo guardar relacion correo-estudiante:', err);
@@ -381,6 +393,11 @@
   function findOfficialStudentByEmail(email, wixName = '') {
     const target = normalizeEmail(email);
     if (!target) return null;
+    // Las excepciones manuales se aplican antes del directorio: un correo de
+    // acudiente puede ser compartido y no debe decidir la identidad por si
+    // solo. Esta excepcion queda explicita y es reversible por administracion.
+    const localExact = localEmailLinks.get(target);
+    if (localExact?.assignmentMode === 'manual') return localExact;
     const exact = officialStudentsByEmail.get(target);
     if (exact) {
       // Un correo exclusivo puede resolver directamente. Si lo comparten
@@ -390,7 +407,6 @@
       const byName = exact.filter((student) => matchesReservationName(student, wixName));
       return byName.length === 1 ? byName[0] : null;
     }
-    const localExact = localEmailLinks.get(target);
     if (localExact) return localExact;
 
     const targetUser = target.split('@')[0] || target;
