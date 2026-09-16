@@ -165,7 +165,11 @@
         };
         docsRead++;
         for (const email of emails) {
-          if (!byEmail.has(email)) byEmail.set(email, student);
+          const candidates = byEmail.get(email) || [];
+          if (!candidates.some((candidate) => candidate.id === student.id)) {
+            candidates.push(student);
+          }
+          byEmail.set(email, candidates);
         }
       }
       if (byEmail.size) {
@@ -213,7 +217,11 @@
             const student = normalizeOfficialStudent(docSnap.data(), docSnap.id, collectionName);
             if (!student.active || !student.emails.length) return;
             for (const email of student.emails) {
-              if (!byEmail.has(email)) byEmail.set(email, student);
+            const candidates = byEmail.get(email) || [];
+            if (!candidates.some((candidate) => candidate.id === student.id)) {
+              candidates.push(student);
+            }
+            byEmail.set(email, candidates);
             }
           });
         } catch (err) {
@@ -264,6 +272,11 @@
       const links = new Map();
       snap.forEach((docSnap) => {
         const data = docSnap.data() || {};
+        // Un correo compartido (por ejemplo, el de un acudiente) no puede
+        // sostener un vínculo único. Se conserva el documento para auditoría,
+        // pero se excluye del resolutor para no volver a atribuir la clase a
+        // una persona arbitraria.
+        if (data.ambiguous === true || norm(data.identityStatus) === 'ambiguous') return;
         const email = normalizeEmail(data.email || docSnap.id);
         const savedName = String(data.estudiante || data.name || '').trim();
         const canonical = findLocalStudentByName(savedName);
@@ -362,17 +375,39 @@
     return out;
   }
 
-  function findOfficialStudentByEmail(email) {
+  function findOfficialStudentByEmail(email, expectedName = '') {
     const target = normalizeEmail(email);
     if (!target) return null;
-    const exact = officialStudentsByEmail.get(target);
-    if (exact) return exact;
+    const expectedKey = norm(expectedName);
+    const exact = officialStudentsByEmail.get(target) || [];
+    // Un correo puede ser de un acudiente. Sólo basta por sí solo cuando su
+    // dueño es único; si el CSV trae el nombre de otra persona, dejamos que la
+    // resolución por nombre encuentre a la estudiante y nunca la reemplazamos
+    // por la mamá o el papá asociado al correo.
+    if (exact.length === 1) {
+      const candidate = exact[0];
+      const candidateKey = candidate.nameKey || norm(candidate.name);
+      if (!expectedKey || candidateKey === expectedKey) return candidate;
+    } else if (exact.length > 1 && expectedKey) {
+      const matchesByName = exact.filter((candidate) =>
+        (candidate.nameKey || norm(candidate.name)) === expectedKey
+      );
+      if (matchesByName.length === 1) return matchesByName[0];
+    }
+    // Si el CSV no trae nombre, un correo compartido no permite escoger entre
+    // estudiante y acudiente. Debe quedar para revisión manual.
+    if (exact.length > 1 && !expectedKey) return null;
+    // Ya sabemos que este correo existe, pero el nombre de la fila no es el
+    // de ninguno de sus titulares. No intentamos coincidencias parciales ni
+    // usamos el vínculo local: ambos podrían volver a atribuir a la estudiante
+    // la identidad de su acudiente.
+    if (exact.length && expectedKey) return null;
     const localExact = localEmailLinks.get(target);
-    if (localExact) return localExact;
+    if (localExact && (!expectedKey || (localExact.nameKey || norm(localExact.name)) === expectedKey)) return localExact;
 
     const targetUser = target.split('@')[0] || target;
     const matches = [];
-    for (const [candidate, student] of officialStudentsByEmail.entries()) {
+    for (const [candidate, students] of officialStudentsByEmail.entries()) {
       const c = normalizeEmail(candidate);
       if (!c) continue;
       const cUser = c.split('@')[0] || c;
@@ -382,7 +417,7 @@
         (targetUser.length >= 5 && cUser.includes(targetUser)) ||
         (cUser.length >= 5 && targetUser.includes(cUser))
       ) {
-        matches.push(student);
+        matches.push(...students);
       }
     }
 
@@ -483,7 +518,7 @@
   function fromWixRow(row, idx) {
     const correo = normalizeEmail(pick(row, ['Email', 'Correo electronico', 'Correo electrónico', 'Email del cliente']));
     const wixName = getWixName(row);
-    const official = (correo ? findOfficialStudentByEmail(correo) : null) || findLocalStudentByName(wixName);
+    const official = (correo ? findOfficialStudentByEmail(correo, wixName) : null) || findLocalStudentByName(wixName);
     const fechaW = pick(row, ['Hora de inicio de reserva', 'Fecha', 'Fecha de reserva', 'Start Time', 'Booking start time']);
     const item = {
       sourceIndex: idx,

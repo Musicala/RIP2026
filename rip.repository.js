@@ -445,7 +445,16 @@
     } else {
       try {
         const resolved = await identity()?.resolveStudentId({ name: inputKey, aliases: [inputKey] });
-        if (resolved?.studentId && !resolved.ambiguous) canonical = resolved.studentId;
+        if (resolved?.studentId && !resolved.ambiguous) {
+          canonical = resolved.studentId;
+          // Cuando la entrada es un correo/alias, el canónico se resuelve pero
+          // `nameKey` aún contenía ese alias. Entonces la recalculación buscaba
+          // estudianteKey == correo y omitía todo el historial antiguo que
+          // permanece bajo la llave de nombre. Recuperamos la llave publicada
+          // por la identidad antes de consultar registro.
+          const index = await identity()?.ensureIndex();
+          nameKey = index?.byCanonicalId?.get(canonical)?.nameKey || nameKey;
+        }
       } catch (_err) { /* sin índice: se recalcula bajo la llave heredada */ }
     }
 
