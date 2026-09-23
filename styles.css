@@ -963,6 +963,72 @@ tr:hover td { background: rgba(26,59,110,.03); }
   .ficha-stat:nth-child(even) { border-right: none; }
 }
 
+.wix-contact-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .58);
+}
+.wix-contact-picker {
+  width: min(560px, 100%);
+  max-height: min(720px, 90vh);
+  overflow: auto;
+  padding: 22px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .3);
+}
+.wix-contact-picker-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.wix-contact-picker-head h3 { margin: 0; color: #172033; font-size: 20px; }
+.wix-contact-picker-head p { margin: 7px 0 0; color: #64748b; line-height: 1.45; }
+.wix-contact-picker-close {
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+.wix-contact-picker-list { display: grid; gap: 10px; margin: 20px 0; }
+.wix-contact-choice {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  text-align: left;
+  cursor: pointer;
+}
+.wix-contact-choice:hover,
+.wix-contact-choice:focus-visible { border-color: #0f8f88; background: #ecfdf9; outline: 3px solid rgba(15,143,136,.14); }
+.wix-contact-choice-name { color: #172033; font-size: 16px; font-weight: 800; }
+.wix-contact-choice code { margin-top: 3px; color: #64748b; overflow-wrap: anywhere; }
+.wix-contact-picker-cancel { width: 100%; }
+.wix-schedule-picker { width: min(620px, 100%); }
+.wix-schedule-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+.wix-schedule-choice:hover { border-color: #0f8f88; background: #ecfdf9; }
+.wix-schedule-choice input { width: 19px; height: 19px; accent-color: #0f8f88; flex: 0 0 auto; }
+.wix-schedule-choice span { display: grid; gap: 3px; }
+.wix-schedule-choice strong { color: #172033; font-size: 15px; }
+.wix-schedule-choice small { color: #64748b; font-size: 13px; }
+.wix-schedule-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.wix-schedule-actions .wix-contact-picker-cancel { width: auto; }
+
 /* ─── Saldo chips ────────────────────────────── */
 .saldo-mini { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 
@@ -1695,6 +1761,15 @@ tr.urgency-info:hover td { background: rgba(37,99,235,.09) !important; }
 .reconciliation-email-editor { display: flex; gap: 6px; min-width: 250px; align-items: center; }
 .reconciliation-email-editor .control { min-width: 0; flex: 1; }
 .reconciliation-email-editor .btn { flex: 0 0 auto; }
+.reconciliation-related-id { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+.reconciliation-related-id code { overflow-wrap: anywhere; }
+.reconciliation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.reconciliation-settings { min-width: 42px; padding-inline: 10px; font-size: 18px; line-height: 1; }
+.reconciliation-tabs { display: flex; gap: 8px; margin: 14px 0 16px; border-bottom: 1px solid var(--line); }
+.reconciliation-tab { appearance: none; border: 0; border-bottom: 3px solid transparent; padding: 9px 12px; background: transparent; color: var(--muted); font: inherit; font-weight: 700; cursor: pointer; }
+.reconciliation-tab:hover { color: var(--ink); background: var(--soft); }
+.reconciliation-tab.active { color: var(--ink); border-bottom-color: var(--primary); }
+.reconciliation-directory-title { margin-top: 0; }
 
 /* ─── PDF Ficha Template (nueva plantilla bonita) ─── */
 .pdf-ficha-template {

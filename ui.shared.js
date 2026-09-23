@@ -186,6 +186,8 @@
       reconciliationBody: $('reconciliationBody'),
       reconciliationCount: $('reconciliationCount'),
       reconciliationOptions: $('reconciliationOptions'),
+      reconciliationDirectoryBody: $('reconciliationDirectoryBody'),
+      reconciliationDirectoryCount: $('reconciliationDirectoryCount'),
       btnReconciliationRefresh: $('btnReconciliationRefresh'),
       performanceTitle: $('performanceTitle'),
       performanceIntro: $('performanceIntro'),

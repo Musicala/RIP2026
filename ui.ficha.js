@@ -242,6 +242,12 @@
     if (!el.tableBody) return;
     rows = window.RIPCalculations?.markMusigymSubscriptions ? window.RIPCalculations.markMusigymSubscriptions(rows || []) : rows;
     cycleBaseRows = window.RIPCalculations?.markMusigymSubscriptions ? window.RIPCalculations.markMusigymSubscriptions(cycleBaseRows || rows || []) : cycleBaseRows;
+    // Esta función se invoca desde varias vistas (ficha, edición y revisión
+    // Wix). El orden se garantiza aquí, justo antes de pintar la tabla.
+    if (window.RIPCore?.util?.sortRowsByDateTime) {
+      rows = window.RIPCore.util.sortRowsByDateTime(rows || [], 'desc');
+      cycleBaseRows = window.RIPCore.util.sortRowsByDateTime(cycleBaseRows || [], 'desc');
+    }
 
     const editable = !!ctx.__fichaEditMode;
     const theadRow = document.querySelector('#tablaContainer thead tr');
@@ -264,31 +270,34 @@
     const cycleById = new Map();
     const cycleMetaById = new Map();
     const getRowId = (r) => String(r.id || `${r.fechaRaw}|${r.hora}|${r.servicio}`);
-    const getChronoKey = (r, fallback) => {
-      const rowNum = Number(r?.rowNum || r?.__rowNum || 0);
-      if (Number.isFinite(rowNum) && rowNum > 0) return rowNum;
-      const ts = Number(r?.fechaTs) || 0;
-      if (ts) return ts;
-      const parsed = window.RIPCalculations?.parseDate?.(r?.fecha || r?.fechaRaw);
-      return parsed ? parsed.getTime() : fallback;
-    };
     const getTimeKey = (r) => {
-      const raw = String(r?.hora || '').trim();
+      const raw = String(r?.hora || '').trim().toLowerCase();
       const m = raw.match(/(\d{1,2}):(\d{2})/);
       if (!m) return 0;
-      return Number(m[1]) * 60 + Number(m[2]);
+      let hour = Number(m[1]);
+      const meridiem = raw.replace(/[.\s]/g, '').match(/([ap])m/)?.[1] || '';
+      if (meridiem === 'p' && hour < 12) hour += 12;
+      if (meridiem === 'a' && hour === 12) hour = 0;
+      return hour * 60 + Number(m[2]);
     };
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
       if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
-      if (key === 'tv' || key === 'taller' || key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
+      // TV son talleres vacacionales: consumen la misma bolsa que Taller.
+      if (key === 'tv') return 'taller';
+      if (key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
       return key;
     };
     const getPackageKey = (r) => {
-      const value = isPagoRow(r) ? r?.clasifPago : r?.clasif;
+      // Los pagos de Taller suelen guardar la familia en Clasif. pagos, pero
+      // los importados antiguos pueden tenerla solo en Clasificación.
+      const value = isPagoRow(r) ? (r?.clasifPago || r?.clasif) : r?.clasif;
       return normalizePackageKey(value);
     };
     let cycle = -1;
+    // La numeración visible identifica la familia del paquete. Las clases
+    // regulares comparten P; Taller y Ensamble llevan sus propios contadores.
+    const packageSequenceByPrefix = new Map();
     const activeByKey = new Map();
     const pendingPackagesByKey = new Map();
     const pendingClassIdsByKey = new Map();
@@ -297,21 +306,33 @@
       if (!map.has(key)) map.set(key, []);
       return map.get(key);
     };
-    const getSpecialCode = (r, fallbackCycle = 0) => {
+    const getPackagePrefix = (packageKey) => {
+      if (packageKey === 'taller') return 'T';
+      if (packageKey === 'ensamble') return 'E';
+      return 'P';
+    };
+    const getSpecialCode = (r, fallbackCycle = 0, prefix = 'P') => {
       const txt = norm(`${r?.servicio || ''} ${r?.comentario || ''} ${r?.clasif || ''} ${r?.clasifPago || ''}`);
       if (txt.includes('cp de clase de prueba') || (/\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt))) return 'CP';
       if (txt.includes('cc de clase de cortesia') || (/\bcc\b/.test(txt) && /\b(cortesia|gratis|obsequio)\b/.test(txt))) return 'CC';
-      return `P${fallbackCycle + 1}`;
+      return `${prefix}${fallbackCycle + 1}`;
     };
 
-    const makePackage = (cycleIdx, mov, sourceRow) => ({
-      cycle: cycleIdx,
-      code: getSpecialCode(sourceRow, cycleIdx),
-      total: Math.max(0, Math.round(mov)),
-      remaining: Math.max(0, Math.round(mov)),
-      used: 0,
-      exhausted: false
-    });
+    const makePackage = (cycleIdx, mov, sourceRow, packageKey) => {
+      const prefix = getPackagePrefix(packageKey);
+      const specialCode = getSpecialCode(sourceRow, 0, prefix);
+      const isSpecialCredit = specialCode === 'CP' || specialCode === 'CC';
+      const sequence = packageSequenceByPrefix.get(prefix) || 0;
+      if (!isSpecialCredit) packageSequenceByPrefix.set(prefix, sequence + 1);
+      return {
+        cycle: cycleIdx,
+        code: isSpecialCredit ? specialCode : getSpecialCode(sourceRow, sequence, prefix),
+        total: Math.max(0, Math.round(mov)),
+        remaining: Math.max(0, Math.round(mov)),
+        used: 0,
+        exhausted: false
+      };
+    };
     const assignClassToPackage = (rid, pack) => {
       pack.used += 1;
       const overLimit = pack.exhausted || (pack.total > 0 && pack.used > pack.total);
@@ -327,21 +348,14 @@
         overLimit
       });
     };
-    const bottomToTop = (cycleBaseRows || rows || [])
-      .map((r, i) => ({ r, i }))
-      .sort((a, b) => {
-        const ta = getChronoKey(a.r, a.i);
-        const tb = getChronoKey(b.r, b.i);
-        if (ta !== tb) return ta - tb;
-        const ha = getTimeKey(a.r);
-        const hb = getTimeKey(b.r);
-        if (ha !== hb) return ha - hb;
-        const pa = isPagoRow(a.r) ? 0 : 1;
-        const pb = isPagoRow(b.r) ? 0 : 1;
-        if (pa !== pb) return pa - pb;
-        return a.i - b.i;
-      })
-      .map((x) => x.r);
+    const bottomToTop = window.RIPCore?.util?.sortRowsByDateTime
+      ? window.RIPCore.util.sortRowsByDateTime(cycleBaseRows || rows || [], 'asc')
+      : [...(cycleBaseRows || rows || [])].sort((a, b) => {
+          const ta = Number(a?.fechaTs) || 0;
+          const tb = Number(b?.fechaTs) || 0;
+          if (ta !== tb) return ta - tb;
+          return getTimeKey(a) - getTimeKey(b);
+        });
 
     for (const r of bottomToTop) {
       const matricula = isMatriculaPago(r) || Boolean(r?.matriculaEnrollmentRedeemed);
@@ -376,7 +390,7 @@
 
       if (!matricula && isPagoRow(r) && mov > 0) {
         cycle += 1;
-        const pack = makePackage(cycle, mov, r);
+        const pack = makePackage(cycle, mov, r, packageKey);
         // Un crédito CC/CP solo se puede consumir por la clase que la regla
         // cronológica ya marcó como posterior a su pago. Nunca se usa para
         // cubrir una clase anterior que estuviera pendiente.
@@ -529,7 +543,10 @@
             : cycleMeta?.kind === 'pago'
               ? `${specialCode} activado · ${cycleMeta.total || mov} clase(s)`
               : `${specialCode}`;
-        const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}${duplicateBadge}`;
+        const wixTag = r.__wixStatus
+          ? ` <span class="pilltag ${escapeHTML(r.__wixTone || 'muted')}" title="${escapeHTML(r.__wixDetail || '')}">${escapeHTML(r.__wixStatus)}</span>`
+          : '';
+        const tipoWithDot = `<span class="cycle-dot ${cycleClass}" title="${cycleTitle}"></span><span class="cycle-num" title="${cycleTitle}">${cycleLabel}</span> ${escapeHTML(tipo)}${wixTag}${duplicateBadge}`;
         const debtClass = isClaseRow(r) && mov < 0 && (!cycleMeta || cycleMeta.kind === 'unpaid' || cycleMeta.overLimit) ? 'row-debt' : '';
         const actionKey = getEditableRowKey(r);
         const canPersistRow = !!actionKey;
@@ -934,6 +951,304 @@
   }
 
 
+  const wixEmail = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+  const wixMinute = (value) => {
+    const text = String(value || '').trim().toLowerCase();
+    const match = text.match(/(\d{1,2}):(\d{2})/);
+    if (!match) return -1;
+    let hour = Number(match[1]);
+    const minute = Number(match[2]);
+    // Históricos RIP pueden guardar "4:00 p. m." mientras Wix entrega
+    // "16:00". Se aceptan p.m./pm y a.m./am, con espacios opcionales.
+    const meridiem = text.replace(/[.\s]/g, '').match(/([ap])m/iu)?.[1] || '';
+    if (meridiem === 'p' && hour < 12) hour += 12;
+    if (meridiem === 'a' && hour === 12) hour = 0;
+    if (hour > 23 || minute > 59) return -1;
+    return hour * 60 + minute;
+  };
+  const wixDateTime = (value) => {
+    const local = window.RIPWix?.normalizeWixDateTime(value);
+    if (!local) return { date: '', minute: -1, label: String(value || '') };
+    return { date: local.fecha, minute: wixMinute(local.hora), label: `${local.fecha} ${local.hora}` };
+  };
+
+  function wixIdentity(student, rows, emails, resolvedContactId = '') {
+    const fromRows = (rows || []).find(r => r?.wixContactId)?.wixContactId;
+    return { wixContactId: String(resolvedContactId || student?.wixContactId || fromRows || '').trim(), emails: new Set([...emails].map(x => window.RIPWix?.normalizeText(x) || wixEmail(x))) };
+  }
+
+  function wixPresentation(result, wix) {
+    const map = {
+      MATCHED_CONFIRMED: ['✅ Wix confirmado', 'success'], MATCHED_CANCELED: ['🔵 Wix cancelado', 'muted'],
+      PROBABLE_MATCH: ['🟡 Revisar coincidencia', 'warn'], UNMAPPED_SERVICE: ['⚠ Sin relación Wix', 'warn'],
+      UNMAPPED_STUDENT: ['⚠ Sin identidad Wix', 'warn'], TIME_MISMATCH: ['⚠ Hora/fecha distinta', 'warn'],
+      DUPLICATE_MATCH: ['⚠ Más de una reserva Wix', 'warn'], NOT_FOUND: ['❌ No encontrado', 'warn']
+    };
+    const pair = map[result?.state] || map.NOT_FOUND;
+    const local = result?.local;
+    const ids = [`Booking: ${wix?.wixBookingId || wix?.id || '—'}`, `Event: ${wix?.wixEventId || '—'}`, `Service: ${wix?.wixServiceId || '—'}`, `Wix UTC: ${wix?.inicio || '—'}`, local ? `Bogotá: ${local.fecha} ${local.hora}` : ''];
+    return { status: pair[0], tone: pair[1], detail: `${result?.method || 'sin coincidencia'}\n${ids.filter(Boolean).join('\n')}` };
+  }
+
+  async function getFichaWixEmails(student, rows) {
+    const emails = new Set();
+    const add = (value) => { const clean = wixEmail(value); if (clean) emails.add(clean); };
+    (rows || []).forEach(row => add(row?.correo || row?.email));
+    add(student?.correoWix);
+    const studentId = String(student?.studentId || student?.officialStudentId || student?.id || rows?.find(row => row?.studentId)?.studentId || '').trim();
+    if (studentId && window.RIPRepository?.loadStudents) {
+      const item = (await window.RIPRepository.loadStudents()).find(row => String(row?.id || row?.studentId || row?.officialStudentId || '').trim() === studentId);
+      if (item) add(item.correoWix);
+    }
+    return emails;
+  }
+
+  function renderFichaWixCheck(rows, wixClasses, emails) {
+    const body = document.getElementById('fichaWixBody');
+    const status = document.getElementById('fichaWixStatus');
+    if (!body) return;
+    const rip = (rows || []).filter(isClaseRow).map(row => ({ row, date: String(row?.fecha || row?.fechaRaw || '').slice(0, 10), minute: wixMinute(row?.hora) }));
+    const used = new Set();
+    const result = [];
+    // `checkWixClasses` already scopes this list to the resolved contactId.
+    (wixClasses || []).forEach(item => {
+      const at = wixDateTime(item.inicio);
+      const match = rip.findIndex((entry, index) => !used.has(index) && entry.date === at.date && entry.minute >= 0 && at.minute >= 0 && Math.abs(entry.minute - at.minute) <= 30);
+      const past = new Date(item.inicio).getTime() < Date.now();
+      if (match >= 0) { used.add(match); result.push({ tone: 'success', state: '✓ En RIP y Wix', at: at.label, rip: rip[match].row.servicio || 'Clase', wix: item.servicio || 'Clase Wix' }); }
+      else if (past) result.push({ tone: 'warn', state: '⚠ Falta registrar en RIP', at: at.label, rip: '—', wix: item.servicio || 'Clase Wix' });
+      else result.push({ tone: 'muted', state: '↗ Próxima clase Wix', at: at.label, rip: '—', wix: item.servicio || 'Clase Wix' });
+    });
+    rip.forEach((entry, index) => {
+      if (used.has(index) || new Date(`${entry.date}T00:00:00`).getTime() >= Date.now()) return;
+      result.push({ tone: 'warn', state: '⚠ En RIP, no en Wix', at: `${entry.date} ${entry.row.hora || ''}`.trim(), rip: entry.row.servicio || 'Clase', wix: '—' });
+    });
+    result.sort((a, b) => a.at.localeCompare(b.at));
+    body.innerHTML = result.map(item => `<tr><td><span class="pilltag ${item.tone}">${escapeHTML(item.state)}</span></td><td>${escapeHTML(item.at)}</td><td>${escapeHTML(item.rip)}</td><td>${escapeHTML(item.wix)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty-td">No hay clases comparables para este estudiante.</td></tr>';
+    if (status) status.textContent = `${result.length} clase(s) revisadas: ✓ coincide, ⚠ requiere revisión, ↗ próxima en Wix.`;
+  }
+
+  function buildFichaWixTableRows(student, rows, wixClasses, emails, resolvedContactId) {
+    const display = (rows || []).map(row => ({ ...row }));
+    const rip = display.map((row, index) => ({ row, index, date: String(row?.fecha || row?.fechaRaw || '').slice(0, 10), minute: wixMinute(row?.hora) }))
+      .filter(item => isClaseRow(item.row));
+    const identity = wixIdentity(student, rows, emails, resolvedContactId);
+    const used = new Set();
+    rip.forEach(entry => {
+      const matches = (wixClasses || []).map((item, wixIndex) => ({ item, wixIndex, result: window.RIPWix?.reconcile(entry.row, item, identity) }))
+        .filter(x => !used.has(x.wixIndex) && x.result?.state?.startsWith('MATCHED'));
+      if (matches.length === 1) {
+        const found = matches[0]; used.add(found.wixIndex);
+        const present = wixPresentation(found.result, found.item);
+        Object.assign(entry.row, { __wixStatus: present.status, __wixTone: present.tone, __wixDetail: present.detail, wixBookingId: found.item.wixBookingId || found.item.id, wixEventId: found.item.wixEventId || '', wixSessionId: found.item.wixSessionId || '', wixServiceId: found.item.wixServiceId || '', wixContactId: found.item.wixContactId || identity.wixContactId || '', wixStatus: found.item.estado || '', wixLastSyncAt: new Date().toISOString() });
+      } else if (matches.length > 1) {
+        const present = wixPresentation({ state: 'DUPLICATE_MATCH', method: 'más de una reserva coincide con la misma clase RIP' }, matches[0].item);
+        Object.assign(entry.row, { __wixStatus: present.status, __wixTone: present.tone, __wixDetail: present.detail });
+      }
+    });
+    (wixClasses || []).forEach((item, wixIndex) => {
+      if (used.has(wixIndex)) return;
+      const at = wixDateTime(item.inicio), past = new Date(item.inicio).getTime() < Date.now();
+      if (past) display.push({ id: `wix-missing-${item.id || item.inicio}`, estudiante: 'Wix', tipo: 'Wix', fecha: at.date, fechaRaw: at.date, hora: at.label.slice(-5), servicio: item.servicio || 'Clase Wix', profesor: 'Wix', pago: '', comentario: item.estado?.includes('CANCEL') ? 'Cancelada en Wix' : 'Falta registrar en RIP', clasif: '', clasifPago: '', movimiento: 0, __wixStatus: item.estado?.includes('CANCEL') ? '🔵 Wix cancelado' : '⚠ Falta en RIP', __wixTone: item.estado?.includes('CANCEL') ? 'muted' : 'warn', __wixDetail: wixPresentation({ method: 'sin clase RIP correspondiente', local: window.RIPWix?.normalizeWixDateTime(item.inicio) }, item).detail });
+      else display.push({ id: `wix-future-${item.id || item.inicio}`, estudiante: 'Wix', tipo: 'Wix', fecha: at.date, fechaRaw: at.date, hora: at.label.slice(-5), servicio: item.servicio || 'Clase Wix', profesor: 'Wix', pago: '', comentario: 'Próxima clase Wix', clasif: '', clasifPago: '', movimiento: 0, __wixStatus: '↗ Próxima Wix', __wixTone: 'muted', __wixDetail: 'Disponible para programación' });
+    });
+    rip.forEach(entry => {
+      if (entry.row.__wixStatus || new Date(`${entry.date}T00:00:00`).getTime() >= Date.now()) return;
+      const related = (wixClasses || []).find(item => window.RIPWix?.reconcile(entry.row, item, identity)?.state === 'TIME_MISMATCH');
+      const present = wixPresentation(related ? { state: 'TIME_MISMATCH', method: 'coincide estudiante/servicio, pero no fecha u hora', local: window.RIPWix?.normalizeWixDateTime(related.inicio) } : { state: window.RIPWix?.mappingForRip(entry.row.servicio) ? 'NOT_FOUND' : 'UNMAPPED_SERVICE' }, related);
+      Object.assign(entry.row, { __wixStatus: present.status, __wixTone: present.tone, __wixDetail: present.detail });
+    });
+    return display.sort((a, b) => (Number(b.fechaTs) || Date.parse(b.fecha || b.fechaRaw) || 0) - (Number(a.fechaTs) || Date.parse(a.fecha || a.fechaRaw) || 0));
+  }
+
+  function chooseWixContact(candidates, relatedEmail) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'wix-contact-picker-overlay';
+      overlay.innerHTML = `
+        <section class="wix-contact-picker" role="dialog" aria-modal="true" aria-labelledby="wixContactPickerTitle">
+          <div class="wix-contact-picker-head">
+            <div>
+              <h3 id="wixContactPickerTitle">Selecciona el contacto Wix</h3>
+              <p>El correo <strong>${escapeHTML(relatedEmail || '')}</strong> está relacionado con varios contactos.</p>
+            </div>
+            <button type="button" class="wix-contact-picker-close" aria-label="Cancelar">×</button>
+          </div>
+          <div class="wix-contact-picker-list">
+            ${(candidates || []).map((item, index) => `
+              <button type="button" class="wix-contact-choice" data-wix-choice="${index}">
+                <span class="wix-contact-choice-name">${escapeHTML(item.name || 'Sin nombre')}</span>
+                <span>${escapeHTML(item.primaryEmail || relatedEmail || 'Sin correo principal')}</span>
+                <code>${escapeHTML(item.contactId || '')}</code>
+              </button>
+            `).join('')}
+          </div>
+          <button type="button" class="btn ghost wix-contact-picker-cancel">Cancelar</button>
+        </section>`;
+      const finish = value => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(value);
+      };
+      const onKeydown = event => { if (event.key === 'Escape') finish(null); };
+      document.addEventListener('keydown', onKeydown);
+      overlay.querySelectorAll('[data-wix-choice]').forEach(choice => {
+        choice.onclick = () => finish(candidates[Number(choice.dataset.wixChoice)] || null);
+      });
+      overlay.querySelector('.wix-contact-picker-close').onclick = () => finish(null);
+      overlay.querySelector('.wix-contact-picker-cancel').onclick = () => finish(null);
+      overlay.onclick = event => { if (event.target === overlay) finish(null); };
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-wix-choice]')?.focus();
+    });
+  }
+
+  function wixScheduleSuggestions(wixClasses, scheduledDates) {
+    const available = new Map();
+    (scheduledDates || []).forEach(value => {
+      const date = String(value || '').trim().slice(0, 10);
+      if (date) available.set(date, (available.get(date) || 0) + 1);
+    });
+    return (wixClasses || [])
+      .filter(item => {
+        const status = String(item?.estado || '').toUpperCase();
+        return !status.includes('CANCEL') && !status.includes('REJECT') && !status.includes('DECLIN');
+      })
+      .map(item => ({ item, at: wixDateTime(item?.inicio) }))
+      .filter(entry => entry.at.date && new Date(entry.item.inicio).getTime() >= Date.now())
+      .sort((a, b) => String(a.item.inicio).localeCompare(String(b.item.inicio)))
+      .filter(entry => {
+        const count = available.get(entry.at.date) || 0;
+        if (count > 0) {
+          available.set(entry.at.date, count - 1);
+          return false;
+        }
+        return true;
+      });
+  }
+
+  function chooseWixScheduleClasses(suggestions, studentName) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'wix-contact-picker-overlay';
+      overlay.innerHTML = `
+        <section class="wix-contact-picker wix-schedule-picker" role="dialog" aria-modal="true" aria-labelledby="wixSchedulePickerTitle">
+          <div class="wix-contact-picker-head">
+            <div>
+              <h3 id="wixSchedulePickerTitle">Actualizar Programación</h3>
+              <p>Wix tiene clases futuras de <strong>${escapeHTML(studentName || 'este estudiante')}</strong> que aún no aparecen en Programación. Escoge las que quieres incluir.</p>
+            </div>
+            <button type="button" class="wix-contact-picker-close" aria-label="Cancelar">×</button>
+          </div>
+          <div class="wix-contact-picker-list">
+            ${(suggestions || []).map((entry, index) => `
+              <label class="wix-schedule-choice">
+                <input type="checkbox" data-wix-schedule-choice="${index}" checked>
+                <span>
+                  <strong>${escapeHTML(entry.at.date)} · ${escapeHTML(entry.at.label.slice(-5))}</strong>
+                  <small>${escapeHTML(entry.item.servicio || 'Clase Wix')}</small>
+                </span>
+              </label>
+            `).join('')}
+          </div>
+          <div class="wix-schedule-actions">
+            <button type="button" class="btn ghost wix-contact-picker-cancel">Ahora no</button>
+            <button type="button" class="btn primary wix-schedule-save">Incluir seleccionadas</button>
+          </div>
+        </section>`;
+      const finish = value => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(value);
+      };
+      const onKeydown = event => { if (event.key === 'Escape') finish(null); };
+      document.addEventListener('keydown', onKeydown);
+      overlay.querySelector('.wix-schedule-save').onclick = () => {
+        const selected = [...overlay.querySelectorAll('[data-wix-schedule-choice]:checked')]
+          .map(input => suggestions[Number(input.dataset.wixScheduleChoice)])
+          .filter(Boolean);
+        finish(selected);
+      };
+      overlay.querySelector('.wix-contact-picker-close').onclick = () => finish(null);
+      overlay.querySelector('.wix-contact-picker-cancel').onclick = () => finish(null);
+      overlay.onclick = event => { if (event.target === overlay) finish(null); };
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-wix-schedule-choice]')?.focus();
+    });
+  }
+
+  function bindFichaWixCheck(ctx, student, rows) {
+    const button = document.getElementById('btnFichaWixCheck');
+    const status = ctx?.el?.status;
+    if (!button) return;
+    button.onclick = async () => {
+      const state = ctx?.__fichaState;
+      button.disabled = true;
+      if (status) status.textContent = 'Consultando clases de Wix…';
+      try {
+        // La conciliación no debe depender de lecturas/escrituras directas del
+        // navegador. El callable resuelve correoWix → contactId en servidor;
+        // aquí solo mostramos las reservas que ya devolvió para ese contacto.
+        const emails = new Set();
+        // RIPCore identifica la ficha seleccionada mediante key. Las filas
+        // pueden conservar IDs históricos agrupados bajo esa ficha canónica.
+        const studentId = String(student?.canonicalStudentId || student?.studentId || student?.officialStudentId || student?.id || student?.key || rows?.find(row => row?.studentId)?.studentId || '').trim();
+        if (!studentId) throw new Error('Esta ficha no tiene un ID de estudiante RIP para resolver su contacto Wix.');
+        const env = await window.RIPFirebase.ready;
+        const mod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-functions.js');
+        const checkWix = mod.httpsCallable(mod.getFunctions(env.app, 'us-central1'), 'checkWixClasses');
+        let response = await checkWix({ studentId, pastDays: 180, futureDays: 90 });
+        if (response.data?.status === 'WIX_CONTACT_AMBIGUOUS') {
+          const candidates = response.data.candidates || [];
+          const chosen = await chooseWixContact(candidates, response.data.correoWix);
+          if (!chosen) {
+            if (status) status.textContent = 'Selección de contacto Wix cancelada.';
+            return;
+          }
+          response = await checkWix({ studentId, selectedWixContactId: chosen.contactId, pastDays: 180, futureDays: 90 });
+        }
+        const displayRows = buildFichaWixTableRows(student, rows, response.data?.classes || [], emails, response.data?.contactId || '');
+        renderTable2026(ctx, displayRows, rows);
+        const schedule = await window.RIPRepository.loadStudentSchedule(studentId);
+        const suggestions = wixScheduleSuggestions(response.data?.classes || [], schedule?.fechas || []);
+        let scheduleMessage = '';
+        if (suggestions.length) {
+          if (status) status.textContent = `${suggestions.length} clase(s) futura(s) de Wix no están en Programación. Escoge cuáles incluir.`;
+          const selected = await chooseWixScheduleClasses(suggestions, student?.name || student?.estudiante || rows?.[0]?.estudiante || '');
+          if (selected?.length) {
+            const selectedDates = selected.map(entry => entry.at.date);
+            if (typeof window.RIPRepository.appendScheduleDates === 'function') {
+              await window.RIPRepository.appendScheduleDates(studentId, selectedDates);
+            } else {
+              // Compatibilidad defensiva si una pestaña conservó en memoria
+              // el repositorio anterior durante una publicación.
+              const latest = await window.RIPRepository.loadStudentSchedule(studentId);
+              await window.RIPRepository.saveSchedule(studentId, [...(latest?.fechas || []), ...selectedDates]);
+            }
+            scheduleMessage = ` Se incluyeron ${selected.length} clase(s) en Programación.`;
+            if (state?.prog) state.prog.data = await window.RIPProgramacion?.loadResumen?.();
+            await syncProgramacionIfAvailable(ctx, state, student?.name || rows?.[0]?.estudiante || '', '2026');
+          } else if (selected) {
+            scheduleMessage = ' No se seleccionaron clases para Programación.';
+          } else {
+            scheduleMessage = ` Hay ${suggestions.length} sugerencia(s) pendientes para Programación.`;
+          }
+        }
+        const saved = response.data?.source === 'cache';
+        const diagnostic = response.data?.contactId
+          ? ` Contacto Wix: ${response.data.wixContactName || 'sin nombre'} · ${response.data.correoWix || 'sin correo'} · ${response.data.contactId}.`
+          : '';
+        if (status) status.textContent = (saved
+          ? 'Mostrando la consulta guardada de Wix: ✓ coincide · ⚠ requiere revisión · ↗ próxima clase.'
+          : 'Consulta de Wix guardada: ✓ coincide · ⚠ requiere revisión · ↗ próxima clase.') + diagnostic + scheduleMessage;
+      } catch (err) {
+        console.error(err);
+        if (status) status.textContent = err?.message || 'No se pudo consultar Wix.';
+        toast(ctx?.el?.toastWrap, err?.message || 'No se pudo consultar Wix.', 'warn');
+      } finally { button.disabled = false; }
+    };
+  }
+
   function renderFichaSummary(ctx, student, ficha, year) {
     const { el } = ctx;
     const rows = ficha?.rows || [];
@@ -1009,6 +1324,7 @@
 
     renderFichaServicios(ctx, student, rows);
     renderAssociatedIds(ctx, student, rows);
+    bindFichaWixCheck(ctx, student, rows);
   }
 
   function renderSimpleSummary(ctx, studentName, year, rowsSlice) {
@@ -1412,7 +1728,7 @@
     modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
     modal.querySelector('[data-close]')?.addEventListener('click', close);
     modal.querySelector('[data-save]')?.addEventListener('click', () => {
-      onSave({
+      const data = {
         tipo: modal.querySelector('#re_tipo')?.value || '',
         estudiante: row.estudiante || '',
         fechaRaw: modal.querySelector('#re_fechaRaw')?.value || '',
@@ -1424,7 +1740,18 @@
         clasif: modal.querySelector('#re_clasif')?.value || '',
         clasifPago: modal.querySelector('#re_clasifPago')?.value || '',
         movimiento: Number(modal.querySelector('#re_movimiento')?.value || 0) || 0
-      });
+      };
+      const isPackagePayment = norm(data.tipo) === 'pago' &&
+        /(?:\bP\s*|Paquete\s*(?:de\s*)?)\d+/i.test(data.servicio);
+      if (isPackagePayment && window.RIPCalculations?.computeMovimiento) {
+        data.movimiento = window.RIPCalculations.computeMovimiento({
+          ...data,
+          movimiento: 0,
+          movimientoSaldo: 0
+        });
+        data.movimientoSaldo = data.movimiento;
+      }
+      onSave(data);
       close();
     });
 

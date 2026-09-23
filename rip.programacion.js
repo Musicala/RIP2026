@@ -55,14 +55,15 @@
   function normalizePackageKey(value) {
     const key = norm(value || 'sin-clasificacion');
     if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
-    if (key === 'tv' || key === 'taller' || key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
+    // TV son talleres vacacionales: consumen la misma bolsa que Taller.
+    if (key === 'tv') return 'taller';
+    if (key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
     return key;
   }
 
   function getPackageKey(row) {
-    // Taller/OpenHouse es un pago cuya familia queda vacía y cuya
-    // clasificación principal es Taller; usarla como fallback lo mantiene
-    // compatible con TV/MS G/MS SP en vacacional-flex.
+    // Taller/OpenHouse es un pago cuya familia puede quedar vacía; usar su
+    // clasificación principal como fallback conserva su propia familia.
     const value = isPagoRow(row) ? (row?.clasifPago || row?.clasif) : row?.clasif;
     return normalizePackageKey(value);
   }

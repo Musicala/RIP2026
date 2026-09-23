@@ -6,6 +6,8 @@
   const els = {
     form:           $('paymentForm'),
     fechaPago:      $('fechaPago'),
+    useWixStartDate:$('useWixStartDate'),
+    wixStartDate:   $('wixStartDate'),
     tipoEstudiante: $('tipoEstudiante'),
     usersWrap:      $('usersWrap'),
     btnAddUser:     $('btnAddUser'),
@@ -23,6 +25,7 @@
     status:         $('status'),
     paySuccess:     $('paySuccess'),
     paySuccessMsg:  $('paySuccessMsg'),
+    dismissPaymentNotice: $('dismissPaymentNotice'),
     studentsList:   $('studentsList'),
     servicesList:   $('servicesList'),
     toastWrap:      $('toastWrap')
@@ -31,6 +34,7 @@
   const USER_COLORS = ['1','2','3','4','5'];
   const MAX_USERS = 5;
   let userCount = 0;
+  let stopWixActivationWatch = null;
 
   let meta = { estudiantes: [], servicios: [], tiposEstudiante: [], mediosPago: [] };
   const PRICE_CACHE_KEY = 'rip2026_prices_meta_v1';
@@ -87,7 +91,7 @@
           <input id="usuario${n}" class="control" list="studentsList" placeholder="Escribe para buscar...">
         </label>
         <label class="field">
-          <span>Correo <small>(para identificarlo)</small></span>
+          <span>Correo Wix <small>(se toma de la ficha si lo dejas vacío)</small></span>
           <input id="correo${n}" class="control" type="email" placeholder="correo@ejemplo.com">
         </label>
         <label class="field">
@@ -133,6 +137,14 @@
     els.form.addEventListener('submit', save);
     els.btnReset.addEventListener('click', () => resetForm());
     els.btnAddUser.addEventListener('click', addUser);
+    els.dismissPaymentNotice?.addEventListener('click', hideSuccess);
+    els.useWixStartDate?.addEventListener('change', () => {
+      els.wixStartDate.disabled = !els.useWixStartDate.checked;
+      if (els.useWixStartDate.checked && !els.wixStartDate.value) {
+        els.wixStartDate.value = els.fechaPago.value || todayISO();
+      }
+      renderPreview();
+    });
 
     els.form.addEventListener('input', (ev) => {
       if (ev.target.classList.contains('money') ||
@@ -279,6 +291,7 @@
   function readPayload() {
     return {
       fechaPago:      els.fechaPago.value      || '',
+      wixStartDate:   els.useWixStartDate?.checked ? (els.wixStartDate?.value || '') : '',
       tipoEstudiante: els.tipoEstudiante.value || '',
       usuarios:       readUsers(),
       medioPago:      els.medioPago.value      || '',
@@ -294,6 +307,7 @@
   function getIssues(data) {
     const issues = [];
     if (!data.fechaPago)  issues.push({ type: 'err',  msg: 'Falta la fecha de pago.' });
+    if (els.useWixStartDate?.checked && !data.wixStartDate) issues.push({ type: 'err', msg: 'Selecciona la fecha de inicio de la suscripción Wix.' });
     if (!data.medioPago)  issues.push({ type: 'err',  msg: 'Falta el medio de pago.' });
 
     const validUsers = data.usuarios.filter(u =>
@@ -350,6 +364,16 @@
         <div class="pay-preview-val ${data.fechaPago ? '' : 'missing'}">${data.fechaPago || 'Sin fecha'}</div>
       </div>
     </div>`;
+
+    if (data.wixStartDate) {
+      html += `<div class="pay-preview-row">
+        ${icon('ok')}
+        <div class="pay-preview-content">
+          <div class="pay-preview-key">Inicio de suscripción Wix</div>
+          <div class="pay-preview-val">${escapeHTML(data.wixStartDate)} (fecha personalizada)</div>
+        </div>
+      </div>`;
+    }
 
     // Medio de pago
     html += `<div class="pay-preview-row">
@@ -437,7 +461,9 @@
     els.ajustesDisplay.textContent = ajustes.length ? ajustes.join(' / ') : '—';
 
     const validCount = users.filter(u =>
-      String(u.estudiante || '').trim() && String(u.servicio || '').trim() && money(u.precio) > 0
+      String(u.estudiante || '').trim() &&
+      String(u.servicio || '').trim() &&
+      money(u.precio) > 0
     ).length;
     els.usuariosCount.textContent = validCount;
   }
@@ -455,13 +481,34 @@
       return;
     }
 
+    $('btnSavePayment').disabled = true;
+    try {
+      setStatus('Verificando pagos existentes...');
+      const duplicates = await window.RIPRepository.findDuplicatePayments(data);
+      if (duplicates.length) {
+        const proceed = await confirmDuplicatePayments(duplicates);
+        if (!proceed) {
+          setStatus('Guardado cancelado para revisar el pago existente.');
+          $('btnSavePayment').disabled = false;
+          return;
+        }
+      }
+    } catch (duplicateError) {
+      console.warn('No se pudo completar la verificación de pagos repetidos.', duplicateError);
+      toast('No se pudo verificar si el pago ya existía. Revisa antes de guardar.', 'warn');
+      setStatus('No se pudo verificar pagos repetidos.');
+      $('btnSavePayment').disabled = false;
+      return;
+    }
+
     els.btnReset.disabled = true;
     $('btnSavePayment').disabled = true;
     setStatus('Guardando pago...');
     try {
       const res = await window.RIPRepository.savePaymentTransaction(data);
-      showSuccess(`Pago guardado: ${res.registro.length} fila(s) en Registro y 1 en Clientes B2C.`);
+      showPaymentNotice(`Pago guardado: ${res.registro.length} fila(s) en RIP. Activando suscripción en Wix…`, 'pending');
       toast('Pago guardado correctamente.', 'ok');
+      watchWixActivation(res.id);
       resetForm({ keepStatus: true });
     } catch (errSave) {
       console.error(errSave);
@@ -478,6 +525,8 @@
   function resetForm(opts = {}) {
     els.form.reset();
     els.fechaPago.value = todayISO();
+    if (els.useWixStartDate) els.useWixStartDate.checked = false;
+    if (els.wixStartDate) { els.wixStartDate.value = ''; els.wixStartDate.disabled = true; }
     // Clear user slots and start fresh
     els.usersWrap.innerHTML = '';
     userCount = 0;
@@ -510,12 +559,85 @@
   }
 
   function showSuccess(msg) {
+    showPaymentNotice(msg, 'ok');
+  }
+
+  function confirmDuplicatePayments(duplicates) {
+    return new Promise(resolve => {
+      const overlay = document.createElement('div');
+      overlay.className = 'pay-wix-modal show warn';
+      overlay.innerHTML = `
+        <div class="pay-success pay-duplicate-dialog" role="dialog" aria-modal="true" aria-labelledby="payDuplicateTitle">
+          <div class="pay-success-head">
+            <span class="pay-success-icon">⚠</span>
+            <span id="payDuplicateTitle">Ya existe un pago en esa fecha</span>
+          </div>
+          <p>Encontré ${duplicates.length} pago(s) de la misma persona en la fecha seleccionada:</p>
+          <div class="pay-duplicate-list">
+            ${duplicates.map(item => `
+              <div class="pay-duplicate-item">
+                <strong>${escapeHTML(item.estudiante || 'Estudiante')}</strong>
+                <span>${escapeHTML(item.fecha)} · ${escapeHTML(item.servicio || 'Sin servicio')}</span>
+                <span>${formatCOP(item.pago || 0)}${item.medioPago ? ` · ${escapeHTML(item.medioPago)}` : ''}</span>
+              </div>
+            `).join('')}
+          </div>
+          <p class="pay-duplicate-help">Puedes volver al formulario o guardar de todos modos si se trata de otro pago válido.</p>
+          <div class="pay-duplicate-actions">
+            <button class="btn ghost" type="button" data-duplicate-cancel>Volver a revisar</button>
+            <button class="btn primary" type="button" data-duplicate-confirm>Guardar de todos modos</button>
+          </div>
+        </div>`;
+      const finish = value => {
+        document.removeEventListener('keydown', onKeydown);
+        overlay.remove();
+        resolve(value);
+      };
+      const onKeydown = event => { if (event.key === 'Escape') finish(false); };
+      document.addEventListener('keydown', onKeydown);
+      overlay.querySelector('[data-duplicate-cancel]').onclick = () => finish(false);
+      overlay.querySelector('[data-duplicate-confirm]').onclick = () => finish(true);
+      overlay.onclick = event => { if (event.target === overlay) finish(false); };
+      document.body.appendChild(overlay);
+      overlay.querySelector('[data-duplicate-cancel]')?.focus();
+    });
+  }
+
+  function showPaymentNotice(msg, tone) {
     if (els.paySuccessMsg) els.paySuccessMsg.textContent = msg;
-    els.paySuccess.classList.add('show');
-    setStatus('Pago guardado.');
+    els.paySuccess.className = `pay-wix-modal show ${tone || 'ok'}`;
+    setStatus(tone === 'pending' ? 'Esperando confirmación de Wix…' : 'Pago guardado.');
   }
 
   function hideSuccess() { els.paySuccess.classList.remove('show'); }
+
+  function watchWixActivation(paymentId) {
+    try { stopWixActivationWatch?.(); } catch (_) {}
+    if (!window.RIPRepository?.watchPaymentWixActivation) return;
+    window.RIPRepository.watchPaymentWixActivation(paymentId, activation => {
+      if (!activation || activation.status === 'processing') return;
+      const results = Array.isArray(activation.results) ? activation.results : [];
+      const active = results.filter(item => item.status === 'active');
+      const failed = results.filter(item => item.status === 'failed');
+      const verified = active.length > 0 && active.every(item => item.verified === true);
+      if (activation.status === 'active' && verified) {
+        const references = active.map(item => `${item.estudiante} (${item.planName || 'plan Wix'} verificado)`).join(', ');
+        showPaymentNotice(`✓ Suscripción verificada en Wix para ${references}.`, 'ok');
+        toast('Suscripción Wix activada.', 'ok');
+      } else {
+        const detail = failed.length
+          ? failed.map(item => `${item.estudiante || 'Estudiante'}: ${item.error || 'No se pudo activar'}`).join(' · ')
+          : 'Wix respondió, pero esta activación antigua no tiene una verificación de orden. Confírmala en Wix antes de darla por creada.';
+        showPaymentNotice(`⚠ Pago guardado en RIP, pero Wix requiere revisión. ${detail}`, 'warn');
+        toast('El pago quedó guardado, pero Wix reportó un problema.', 'warn');
+      }
+      try { stopWixActivationWatch?.(); } catch (_) {}
+      stopWixActivationWatch = null;
+    }, error => {
+      showPaymentNotice('Pago guardado en RIP. No se pudo leer aún la confirmación de Wix; revisa Clientes B2C.', 'warn');
+      console.warn('No se pudo observar la activación Wix', error);
+    }).then(unsubscribe => { stopWixActivationWatch = unsubscribe; }).catch(error => console.warn('No se pudo iniciar observación Wix', error));
+  }
   function setStatus(message) { els.status.textContent = message || ''; }
 
   function toast(message, tone) {

@@ -288,6 +288,25 @@
     return base;
   }
 
+  function normalizeRegistroUpdate(before, data) {
+    const calc = C();
+    const changes = data || {};
+    const merged = { ...(before || {}), ...changes };
+    const serviceWasSubmitted = Object.prototype.hasOwnProperty.call(changes, 'servicio');
+    const isPackagePayment = calc.norm(merged.tipo) === 'pago' &&
+      /(?:\bP\s*|Paquete\s*(?:de\s*)?)\d+/i.test(String(merged.servicio || ''));
+
+    // Al renombrar un paquete, el número escrito en el servicio vuelve a ser
+    // la fuente del movimiento. Esto evita conservar, por ejemplo, 8 al
+    // cambiar "Paquete de 8" por "Paquete de 12".
+    if (serviceWasSubmitted && isPackagePayment) {
+      merged.movimiento = 0;
+      delete merged.movimientoSaldo;
+    }
+
+    return normalizeRegistro(merged);
+  }
+
   function collectionCacheKey(name, orderField) {
     return `${name}|${orderField || ''}`;
   }
@@ -331,6 +350,11 @@
   }
 
   async function loadStudents() { return loadCollection('students'); }
+  // Catálogo administrable: cada documento guarda ripName, aliases,
+  // wixServiceId, wixServiceName y active. El navegador nunca consulta Wix
+  // directamente; solo lee estas equivalencias internas.
+  async function loadWixServiceMappings() { return loadCollection('wixServiceMappings'); }
+  async function loadWixPlanMappings() { return loadCollection('wixPlanMappings'); }
   // Directory used by reconciliation: local Bitacoras copy first, then a
   // read-only lookup in Estudiantes when the sync has not arrived yet.
   async function loadReconciliationDirectory() {
@@ -353,12 +377,26 @@
           const raw = docSnap.data() || {};
           const name = String(raw.name || raw.estudiante || raw.nombre || raw.nombreCompleto || '').trim();
           if (!name) return;
+          // En Estudiantes el ID canónico normalmente es el ID del documento;
+          // no todos los documentos lo repiten en studentId/officialStudentId.
           const explicitId = String(raw.studentId || raw.officialStudentId || '').trim();
-          const unique = `${explicitId || docSnap.id}::${C().norm(name)}`;
+          const canonicalId = explicitId || docSnap.id;
+          const unique = `${canonicalId}::${C().norm(name)}`;
           if (seen.has(unique)) return;
           seen.add(unique);
-          remote.push({ id: explicitId, studentId: raw.studentId || '', officialStudentId: raw.officialStudentId || '', name,
-            nameKey: raw.nameKey || raw.estudianteKey || C().norm(name), identitySource: 'estudiantes-musicala-direct' });
+          remote.push({
+            id: canonicalId,
+            studentId: raw.studentId || canonicalId,
+            officialStudentId: raw.officialStudentId || '',
+            name,
+            nameKey: raw.nameKey || raw.estudianteKey || C().norm(name),
+            correoWix: raw.correoWix || '',
+            email: raw.correoWix || raw.wixEmail || raw.email || raw.correo || '',
+            emails: Array.isArray(raw.emails) && raw.emails.length
+              ? raw.emails
+              : [raw.correoWix || raw.wixEmail || raw.email || raw.correo || ''],
+            identitySource: 'estudiantes-musicala-direct'
+          });
         });
       } catch (err) { console.warn(`[RIP] No se pudo leer ${collectionName} para conciliacion.`, err); }
     } catch (err) {
@@ -475,7 +513,7 @@
 
   async function logAudit(entity, entityId, action, before, after) {
     const env = await fb();
-    const { collection, addDoc } = env.fs;
+    const { collection, addDoc, doc, getDoc } = env.fs;
     await addDoc(collection(env.db, 'auditLog'), {
       entity, entityId, action,
       before: before || null,
@@ -685,7 +723,7 @@
 
   async function savePaymentTransaction(data) {
     const env = await fb();
-    const { collection, addDoc } = env.fs;
+    const { collection, addDoc, doc, getDoc } = env.fs;
     const calc = C();
     const fecha = String(data.fechaPago || '').trim();
     const usuarios = Array.isArray(data.usuarios) ? data.usuarios : [];
@@ -715,6 +753,15 @@
         await attachStudentId(helper);
         u.studentId = helper.studentId || '';
       }
+      // El correo digitado tiene prioridad. Cuando no viene, se hereda de la
+      // ficha canónica relacionada para que el operador no tenga que repetirlo.
+      if (!u.correo && u.studentId) {
+        const studentSnap = await getDoc(doc(env.db, 'students', u.studentId));
+        const student = studentSnap.exists() ? studentSnap.data() : {};
+        u.correo = String(
+          student.wixEmail || student.email || (Array.isArray(student.emails) ? student.emails[0] : '') || ''
+        ).trim().toLowerCase().replace(/\s+/g, '');
+      }
     }
     if (!fecha) throw new Error('Falta fecha de pago.');
     if (!valid.length) throw new Error('No hay usuarios validos.');
@@ -722,6 +769,9 @@
     const transaction = {
       fecha,
       fechaTs: calc.parseDate(fecha)?.getTime() || 0,
+      wixStartDate: /^\d{4}-\d{2}-\d{2}$/.test(String(data.wixStartDate || '').trim())
+        ? String(data.wixStartDate).trim()
+        : '',
       tipoEstudiante: String(data.tipoEstudiante || '').trim(),
       usuarios: valid,
       recargo,
@@ -763,6 +813,96 @@
     await logAudit('clientesB2C', txRef.id, 'create', null, { ...transaction, registroIds: savedRows.map(r => r.id) });
     notifyFirestoreChange({ entity: 'clientesB2C', action: 'create', id: txRef.id });
     return { ok: true, id: txRef.id, transaction: { id: txRef.id, ...transaction }, registro: savedRows };
+  }
+
+  async function findDuplicatePayments(data) {
+    const calc = C();
+    const fecha = String(data?.fechaPago || data?.fecha || '').trim();
+    if (!fecha) return [];
+    const users = (Array.isArray(data?.usuarios) ? data.usuarios : [])
+      .map(user => ({
+        estudiante: String(user?.estudiante || '').trim(),
+        studentId: String(user?.studentId || '').trim(),
+        correo: normalizeWixEmail(user?.correo || user?.email || '')
+      }))
+      .filter(user => user.estudiante || user.studentId || user.correo);
+
+    // Resolvemos la misma identidad canónica usada al guardar. Si una ficha
+    // todavía no tiene ID, la coincidencia por nombre normalizado sigue
+    // ofreciendo la advertencia sin bloquear un pago legítimo.
+    for (const user of users) {
+      if (user.studentId || !user.estudiante) continue;
+      const helper = {
+        estudiante: user.estudiante,
+        estudianteKey: calc.norm(user.estudiante),
+        correo: user.correo,
+        studentId: ''
+      };
+      try { await attachStudentId(helper); } catch (_err) { /* usar nombre */ }
+      user.studentId = String(helper.studentId || '').trim();
+    }
+
+    const env = await fb();
+    const { collection, query, where, getDocsFromServer } = env.fs;
+    // No usar loadRegistro(): esa lista se guarda en memoria mientras la
+    // pantalla permanece abierta y puede omitir pagos hechos en otra pestaña.
+    const [registroSnap, clientesSnap] = await Promise.all([
+      getDocsFromServer(query(collection(env.db, 'registro'), where('fecha', '==', fecha))),
+      getDocsFromServer(query(collection(env.db, 'clientesB2C'), where('fecha', '==', fecha)))
+    ]);
+    const sameStudent = (candidate, user) => {
+      const candidateId = String(candidate?.studentId || candidate?.officialStudentId || '').trim();
+      const candidateEmail = normalizeWixEmail(candidate?.correo || candidate?.correoWix || candidate?.email || '');
+      return Boolean(
+        (user.studentId && candidateId && user.studentId === candidateId) ||
+        (user.correo && candidateEmail && user.correo === candidateEmail) ||
+        (user.estudiante && calc.norm(candidate?.estudiante || candidate?.name) === calc.norm(user.estudiante))
+      );
+    };
+    const found = new Map();
+    registroSnap.docs.forEach(docSnap => {
+      const row = docSnap.data() || {};
+      if (calc.norm(row.tipo) !== 'pago' || !users.some(user => sameStudent(row, user))) return;
+      const key = String(row.clientesB2CId || docSnap.id);
+      found.set(key, {
+        id: docSnap.id,
+        estudiante: row.estudiante || '',
+        fecha,
+        servicio: row.servicio || '',
+        pago: row.pago || row.valorPago || '',
+        medioPago: row.medioPago || ''
+      });
+    });
+    clientesSnap.docs.forEach(docSnap => {
+      const transaction = docSnap.data() || {};
+      const candidates = Array.isArray(transaction.usuarios) && transaction.usuarios.length
+        ? transaction.usuarios
+        : [transaction];
+      candidates.forEach(candidate => {
+        if (!users.some(user => sameStudent(candidate, user))) return;
+        const key = String(docSnap.id);
+        if (found.has(key)) return;
+        found.set(key, {
+          id: key,
+          estudiante: candidate.estudiante || '',
+          fecha,
+          servicio: candidate.servicio || '',
+          pago: candidate.precio || candidate.monto || transaction.total || '',
+          medioPago: transaction.medioPago || ''
+        });
+      });
+    });
+    return [...found.values()];
+  }
+
+  async function watchPaymentWixActivation(paymentId, onChange, onError) {
+    const env = await fb();
+    const { doc, onSnapshot } = env.fs;
+    return onSnapshot(
+      doc(env.db, 'clientesB2C', String(paymentId || '').trim()),
+      snapshot => onChange(snapshot.exists() ? (snapshot.data()?.wixActivation || null) : null),
+      error => { if (typeof onError === 'function') onError(error); }
+    );
   }
 
   async function addClienteB2C(data) {
@@ -885,7 +1025,7 @@
     const ref = doc(env.db, 'registro', recordId);
     const beforeSnap = await getDoc(ref);
     const before = beforeSnap.exists() ? beforeSnap.data() : {};
-    const row = normalizeRegistro({ ...before, ...data });
+    const row = normalizeRegistroUpdate(before, data);
     assertStudentNameIsNotEmail(row);
     await attachStudentId(row);
     row.updatedAt = stamp(env.fs);
@@ -916,10 +1056,10 @@
   // El correo de Wix participa en la resolución de identidad al importar
   // clases. Se reemplaza (no se acumula) para evitar que un correo antiguo
   // termine vinculando una reserva nueva a la ficha equivocada.
-  async function updateStudentWixEmail(studentId, rawEmail) {
+  async function updateStudentWixEmail(studentId, rawEmail, studentProfile = {}) {
     const canonical = String(studentId || '').trim();
     const wixEmail = normalizeWixEmail(rawEmail);
-    if (!isCanonicalId(canonical)) throw new Error('El ID del estudiante no es canónico.');
+    if (!canonical || canonical.startsWith('name:')) throw new Error('Este estudiante aún no tiene un ID guardado.');
     if (!isValidEmail(wixEmail)) throw new Error('Escribe un correo válido de Wix.');
 
     const index = await identity()?.ensureIndex?.();
@@ -933,9 +1073,24 @@
     const { doc, getDoc, setDoc } = env.fs;
     const ref = doc(env.db, 'students', canonical);
     const snap = await getDoc(ref);
-    if (!snap.exists()) throw new Error('No encontré la ficha canónica del estudiante.');
-    const before = snap.data();
+    const before = snap.exists() ? snap.data() : null;
+    const name = String(studentProfile?.name || studentProfile?.estudiante || '').trim();
+    const nameKey = C().norm(studentProfile?.nameKey || studentProfile?.estudianteKey || name);
+    // El directorio remoto puede aparecer antes de que llegue su copia a RIP.
+    // En ese caso se crea una ficha espejo mínima para que el correo quede
+    // disponible de inmediato para las próximas importaciones de Wix.
+    const creation = snap.exists() ? {} : {
+      studentId: canonical,
+      officialStudentId: canonical,
+      identitySource: 'estudiantes-musicala',
+      ...(name ? { name, estudiante: name } : {}),
+      ...(nameKey ? { nameKey, estudianteKey: nameKey } : {}),
+      createdAt: stamp(env.fs),
+      createdBy: userEmail(env)
+    };
     await setDoc(ref, {
+      ...creation,
+      correoWix: wixEmail,
       email: wixEmail,
       emails: [wixEmail],
       wixEmail,
@@ -944,10 +1099,77 @@
     }, { merge: true });
     clearCache('students');
     identity()?.invalidate?.();
-    const after = { ...before, email: wixEmail, emails: [wixEmail], wixEmail };
+    const after = { ...(before || {}), ...creation, correoWix: wixEmail, email: wixEmail, emails: [wixEmail], wixEmail };
     await logAudit('students', canonical, 'update-wix-email', before, after);
     notifyFirestoreChange({ entity: 'students', action: 'update-wix-email', id: canonical, studentId: canonical });
     return { ok: true, studentId: canonical, email: wixEmail };
+  }
+
+  // Quita un identificador heredado de la relación actual. Conserva el ID
+  // principal, pero elimina el alias de la ficha y de sus registros para que
+  // no vuelva a aparecer en el Directorio ni resuelva como la misma persona.
+  async function unlinkStudentRelatedId(studentId, relatedId) {
+    const canonical = String(studentId || '').trim();
+    const related = String(relatedId || '').trim();
+    if (!canonical || canonical.startsWith('name:')) throw new Error('El estudiante no tiene un ID guardado.');
+    if (!related || related === canonical || related.includes('/')) throw new Error('No se puede quitar ese ID relacionado.');
+
+    const env = await fb();
+    const { collection, doc, getDoc, getDocs, query, setDoc, where, deleteField } = env.fs;
+    const studentRef = doc(env.db, 'students', canonical);
+    const studentSnap = await getDoc(studentRef);
+    if (!studentSnap.exists()) throw new Error('No se encontró la ficha guardada del estudiante.');
+    const beforeStudent = studentSnap.data() || {};
+    const withoutRelated = values => (Array.isArray(values) ? values : [])
+      .map(value => String(value || '').trim()).filter(value => value && value !== related);
+
+    const [byStudent, byLinked] = await Promise.all([
+      getDocs(query(collection(env.db, 'registro'), where('studentId', '==', canonical))),
+      getDocs(query(collection(env.db, 'registro'), where('linkedStudentIds', 'array-contains', related)))
+    ]);
+    const records = new Map();
+    [byStudent, byLinked].forEach(snapshot => snapshot.forEach(row => records.set(row.id, row)));
+
+    await setDoc(studentRef, {
+      linkedStudentIds: withoutRelated(beforeStudent.linkedStudentIds),
+      aliases: withoutRelated(beforeStudent.aliases),
+      mergedFrom: withoutRelated(beforeStudent.mergedFrom),
+      updatedAt: stamp(env.fs),
+      updatedBy: userEmail(env)
+    }, { merge: true });
+
+    for (const rowSnap of records.values()) {
+      const before = rowSnap.data() || {};
+      const after = {
+        linkedStudentIds: withoutRelated(before.linkedStudentIds),
+        updatedAt: stamp(env.fs),
+        updatedBy: userEmail(env)
+      };
+      if (String(before.studentId || '').trim() === related) {
+        after.studentId = '';
+        after.canonicalStudentId = '';
+      }
+      await setDoc(rowSnap.ref, after, { merge: true });
+      await logAudit('registro', rowSnap.id, 'unlink-student-related-id', before, { ...before, ...after });
+    }
+
+    const relatedRef = doc(env.db, 'students', related);
+    const relatedSnap = await getDoc(relatedRef);
+    if (relatedSnap.exists()) {
+      const relatedStudent = relatedSnap.data() || {};
+      if (String(relatedStudent.legacyAliasOf || relatedStudent.mergedInto || relatedStudent.canonicalStudentId || '').trim() === canonical) {
+        await setDoc(relatedRef, {
+          legacyAliasOf: deleteField(), mergedInto: deleteField(), canonicalStudentId: deleteField(),
+          updatedAt: stamp(env.fs), updatedBy: userEmail(env)
+        }, { merge: true });
+      }
+    }
+
+    clearCache(['students', 'registro']);
+    identity()?.invalidate?.();
+    await logAudit('students', canonical, 'unlink-related-id', beforeStudent, { ...beforeStudent, linkedStudentIds: withoutRelated(beforeStudent.linkedStudentIds) });
+    notifyFirestoreChange({ entity: 'students', action: 'unlink-related-id', id: canonical, studentId: canonical, relatedId: related });
+    return { ok: true, relatedId: related, recordsUpdated: records.size };
   }
 
   /* Vincula filas históricas a una identidad canónica elegida explícitamente
@@ -1191,12 +1413,18 @@
     const key = resolved.canonical || resolved.docId;
     if (!key) throw new Error('Falta estudiante para guardar programación.');
     const { doc, getDoc, setDoc } = env.fs;
+    const currentSnap = await getDoc(doc(env.db, 'programacion', key));
+    const current = currentSnap.exists() ? currentSnap.data() : {};
+    // El identificador canónico puede ser un correo. Nunca debe terminar
+    // sustituyendo el nombre visible de un documento ya existente.
+    const displayName = String(current.estudiante || current.name || resolved.displayName || '').trim();
+    const displayKey = String(current.estudianteKey || current.nameKey || resolved.nameKey || '').trim();
     const cleanFechas = Array.isArray(fechas) ? fechas.map(x => String(x || '').trim()).filter(Boolean).sort() : [];
     const after = {
       studentId: resolved.canonical || key,
       canonicalStudentId: resolved.canonical || '',
-      estudiante: resolved.displayName,
-      estudianteKey: resolved.nameKey || (isCanonicalId(key) ? '' : key),
+      estudiante: displayName,
+      estudianteKey: displayKey || (isCanonicalId(key) ? '' : key),
       fechas: cleanFechas,
       maxClasses: cleanFechas.length || 24,
       updatedAt: stamp(env.fs),
@@ -1247,6 +1475,17 @@
     });
   }
 
+  // Agrega fechas elegidas sin reemplazar la programación existente. La
+  // transacción conserva cambios que otra persona haya guardado entretanto y
+  // permite fechas repetidas cuando el estudiante tiene dos clases el mismo día.
+  async function appendScheduleDates(studentId, fechas) {
+    const additions = Array.isArray(fechas)
+      ? fechas.map(x => String(x || '').trim()).filter(Boolean)
+      : [];
+    if (!additions.length) return loadStudentSchedule(studentId);
+    return patchSchedule(studentId, current => [...current, ...additions]);
+  }
+
   // Aplica una modificación parcial sobre la última versión de Firestore.
   // La transacción se reintenta si otro usuario guardó entre la lectura y la
   // escritura; así no se pisan datos concurrentes.
@@ -1268,12 +1507,14 @@
       const cleanFechas = Array.isArray(patched)
         ? patched.map(x => String(x || '').trim()).filter(Boolean).sort()
         : [];
+      const displayName = String(before.estudiante || before.name || resolved.displayName || '').trim();
+      const displayKey = String(before.estudianteKey || before.nameKey || resolved.nameKey || '').trim();
       after = {
         ...before,
         studentId: resolved.canonical || key,
         canonicalStudentId: resolved.canonical || '',
-        estudiante: resolved.displayName,
-        estudianteKey: resolved.nameKey || (isCanonicalId(key) ? '' : key),
+        estudiante: displayName,
+        estudianteKey: displayKey || (isCanonicalId(key) ? '' : key),
         fechas: cleanFechas,
         maxClasses: Math.max(Number(before.maxClasses) || 0, cleanFechas.length || 0, 24),
         updatedAt: stamp(env.fs),
@@ -1629,15 +1870,15 @@
   }
 
   window.RIPRepository = {
-    loadRegistro, loadStudents, loadReconciliationDirectory, loadProgramacion, loadComputed,
+    loadRegistro, loadStudents, loadWixServiceMappings, loadWixPlanMappings, loadReconciliationDirectory, loadProgramacion, loadComputed,
       loadClientesB2C, loadPrimeraVez, loadAuditLog,
-    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow, reconcileRegistroStudentIds, updateStudentWixEmail,
+    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow, reconcileRegistroStudentIds, updateStudentWixEmail, unlinkStudentRelatedId,
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
-    loadPaymentMeta, savePaymentTransaction, addClienteB2C, updateClienteB2C,
+    loadPaymentMeta, findDuplicatePayments, savePaymentTransaction, watchPaymentWixActivation, addClienteB2C, updateClienteB2C,
     mergeStudents, previewMergeStudents,
     repairConfirmedJulietaDuplicates,
-    loadStudentSchedule, saveSchedule, saveScheduleFrom, saveScheduleDate,
+    loadStudentSchedule, saveSchedule, saveScheduleFrom, saveScheduleDate, appendScheduleDates,
     recalculateStudent, recalculateAllStudents, logAudit,
-    normalizeRegistro, getDefaultServices, mergeServiceMeta, clearCache
+    normalizeRegistro, normalizeRegistroUpdate, getDefaultServices, mergeServiceMeta, clearCache
   };
 })();

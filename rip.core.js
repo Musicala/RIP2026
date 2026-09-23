@@ -149,6 +149,40 @@
     return v.toLocaleString('es-CO', { maximumFractionDigits: 0 });
   };
 
+  // La fecha se almacena sin hora; para mostrar y calcular paquetes usamos
+  // ambas columnas. Así dos movimientos del mismo día conservan su secuencia.
+  const timeToMinutes = (value) => {
+    const match = String(value || '').trim().match(/(\d{1,2}):(\d{2})/);
+    if (!match) return 0;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    return hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60
+      ? (hours * 60) + minutes
+      : 0;
+  };
+
+  const rowDateTimeTs = (row) => {
+    const parsed = parseDate(row?.fecha || row?.fechaRaw);
+    const dateTs = parsed ? parsed.getTime() : (Number(row?.fechaTs) || 0);
+    return dateTs ? dateTs + (timeToMinutes(row?.hora) * 60 * 1000) : 0;
+  };
+
+  const compareRowsByDateTime = (a, b) => {
+    const byDateTime = rowDateTimeTs(a) - rowDateTimeTs(b);
+    if (byDateTime) return byDateTime;
+    // Cuando fecha y hora coinciden, el pago se procesa antes de la clase para
+    // que el crédito quede disponible en ese mismo instante.
+    const aPago = norm(a?.tipo) === 'pago' || (!!String(a?.pago || '').trim() && norm(a?.tipo) !== 'clase');
+    const bPago = norm(b?.tipo) === 'pago' || (!!String(b?.pago || '').trim() && norm(b?.tipo) !== 'clase');
+    if (aPago !== bPago) return aPago ? -1 : 1;
+    return String(a?.id || a?.recordHash || a?.rowNum || '').localeCompare(String(b?.id || b?.recordHash || b?.rowNum || ''));
+  };
+
+  const sortRowsByDateTime = (rows, direction = 'desc') => {
+    const factor = direction === 'asc' ? 1 : -1;
+    return [...(rows || [])].sort((a, b) => factor * compareRowsByDateTime(a, b));
+  };
+
   const hasText = (v) => String(v || '').trim().length > 0;
   const test = (txt, re) => re.test(String(txt || ''));
   const isTrialText = (servicioRaw, comentarioRaw = '') => /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/i.test(norm(`${servicioRaw || ''} ${comentarioRaw || ''}`));
@@ -383,6 +417,34 @@
       const legacyKey = norm(legacy);
       const targetKey = String(target || '').trim();
       if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
+    }
+
+    // Una identidad "por revisar" puede abarcar filas recientes anotadas con
+    // identityClusterKey y filas antiguas que solo conservan nameKey como
+    // studentId. Si para ese nombre existe UN solo cluster provisional, ambas
+    // llaves representan la misma ficha. Con más de un cluster no se adivina:
+    // el caso permanece separado para revisión manual (homónimos seguros).
+    const provisionalByName = new Map();
+    for (const row of registro || []) {
+      const cluster = String(row?.identityClusterKey || '').trim();
+      const nameKey = String(row?.estudianteKey || '').trim() || norm(row?.estudiante || row?.name);
+      if (!cluster || !nameKey) continue;
+      if (!provisionalByName.has(nameKey)) provisionalByName.set(nameKey, new Set());
+      provisionalByName.get(nameKey).add(cluster);
+    }
+    for (const [nameKey, clusters] of provisionalByName.entries()) {
+      if (clusters.size !== 1) continue;
+      const currentTarget = String(aliasMap.get(nameKey) || '').trim();
+      // Un studentId igual al propio nameKey sigue siendo provisional, no un
+      // ID canónico independiente. Un ID real diferente sí se respeta.
+      if (currentTarget && currentTarget !== nameKey) continue;
+      const cluster = [...clusters][0];
+      aliasMap.set(nameKey, cluster);
+      // Los aliases que antes apuntaban al nameKey deben terminar en el mismo
+      // cluster para evitar una tercera ficha provisional.
+      for (const [alias, target] of [...aliasMap.entries()]) {
+        if (String(target || '').trim() === nameKey) aliasMap.set(alias, cluster);
+      }
     }
 
     const groupKeyOf = (record) => (calc?.getStudentGroupingKey
@@ -1048,10 +1110,14 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     const calc = window.RIPCalculations;
-    // Coincide por studentId canónico O por llave heredada (transición).
-    const studentRows = (registro || []).filter((r) => (
-      calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey
-    ));
+    // Las filas de Firebase ya llegan con groupKey resuelto por el mismo
+    // aliasMap del tablero. Usar ahí también el nombre heredado mezclaría
+    // homónimos o mostraría un saldo distinto al de la tarjeta.
+    const studentRows = (registro || []).filter((r) => {
+      const resolved = String(r?.groupKey || '').trim();
+      if (resolved) return resolved === studentKey;
+      return calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey;
+    });
     const subset = getMusigymRows(studentRows);
     for (const r of subset) {
       if (!r.fechaTs) {
@@ -1059,7 +1125,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
         r.fechaTs = d ? d.getTime() : 0;
       }
     }
-    const rows = subset.sort((a, b) => (b.fechaTs || 0) - (a.fechaTs || 0));
+    const rows = sortRowsByDateTime(subset, 'desc');
 
     const saldo = rows.reduce((acc, r) => acc + (Number(r.movimientoSaldo ?? r.movimiento) || 0), 0);
 
@@ -1095,7 +1161,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
     toTs
   } = filters || {};
 
-  return registro.filter((r) => {
+  const filtered = registro.filter((r) => {
     if (estudianteKey) {
       const calc = window.RIPCalculations;
       const belongs = calc?.matchesStudentKey
@@ -1133,6 +1199,8 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
     return true;
   });
+
+  return sortRowsByDateTime(filtered, 'desc');
 };
 
   // Limpiar todos los cachés en memoria y almacenamiento
@@ -1163,7 +1231,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
 
   // Exports
   RIPCore.COL_LABELS = COLS;
-  RIPCore.util = { norm, safeNum, parseDate, fmtMoney, clamp };
+  RIPCore.util = { norm, safeNum, parseDate, fmtMoney, clamp, timeToMinutes, rowDateTimeTs, compareRowsByDateTime, sortRowsByDateTime };
 
   window.RIPCore = RIPCore;
 })();

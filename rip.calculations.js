@@ -359,8 +359,8 @@
     if (isTrial(row)) return { clasif: 'Prueba', clasifPago: tipo === 'pago' ? 'Prueba' : '' };
     if (isCourtesy(row)) return { clasif: 'Cortesia', clasifPago: tipo === 'pago' ? 'Cortesia' : '' };
     if (tipo === 'pago') {
-      // Taller/OpenHouse no vende una familia separada de paquete: conserva
-      // Taller como clasificación para que comparta vacacional-flex.
+      // Taller/OpenHouse conserva su propia familia de paquete para que un
+      // taller no consuma ni quede detrás de paquetes grupales o vacacionales.
       if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
       if (s.includes('musigym')) return { clasif: 'Pago', clasifPago: 'Musigym' };
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
@@ -418,12 +418,14 @@
 
   function isTrialCP(row) {
     const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
-    return /\bcp\b/.test(txt) && /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
+    const trial = /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
+    return trial && (/\bcp\b/.test(txt) || norm(row?.tipo) === 'pago');
   }
 
   function isCourtesyCC(row) {
     const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
-    return /\bcc\b/.test(txt) && /\b(cortesia|gratis|obsequio)\b/.test(txt);
+    const courtesy = /\b(cortesia|gratis|obsequio)\b/.test(txt);
+    return courtesy && (/\bcc\b/.test(txt) || norm(row?.tipo) === 'pago');
   }
 
   function isTrial(row) {
@@ -524,8 +526,14 @@
     const rowId = (row, index) => String(row?.id || row?.recordHash || `${row?.fecha || row?.fechaRaw || ''}|${row?.hora || ''}|${row?.servicio || ''}|${index}`);
     const timeOf = (row) => {
       const date = Number(row?.fechaTs) || parseDate(row?.fecha || row?.fechaRaw)?.getTime() || 0;
-      const m = String(row?.hora || '').match(/(\d{1,2}):(\d{2})/);
-      return { date, minutes: m ? Number(m[1]) * 60 + Number(m[2]) : 0 };
+      const rawTime = String(row?.hora || '').trim().toLowerCase();
+      const m = rawTime.match(/(\d{1,2}):(\d{2})/);
+      let hour = m ? Number(m[1]) : 0;
+      const minute = m ? Number(m[2]) : 0;
+      const meridiem = rawTime.replace(/[.\s]/g, '').match(/([ap])m/)?.[1] || '';
+      if (meridiem === 'p' && hour < 12) hour += 12;
+      if (meridiem === 'a' && hour === 12) hour = 0;
+      return { date, minutes: hour * 60 + minute };
     };
     rows.forEach((row, index) => {
       const key = getStudentGroupingKey(row) || String(row?.estudianteKey || norm(row?.estudiante));
@@ -652,7 +660,9 @@
     const normalizePackageKey = (value) => {
       const key = norm(value || 'sin-clasificacion');
       if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
-      if (key === 'tv' || key === 'taller' || key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
+      // TV son talleres vacacionales: consumen la misma bolsa que Taller.
+      if (key === 'tv') return 'taller';
+      if (key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
       return key;
     };
     const isPago = (row) => {

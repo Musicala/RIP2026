@@ -158,7 +158,7 @@
           // El directorio puede conservar campos del formulario original.
           // Si existen, son más fiables que `name`, que en algunos registros
           // heredados quedó con el nombre del acudiente que hizo la reserva.
-          name: getOfficialStudentName(raw) || canonicalId,
+          name: getOfficialStudentName(raw),
           nameKey: String(raw.nameKey || raw.estudianteKey || '').trim(),
           emails,
           active: true
@@ -262,19 +262,16 @@
         const data = docSnap.data() || {};
         const email = normalizeEmail(data.email || docSnap.id);
         const savedName = String(data.estudiante || data.name || '').trim();
-        const savedStudentId = String(data.studentId || data.officialStudentId || data.canonicalStudentId || '').trim();
-        const canonical = (localStudents || []).find((student) => String(student.id || '').trim() === savedStudentId)
-          || findLocalStudentByName(savedName);
+        const canonical = findLocalStudentByName(savedName);
         const name = String(canonical?.name || savedName).trim();
         const key = norm(name || data.estudianteKey || '');
         if (email && name) links.set(email, {
-          id: String(canonical?.id || savedStudentId || data.estudianteKey || key || docSnap.id),
+          id: data.estudianteKey || key || docSnap.id,
           sourceCollection: 'rip/wixStudentEmails',
           name,
           nameKey: key,
           emails: [email],
-          active: true,
-          assignmentMode: String(data.assignmentMode || '').trim().toLowerCase()
+          active: true
         });
       });
       localEmailLinks = links;
@@ -290,17 +287,9 @@
     if (!email || !name) return;
     try {
       const env = await window.RIPFirebase.ready;
-      const { doc, getDoc, setDoc, serverTimestamp } = env.fs;
-      const linkRef = doc(env.db, 'wixStudentEmails', email);
-      const existing = await getDoc(linkRef);
-      // Una asignacion manual es una decision de identidad (por ejemplo, un
-      // correo compartido por familiares); una importacion automatica no la
-      // puede reemplazar.
-      if (existing.exists() && String(existing.data()?.assignmentMode || '').trim().toLowerCase() === 'manual') return;
-      await setDoc(linkRef, {
+      const { doc, setDoc, serverTimestamp } = env.fs;
+      await setDoc(doc(env.db, 'wixStudentEmails', email), {
         email,
-        studentId: String(row.officialStudentId || '').trim(),
-        officialStudentId: String(row.officialStudentId || '').trim(),
         estudiante: name,
         estudianteKey: norm(name),
         estudianteWix: String(row.estudianteWix || '').trim(),
@@ -309,13 +298,12 @@
         updatedBy: env.user?.email || ''
       }, { merge: true });
       localEmailLinks.set(email, {
-        id: String(row.officialStudentId || norm(name)),
+        id: norm(name),
         sourceCollection: 'rip/wixStudentEmails',
         name,
         nameKey: norm(name),
         emails: [email],
-        active: true,
-        assignmentMode: 'automatic'
+        active: true
       });
     } catch (err) {
       console.warn('No se pudo guardar relacion correo-estudiante:', err);
@@ -393,11 +381,6 @@
   function findOfficialStudentByEmail(email, wixName = '') {
     const target = normalizeEmail(email);
     if (!target) return null;
-    // Las excepciones manuales se aplican antes del directorio: un correo de
-    // acudiente puede ser compartido y no debe decidir la identidad por si
-    // solo. Esta excepcion queda explicita y es reversible por administracion.
-    const localExact = localEmailLinks.get(target);
-    if (localExact?.assignmentMode === 'manual') return localExact;
     const exact = officialStudentsByEmail.get(target);
     if (exact) {
       // Un correo exclusivo puede resolver directamente. Si lo comparten
@@ -407,6 +390,7 @@
       const byName = exact.filter((student) => matchesReservationName(student, wixName));
       return byName.length === 1 ? byName[0] : null;
     }
+    const localExact = localEmailLinks.get(target);
     if (localExact) return localExact;
 
     const targetUser = target.split('@')[0] || target;
@@ -461,7 +445,20 @@
     return Array.from(new Set(raw.flatMap(extractEmails).concat(raw.map(normalizeEmail)).filter(v => v.includes('@'))));
   }
 
+  function validStudentDisplayName(value, ids = []) {
+    const name = String(value || '').trim();
+    if (!name || name.includes('@') || !/[A-Za-zÀ-ÖØ-öø-ÿ]/.test(name)) return '';
+    if (ids.some(id => id && name === String(id).trim())) return '';
+    if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(name)) return '';
+    return name;
+  }
+
   function getOfficialStudentName(data) {
+    const ids = [data?.id, data?.studentId, data?.officialStudentId, data?.canonicalStudentId];
+    // Ignore invalid candidates individually so a legacy email in one field
+    // cannot hide a valid name in another.
+    data = Object.fromEntries(Object.entries(data || {}).map(([key, value]) =>
+      [key, typeof value === 'string' ? validStudentDisplayName(value, ids) : value]));
     // Primero los campos que explícitamente nombran al estudiante/alumno.
     // No se incluyen campos de acudiente o cliente: Wix suele registrar ahí
     // a la mamá/papá que pagó, no a quien tomó la clase.
@@ -496,9 +493,7 @@
   }
 
   function normalizeOfficialStudent(data, id, sourceCollection) {
-    const name = getOfficialStudentName(data) || String(data?.nombre || data?.name || id || '').trim();
-    const firstEmail = collectEmails(data, id)[0] || '';
-    const resolvedName = name || firstEmail;
+    const resolvedName = getOfficialStudentName({ ...data, id });
     const activeRaw = pickObjectValue(data, ['activo', 'active', 'estado', 'status', 'clasificacion', 'clasificación']);
     const activeText = norm(activeRaw);
     const inactive = activeText.includes('inactivo') || activeText.includes('inactiva') || activeText.includes('exestudiante') || activeText.includes('retirado');
@@ -532,9 +527,9 @@
       // Un correo sirve para ENCONTRAR la ficha, pero nunca es el nombre de
       // un estudiante. Antes este fallback convertía reservas sin nombre
       // confirmado en fichas llamadas "alguien@correo.com".
-      estudiante: official?.name || wixName,
+      estudiante: validStudentDisplayName(official?.name, [official?.id]) || validStudentDisplayName(wixName),
       estudianteWix: wixName,
-      estudianteOficial: official?.name || '',
+      estudianteOficial: validStudentDisplayName(official?.name, [official?.id]),
       correo,
       officialStudentId: official?.id || '',
       officialStudentCollection: official?.sourceCollection || '',

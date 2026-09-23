@@ -34,6 +34,22 @@
     @media (max-width: 700px) {
       .pay-grid-2, .pay-grid-4 { grid-template-columns: 1fr; }
     }
+    .pay-wix-start {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) minmax(190px, .7fr);
+      gap: 12px;
+      align-items: end;
+      margin-top: 12px;
+      padding: 13px 15px;
+      border: 1px solid rgba(26,59,110,.12);
+      border-radius: 10px;
+      background: rgba(26,59,110,.035);
+    }
+    .pay-wix-check { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+    .pay-wix-check input { width: 18px; height: 18px; margin-top: 1px; accent-color: #0f8f88; }
+    .pay-wix-check strong { display: block; color: #1e293b; font-size: 13px; }
+    .pay-wix-check small { display: block; margin-top: 3px; color: #64748b; line-height: 1.35; }
+    @media (max-width: 700px) { .pay-wix-start { grid-template-columns: 1fr; } }
 
     /* ─── User card ──────────────────────────────── */
     .pay-user {
@@ -300,18 +316,43 @@
     }
     .pay-actions .btn.primary { min-width: 160px; }
 
-    .pay-success {
+    .pay-wix-modal {
       display: none;
-      margin-top: 12px;
-      padding: 14px 18px;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      padding: 24px;
+      background: rgba(15, 23, 42, .55);
+      align-items: center;
+      justify-content: center;
+    }
+    .pay-wix-modal.show { display: flex; }
+    .pay-success {
+      width: min(560px, 100%);
+      padding: 24px 26px;
       border: 1.5px solid #16a34a;
       border-radius: 12px;
       background: #f0fdf4;
       color: #166534;
       font-weight: 700;
-      font-size: 14px;
+      font-size: 16px;
+      line-height: 1.5;
+      box-shadow: 0 20px 55px rgba(15, 23, 42, .28);
     }
-    .pay-success.show { display: flex; align-items: center; gap: 10px; }
+    .pay-success-head { display: flex; align-items: center; gap: 12px; }
+    .pay-success-icon { font-size: 28px; }
+    .pay-success-close { margin: 16px 0 0 auto; display: block; }
+    .pay-wix-modal.pending .pay-success { border-color: #d97706; background: #fffbeb; color: #92400e; }
+    .pay-wix-modal.warn .pay-success { border-color: #dc2626; background: #fef2f2; color: #991b1b; }
+    .pay-duplicate-dialog { color: #334155 !important; }
+    .pay-duplicate-dialog .pay-success-head { color: #991b1b; }
+    .pay-duplicate-dialog p { margin: 14px 0 10px; font-size: 14px; font-weight: 500; }
+    .pay-duplicate-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
+    .pay-duplicate-item { display: grid; gap: 3px; padding: 11px 13px; border: 1px solid #fecaca; border-radius: 9px; background: #fff; }
+    .pay-duplicate-item strong { color: #1e293b; }
+    .pay-duplicate-item span { color: #64748b; font-size: 12px; font-weight: 500; }
+    .pay-duplicate-help { color: #64748b; font-size: 12px !important; }
+    .pay-duplicate-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -334,6 +375,19 @@
           <label class="field">
             <span>Tipo de estudiante</span>
             <select id="tipoEstudiante" class="control"></select>
+          </label>
+        </div>
+        <div class="pay-wix-start">
+          <label class="pay-wix-check">
+            <input id="useWixStartDate" type="checkbox">
+            <span>
+              <strong>Activar la suscripción Wix desde otra fecha</strong>
+              <small>Úsalo cuando Wix deba permitir redimir una clase anterior a la fecha del pago.</small>
+            </span>
+          </label>
+          <label class="field">
+            <span>Inicio de suscripción en Wix</span>
+            <input id="wixStartDate" class="control" type="date" disabled>
           </label>
         </div>
 
@@ -405,9 +459,11 @@
           <button class="btn ghost" id="btnReset" type="button">Limpiar</button>
           <span class="status" id="status">Cargando...</span>
         </div>
-        <div class="pay-success" id="paySuccess">
-          <span>✓</span>
-          <span id="paySuccessMsg">Pago guardado.</span>
+        <div class="pay-wix-modal" id="paySuccess" role="dialog" aria-modal="true" aria-live="assertive" aria-label="Estado de la activación Wix">
+          <div class="pay-success">
+            <div class="pay-success-head"><span class="pay-success-icon">✓</span><span id="paySuccessMsg">Pago guardado.</span></div>
+            <button class="btn ghost pay-success-close" id="dismissPaymentNotice" type="button">Cerrar</button>
+          </div>
         </div>
 
       </form>
@@ -419,11 +475,11 @@
   <div class="toast-wrap" id="toastWrap"></div>
 
   <script src="./firebase.config.js?v=2026.identity-email1"></script>
-  <script src="./rip.calculations.js?v=2026.studentid4"></script>
+  <script src="./rip.calculations.js?v=2026.cp-cc-nearest1"></script>
   <script src="./firebase.auth.js"></script>
   <script src="./rip.identity.js?v=2026.identity-master-name1"></script>
-  <script src="./rip.repository.js?v=2026.identity-email1"></script>
+  <script src="./rip.repository.js?v=2026.payment-duplicate-warning2"></script>
   <script src="./ui.shared.js?v=2026.views1"></script>
-  <script src="./registrar-pagos.js?v=2026.identity-email1"></script>
+  <script src="./registrar-pagos.js?v=2026.payment-duplicate-warning1"></script>
 </body>
 </html>
