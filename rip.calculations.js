@@ -37,13 +37,18 @@
 
   function getStudentGroupingKey(record, aliasMap) {
     if (!record) return '';
+    // Una conciliación confirmada debe ganar sobre cualquier groupKey o
+    // cluster heredado. Esos campos pueden sobrevivir en documentos antiguos
+    // y, si se priorizan, dividen una ficha ya conciliada en varias.
+    const canonical = String(record.canonicalStudentId || '').trim();
+    if (canonical) return canonical;
     const annotated = String(record.groupKey || '').trim();
     if (annotated) return annotated;
     // Una conciliación provisional une varias identidades sin declarar cuál
     // ID es el oficial todavía. Tiene prioridad sobre cualquier ID heredado.
     const cluster = String(record.identityClusterKey || '').trim();
     if (cluster) return cluster;
-    const explicit = String(record.studentId || record.canonicalStudentId || '').trim();
+    const explicit = String(record.studentId || '').trim();
     /*
       Durante la transición hay programaciones antiguas cuyo campo
       `studentId` contiene realmente el nameKey (p. ej. "ana perez"), no el
