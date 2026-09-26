@@ -316,14 +316,17 @@
     const tipo = norm(row?.tipo);
     const servicio = String(row?.servicio || '');
     const existing = Number(row?.movimiento ?? row?.movimientoSaldo);
+    const isManualMovement = row?.movimientoManual === true;
     if (isTrialCP(row) && tipo === 'pago') return 1;
     if (isCourtesyCC(row) && tipo === 'pago') return 1;
     if (isTrialCP(row) && tipo === 'clase') return -1;
     if (isCourtesyCC(row) && tipo === 'clase') return -1;
     if (isTrialOrCourtesy(row) && tipo === 'clase') return 0;
-    // Un movimiento importado/cargado explícitamente prevalece sobre la
-    // inferencia general. Las reglas especiales anteriores sí lo sustituyen.
-    if (Number.isFinite(existing) && existing !== 0) return existing;
+    // Solo una corrección manual explícita puede anular el tamaño de un
+    // paquete. Los históricos importados traían con frecuencia +1 aunque el
+    // servicio decía P9 o "Paquete de 17 clases"; esos valores no deben
+    // dejar el saldo incompleto.
+    if (isManualMovement && Number.isFinite(existing)) return existing;
     if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
     if (tipo === 'pago') {
@@ -333,6 +336,7 @@
       if (/\bCP\b/i.test(servicio)) return 1;
       const match = servicio.match(/(?:\bP\s*|Paquete\s*(?:de\s*)?)(\d+)/i);
       if (match) return Number(match[1]) || 0;
+      if (Number.isFinite(existing) && existing !== 0) return existing;
       const pago = safeNum(row?.pago || row?.valorPago);
       if (pago > 0 && pago < 10) return pago;
       return 0;
