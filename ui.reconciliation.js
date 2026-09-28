@@ -92,8 +92,19 @@
       const sourceId = String(row.studentId || row.canonicalStudentId || row.estudianteKey || nameKey).trim();
       const cluster = String(row.identityClusterKey || '').trim();
       const candidates = rowEmail ? (byEmail.get(rowEmail) || []) : (byName.get(nameKey) || []);
-      // Ya está enlazado inequívocamente al canónico del mismo nombre.
-      if (!looksLikeEmail(visibleName) && candidates.length === 1 && sourceId === candidates[0].id) continue;
+      // Solo se oculta cuando TODA la identidad ya está limpia. Antes una
+      // fila desaparecía de Conciliación apenas studentId coincidía, aunque
+      // conservara un canónico, groupKey o clúster anterior que luego volvía
+      // a dividir la ficha en Buscar estudiante.
+      const candidateId = candidates.length === 1 ? candidates[0].id : '';
+      const storedCanonical = String(row.canonicalStudentId || '').trim();
+      const storedGroup = String(row.groupKey || '').trim();
+      const hasStaleIdentity = Boolean(
+        (storedCanonical && storedCanonical !== candidateId) ||
+        (storedGroup && storedGroup !== candidateId) ||
+        cluster || String(row.identityStatus || '').trim() === 'provisional'
+      );
+      if (!looksLikeEmail(visibleName) && candidateId && sourceId === candidateId && !hasStaleIdentity) continue;
       // When there is no official candidate, different legacy IDs belonging
       // to the exact same normalized name are one pending case. This makes
       // aliases such as nameKey + old email link in a single action.

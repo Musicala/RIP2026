@@ -198,6 +198,7 @@
     const pago = String(pagoRaw || '').trim();
     const clasif = String(clasifRaw || '').trim();
     const clasifPago = String(clasifPagoRaw || '').trim();
+    const isMananasConArte = norm(servicio).includes('mananas con arte');
     const hasMeaningfulExistingClasif = clasif && ![
       'no clasificado', 'sin clasificacion', 'sin clasificación', 'n/a', '-'
     ].includes(norm(clasif));
@@ -221,6 +222,7 @@
       if (test(s, /hogar.*personalizado|personalizado.*hogar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MH P' };
       if (test(s, /sede.*personalizado|personalizado.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS P' };
       if (test(s, /sede.*grupal|grupal.*sede/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS G' };
+      if (isMananasConArte) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MS G' };
       return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Pago' };
     }
     if (test(s, /Musifamiliar/i)) return { clasifAuto: 'MF', clasifPagoAuto: '' };
@@ -233,6 +235,7 @@
     if (test(s, /\bcf\b/i)) return { clasifAuto: 'CF', clasifPagoAuto: '' };
     if (test(s, /\bmv\b/i)) return { clasifAuto: 'MV P', clasifPagoAuto: '' };
     if (test(s, /\bmh\b/i)) return { clasifAuto: 'MH P', clasifPagoAuto: '' };
+    if (isMananasConArte) return { clasifAuto: 'MS G', clasifPagoAuto: '' };
     if (test(s, /musi/i) && !test(s, /personalizada/i)) return { clasifAuto: 'MS G', clasifPagoAuto: '' };
     if (test(s, /\bms\b/i)) return { clasifAuto: 'MS P', clasifPagoAuto: '' };
     return { clasifAuto: 'No clasificado', clasifPagoAuto: '' };
@@ -388,20 +391,29 @@
     const aliasMap = new Map();
     const canonicalAliases = new Map(); // old canonical ID -> chosen canonical ID
     for (const s of students || []) {
+      const mergedTarget = String(s.legacyAliasOf || s.mergedInto || s.mergedIntoStudentId || '').trim();
       const canonical = String(s.officialStudentId || s.canonicalStudentId ||
         (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (mergedTarget) {
+        for (const sourceId of [s.id, s.studentId, s.officialStudentId, s.canonicalStudentId]) {
+          const alias = String(sourceId || '').trim();
+          if (alias && alias !== mergedTarget) canonicalAliases.set(alias, mergedTarget);
+        }
+      }
       if (!canonical) continue;
       for (const linkedId of Array.isArray(s.linkedStudentIds) ? s.linkedStudentIds : []) {
         const alias = String(linkedId || '').trim();
         if (alias && alias !== canonical) canonicalAliases.set(alias, canonical);
       }
     }
+    for (const [sourceId, targetId] of canonicalAliases.entries()) aliasMap.set(sourceId, targetId);
     for (const s of students || []) {
       const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const mergedTarget = String(s.legacyAliasOf || s.mergedInto || s.mergedIntoStudentId || '').trim();
       const canonical = String(s.officialStudentId || s.canonicalStudentId ||
         (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
       // Los documentos marcados como alias no compiten con la ficha principal.
-      if (nameKey && canonical && !s.legacyAliasOf && !canonicalAliases.has(canonical) && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
+      if (nameKey && canonical && !mergedTarget && !canonicalAliases.has(canonical) && !aliasMap.has(nameKey)) aliasMap.set(nameKey, canonical);
       // Una conciliación explícita conserva los IDs anteriores aquí. Mapearlos
       // al principal permite abrir la ficha desde cualquier enlace histórico.
       if (canonical) {
@@ -410,6 +422,34 @@
           if (alias && alias !== canonical) aliasMap.set(alias, canonical);
         }
       }
+    }
+    // Algunos movimientos históricos conservan un studentId legado aun
+    // cuando el Directorio ya tiene un único perfil canónico para el mismo
+    // nombre exacto. Resolver ese ID legado evita que la persona desaparezca
+    // de la búsqueda como “varias identidades”. Nunca se aplica si hay dos
+    // perfiles canónicos locales con el mismo nombre: ese es un homónimo y
+    // necesita conciliación manual.
+    const canonicalByExactName = new Map();
+    const knownCanonicalIds = new Set();
+    for (const s of students || []) {
+      const nameKey = String(s.nameKey || s.estudianteKey || '').trim() || norm(s.name || s.estudiante);
+      const mergedTarget = String(s.legacyAliasOf || s.mergedInto || s.mergedIntoStudentId || '').trim();
+      const canonical = String(s.officialStudentId || s.canonicalStudentId ||
+        (String(s.studentId || '').trim() === String(s.id || '').trim() ? s.studentId : '') || '').trim();
+      if (!nameKey || !canonical || mergedTarget || canonicalAliases.has(canonical)) continue;
+      knownCanonicalIds.add(canonical);
+      if (!canonicalByExactName.has(nameKey)) canonicalByExactName.set(nameKey, new Set());
+      canonicalByExactName.get(nameKey).add(canonical);
+    }
+    for (const row of registro || []) {
+      const nameKey = String(row?.estudianteKey || '').trim() || norm(row?.estudiante || row?.name);
+      const candidates = canonicalByExactName.get(nameKey);
+      if (!nameKey || !candidates || candidates.size !== 1) continue;
+      const target = [...candidates][0];
+      const explicit = String(row?.studentId || row?.canonicalStudentId || '').trim();
+      // Un ID que ya corresponde a otro perfil canónico se conserva: podría
+      // ser un homónimo real. Solo se absorben IDs legados no registrados.
+      if (explicit && explicit !== target && !knownCanonicalIds.has(explicit)) aliasMap.set(explicit, target);
     }
     // Correcciones confirmadas de llaves heredadas. Se aplican después del
     // directorio para que una llave antigua no vuelva a crear otra ficha.
@@ -1110,10 +1150,17 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     const calc = window.RIPCalculations;
+    const reviewNameKey = String(studentKey || '').startsWith('review:name:')
+      ? String(studentKey).slice('review:name:'.length)
+      : '';
     // Las filas de Firebase ya llegan con groupKey resuelto por el mismo
     // aliasMap del tablero. Usar ahí también el nombre heredado mezclaría
     // homónimos o mostraría un saldo distinto al de la tarjeta.
     const studentRows = (registro || []).filter((r) => {
+      // Vista de corrección: conserva todas las filas con el mismo nombre
+      // exacto aunque tengan IDs distintos. Nunca reconcilia ni fusiona por
+      // sí sola; solo permite ver y editar los registros que estaban bloqueados.
+      if (reviewNameKey) return norm(r?.estudianteKey || r?.estudiante || r?.name) === reviewNameKey;
       const resolved = String(r?.groupKey || '').trim();
       if (resolved) return resolved === studentKey;
       return calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey;

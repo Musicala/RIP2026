@@ -1,5 +1,6 @@
 .env
 **/.env
+functions/.secret.local
 node_modules/
 **/node_modules/
 firebase-debug.log

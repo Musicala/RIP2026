@@ -1972,13 +1972,49 @@
     ) {
       return combinedSearchCache.items;
     }
-    const items = dedupeByNormalizedName([...searchRef, ...currentRef]);
+    // Prioritize the live 2026 student entry over a historical search-index
+    // entry with the same name. The live entry carries the canonical merged
+    // identity and therefore opens the consolidated balance/ficha.
+    const items = dedupeByNormalizedName([...currentRef, ...searchRef]);
     combinedSearchCache = { searchRef, currentRef, items };
     return items;
   }
 
-  function openStudentFichaByName(name) {
+  async function openStudentFichaByName(name) {
     const key = norm(name);
+    // Registro es la fuente prioritaria de la ficha actual. Esto evita que
+    // un índice histórico o una coincidencia parcial gane sobre un nombre
+    // exacto que ya está visible en la tabla de Registro.
+    if (key) {
+      const calc = window.RIPCalculations;
+      const matchingRows = (state.registro || []).filter(row => norm(row?.estudiante || row?.name) === key);
+      const groupKeys = Array.from(new Set(matchingRows
+        .map(row => String(row?.groupKey || calc?.getStudentGroupingKey?.(row) || '').trim())
+        .filter(Boolean)));
+      if (groupKeys.length === 1) {
+        const row = matchingRows[0];
+        const registroEntry = {
+          name: String(row?.estudiante || name).trim(),
+          key: groupKeys[0],
+          currentKey: groupKeys[0],
+          years: ['2026']
+        };
+        setText(ctx.el.quickSearchStatus, 'Ficha encontrada en Registro.');
+        RIPUI.ficha?.openStudentFromSearch?.(ctx, state, registroEntry);
+        return;
+      }
+      if (groupKeys.length > 1) {
+        const reviewEntry = {
+          name: String(matchingRows[0]?.estudiante || name).trim(),
+          key: `review:name:${key}`,
+          currentKey: `review:name:${key}`,
+          years: ['2026']
+        };
+        setText(ctx.el.quickSearchStatus, 'Vista de revisión: varias identidades. Puedes revisar y editar sus clases; concilia solo cuando confirmes el destino.');
+        RIPUI.ficha?.openStudentFromSearch?.(ctx, state, reviewEntry);
+        return;
+      }
+    }
     const pool = getCombinedSearchStudents();
     let entry = pool.find(s => norm(s.name) === key);
     if (!entry && key) {
@@ -1998,6 +2034,41 @@
     if (entry && RIPUI.ficha?.openStudentFromSearch) {
       RIPUI.ficha.openStudentFromSearch(ctx, state, entry);
       return;
+    }
+    // Cuando no hay pagos/clases todavía, el estudiante puede existir solo
+    // en el Directorio principal. Se incorpora únicamente si el nombre
+    // completo resuelve una coincidencia exacta y única.
+    if (key && window.RIPRepository?.loadReconciliationDirectory && window.RIPRepository?.importDirectoryStudent) {
+      setText(ctx.el.quickSearchStatus, 'Buscando en Directorio de estudiantes…');
+      try {
+        const directory = await window.RIPRepository.loadReconciliationDirectory();
+        const matches = (directory.remote || [])
+          .filter(student => norm(student?.name || student?.estudiante) === key);
+        const unique = Array.from(new Map(matches.map(student => [
+          String(student.officialStudentId || student.studentId || student.id || '').trim(), student
+        ])).values()).filter(student => String(student.officialStudentId || student.studentId || student.id || '').trim());
+        if (unique.length === 1) {
+          const imported = await window.RIPRepository.importDirectoryStudent(unique[0]);
+          await boot({ force: true });
+          entry = getCombinedSearchStudents().find(student => String(student.key || '').trim() === imported.id) || {
+            name: imported.name,
+            key: imported.id,
+            currentKey: imported.id,
+            years: ['2026']
+          };
+          setText(ctx.el.quickSearchStatus, 'Ficha añadida desde Directorio.');
+          RIPUI.ficha?.openStudentFromSearch?.(ctx, state, entry);
+          return;
+        }
+        if (unique.length > 1) {
+          setText(ctx.el.quickSearchStatus, 'Hay varias personas con ese nombre en Directorio. Revísalas en Conciliación.');
+          return;
+        }
+      } catch (err) {
+        console.warn('No se pudo buscar en Directorio:', err);
+        setText(ctx.el.quickSearchStatus, 'No pude consultar el Directorio externo.');
+        return;
+      }
     }
     if (key) openStudentFicha(key);
   }
@@ -2927,31 +2998,14 @@
     // Ver base
     ctx.el.btnVerBase?.addEventListener('click', () => openBaseView());
 
-    // Refresh general — nuclear: borra absolutamente todo sin caché
+    // Refresh general: una pestaña puede conservar scripts de una publicación
+    // anterior. Recargar el documento con un query único fuerza a obtener el
+    // HTML y los módulos actuales, además de los datos nuevos de Firebase.
     ctx.el.btnRefresh?.addEventListener('click', async () => {
-      // 1) Caches en memoria del índice global
-      clearAppCaches();
-      __studentIndexYearCache.clear();
-      __globalStudentIndexCache = null;
-      __globalIndexPromise = null;
-
-      // 2) Cache de programación en sessionStorage
-      try {
-        const keysToDelete = [];
-        for (let i = 0; i < sessionStorage.length; i++) {
-          const k = sessionStorage.key(i);
-          if (k && k.startsWith('rip_prog_schedule_')) keysToDelete.push(k);
-        }
-        keysToDelete.forEach(k => sessionStorage.removeItem(k));
-      } catch (_) {}
-
-      // 3) Cache de históricos en ui.ficha.js
-      if (window.RIPUI?.ficha?.clearCaches) {
-        try { window.RIPUI.ficha.clearCaches(); } catch (_) {}
-      }
-
-      toast(ctx.el.toastWrap, '🔄 Actualizando todo sin caché…', 'info');
-      await boot({ force: true });
+      toast(ctx.el.toastWrap, '🔄 Cargando la versión más reciente…', 'info');
+      const freshUrl = new URL(window.location.href);
+      freshUrl.searchParams.set('refresh', String(Date.now()));
+      window.setTimeout(() => { window.location.replace(freshUrl.toString()); }, 120);
     });
 
     // Registrar pago

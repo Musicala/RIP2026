@@ -26,8 +26,8 @@
   /* =========================================================================
     LLAVE ÚNICA DE AGRUPACIÓN POR ESTUDIANTE (contrato studentId).
 
-    Orden: groupKey pre-anotado por buildFirebasePack → studentId canónico →
-    canonicalStudentId → alias resuelto (aliasMap nameKey→canónico) →
+    Orden: canonicalStudentId → groupKey pre-anotado → studentId canónico →
+    alias resuelto (aliasMap nameKey→canónico) →
     estudianteKey → nombre normalizado (último recurso histórico).
 
     Toda escritura nueva debe traer studentId; estudianteKey queda solo como
@@ -42,13 +42,14 @@
     // y, si se priorizan, dividen una ficha ya conciliada en varias.
     const canonical = String(record.canonicalStudentId || '').trim();
     if (canonical) return canonical;
+    const studentId = String(record.studentId || '').trim();
     const annotated = String(record.groupKey || '').trim();
     if (annotated) return annotated;
     // Una conciliación provisional une varias identidades sin declarar cuál
     // ID es el oficial todavía. Tiene prioridad sobre cualquier ID heredado.
     const cluster = String(record.identityClusterKey || '').trim();
     if (cluster) return cluster;
-    const explicit = String(record.studentId || '').trim();
+    const explicit = studentId;
     /*
       Durante la transición hay programaciones antiguas cuyo campo
       `studentId` contiene realmente el nameKey (p. ej. "ana perez"), no el
@@ -322,6 +323,10 @@
     const servicio = String(row?.servicio || '');
     const existing = Number(row?.movimiento ?? row?.movimientoSaldo);
     const isManualMovement = row?.movimientoManual === true;
+    // Una corrección manual confirmada es la fuente de verdad, incluso si el
+    // documento conserva una clasificación histórica de prueba o cortesía.
+    // Evaluarla después de CP/CC convertía paquetes corregidos (P9/P17) en +1.
+    if (isManualMovement && Number.isFinite(existing)) return existing;
     if (isTrialCP(row) && tipo === 'pago') return 1;
     if (isCourtesyCC(row) && tipo === 'pago') return 1;
     if (isTrialCP(row) && tipo === 'clase') return -1;
@@ -331,7 +336,6 @@
     // paquete. Los históricos importados traían con frecuencia +1 aunque el
     // servicio decía P9 o "Paquete de 17 clases"; esos valores no deben
     // dejar el saldo incompleto.
-    if (isManualMovement && Number.isFinite(existing)) return existing;
     if (isCourtesy(row)) return 0;
     if (tipo === 'clase') return -1;
     if (tipo === 'pago') {
@@ -355,6 +359,7 @@
     const s = norm(servicio);
     const existingClasif = String(row?.clasif || '').trim();
     const existingClasifPago = String(row?.clasifPago || '').trim();
+    const isMananasConArte = s.includes('mananas con arte');
     // "No clasificado" es el resultado automático de una versión anterior,
     // no una decisión manual/importada. Debe poder recalcularse cuando ahora
     // se reconoce el servicio (por ejemplo, "MS: Piano" → "MS P").
@@ -381,6 +386,7 @@
       if (s.includes('hogar') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MH P' };
       if (s.includes('sede') && s.includes('personalizado')) return { clasif: 'Pago', clasifPago: 'MS P' };
       if (s.includes('sede') && s.includes('grupal')) return { clasif: 'Pago', clasifPago: 'MS G' };
+      if (isMananasConArte) return { clasif: 'Pago', clasifPago: 'MS G' };
       return { clasif: 'Pago', clasifPago: 'Pago' };
     }
     if (s.includes('musifamiliar')) return { clasif: 'MF', clasifPago: '' };
@@ -393,9 +399,30 @@
     if (/\bcf\b/i.test(servicio)) return { clasif: 'CF', clasifPago: '' };
     if (/\bmv\b/i.test(servicio)) return { clasif: 'MV P', clasifPago: '' };
     if (/\bmh\b/i.test(servicio)) return { clasif: 'MH P', clasifPago: '' };
+    if (isMananasConArte) return { clasif: 'MS G', clasifPago: '' };
     if (s.includes('musi') && !s.includes('personalizada')) return { clasif: 'MS G', clasifPago: '' };
     if (/\bms\b/i.test(servicio)) return { clasif: 'MS P', clasifPago: '' };
     return { clasif: 'No clasificado', clasifPago: '' };
+  }
+
+  function getPackageRedemptionKey(row) {
+    const normalizeKey = (value) => {
+      const key = norm(value || 'sin-clasificacion');
+      if (key === 'pago' || key === 'cp de clase de prueba' || key === 'cc de clase de cortesia') return '*';
+      if (key === 'tv') return 'taller';
+      if (key === 'ms g' || key === 'ms sp') return 'vacacional-flex';
+      return key;
+    };
+    const isPayment = norm(row?.tipo) === 'pago';
+    // La familia inferida desde el servicio actual tiene prioridad. Así una
+    // clasificación histórica desactualizada no separa el pago de sus clases.
+    const inferred = classifyMovimiento({ ...row, clasif: '', clasifPago: '' });
+    const inferredValue = isPayment ? (inferred.clasifPago || inferred.clasif) : inferred.clasif;
+    const inferredKey = normalizeKey(inferredValue);
+    if (inferredKey !== 'no clasificado' && inferredKey !== 'sin-clasificacion') return inferredKey;
+
+    const storedValue = isPayment ? (row?.clasifPago || row?.clasif) : row?.clasif;
+    return normalizeKey(storedValue);
   }
 
   function buildClassUniqueId(row) {
@@ -790,7 +817,7 @@
   }
 
   window.RIPCalculations = {
-    norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento,
+    norm, safeNum, parseDate, toISODate, computeMovimiento, classifyMovimiento, getPackageRedemptionKey,
     getStudentGroupingKey, matchesStudentKey,
     isTrial, isTrialCP, isCourtesyCC, isCourtesy, isTrialOrCourtesy,
     buildClassUniqueId, buildDuplicateClassKey, buildDuplicateClassKeyFromData, buildRecordHash, markFirstOccurrence, countClassParticipants,

@@ -58,7 +58,8 @@ service cloud.firestore {
       allow read, write: if isAllowed()
         && collection in [
           'registro', 'students', 'programacion', 'studentComputed',
-          'clientesB2C', 'primeraVez', 'maintenanceRepairs', 'wixStudentEmails', 'users'
+          'clientesB2C', 'primeraVez', 'maintenanceRepairs', 'wixStudentEmails', 'users',
+          'wixPlanMappings', 'wixServiceMappings', 'wixClassChecks'
         ];
     }
 

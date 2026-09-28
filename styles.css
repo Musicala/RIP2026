@@ -614,6 +614,18 @@ input, select, button, textarea { font: inherit; }
 .tbl thead th:first-child { border-radius: var(--r-md) 0 0 0; }
 .tbl thead th:last-child  { border-radius: 0 var(--r-md) 0 0; }
 
+/* En modo edición, las acciones permanecen visibles aunque la tabla sea ancha. */
+#tablaContainer .th-ficha-actions,
+#tablaContainer .td-ficha-actions {
+  position: sticky;
+  right: 0;
+  min-width: 238px;
+  white-space: nowrap;
+  box-shadow: -8px 0 12px rgba(15, 36, 68, .08);
+}
+#tablaContainer .th-ficha-actions { z-index: 4; background: var(--navy); }
+#tablaContainer .td-ficha-actions { z-index: 1; background: var(--panel); }
+
 .tbl tbody td { padding: 10px 13px; border-top: 1px solid var(--line); font-size: 13px; white-space: nowrap; color: var(--ink2); }
 .tbl tbody tr:hover td { background: rgba(26,59,110,.035); }
 .tbl tbody tr:nth-child(even) td { background: rgba(17,24,39,.015); }

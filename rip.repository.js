@@ -278,6 +278,12 @@
     base.servicioKey = calc.norm(base.servicio);
     base.profesorKey = calc.norm(base.profesor);
     base.movimiento = calc.computeMovimiento(base);
+    // `movimientoSaldo` existía en algunos documentos importados. Si queda
+    // desactualizado, la ficha lo prioriza sobre `movimiento` y aparenta que
+    // la edición no se guardó. Mantenerlos sincronizados en la persistencia;
+    // las excepciones temporales (duplicadas, matrículas, etc.) se recalculan
+    // al cargar y no deben sobrevivir como un valor viejo en Firestore.
+    base.movimientoSaldo = base.movimiento;
     base.clasif = classif.clasif;
     base.clasifPago = classif.clasifPago;
     base.classUniqueId = calc.buildClassUniqueId(base);
@@ -293,14 +299,24 @@
     const changes = data || {};
     const merged = { ...(before || {}), ...changes };
     const serviceWasSubmitted = Object.prototype.hasOwnProperty.call(changes, 'servicio');
+    const movementWasSubmitted = Object.prototype.hasOwnProperty.call(changes, 'movimiento');
+    const previousMovement = Number(before?.movimientoSaldo ?? before?.movimiento) || 0;
+    const movementWasManuallyChanged = movementWasSubmitted &&
+      (Number(changes.movimiento) || 0) !== previousMovement;
     const isPackagePayment = calc.norm(merged.tipo) === 'pago' &&
       /(?:\bP\s*|Paquete\s*(?:de\s*)?)\d+/i.test(String(merged.servicio || ''));
+
+    // Distinguir una corrección deliberada de los valores heredados de las
+    // importaciones. De ese modo computeMovimiento puede reparar un +1 viejo
+    // en un paquete sin borrar el ajuste que alguien sí digitó manualmente.
+    if (movementWasManuallyChanged) merged.movimientoManual = true;
 
     // Al renombrar un paquete, el número escrito en el servicio vuelve a ser
     // la fuente del movimiento. Esto evita conservar, por ejemplo, 8 al
     // cambiar "Paquete de 8" por "Paquete de 12".
-    if (serviceWasSubmitted && isPackagePayment) {
+    if (serviceWasSubmitted && !movementWasManuallyChanged && isPackagePayment) {
       merged.movimiento = 0;
+      merged.movimientoManual = false;
       delete merged.movimientoSaldo;
     }
 
@@ -350,6 +366,44 @@
   }
 
   async function loadStudents() { return loadCollection('students'); }
+
+  async function importDirectoryStudent(directoryStudent) {
+    const candidate = directoryStudent || {};
+    const canonical = String(candidate.officialStudentId || candidate.canonicalStudentId || candidate.studentId || candidate.id || '').trim();
+    const name = String(candidate.name || candidate.estudiante || '').trim();
+    if (!canonical || !name) throw new Error('El estudiante del directorio no tiene ID o nombre válido.');
+
+    const env = await fb();
+    const { doc, setDoc } = env.fs;
+    const nameKey = C().norm(name);
+    const email = normalizeWixEmail(candidate.correoWix || candidate.wixEmail || candidate.email || candidate.correo || '');
+    const emails = Array.from(new Set([
+      ...(Array.isArray(candidate.emails) ? candidate.emails : []),
+      email
+    ].map(normalizeWixEmail).filter(Boolean)));
+    const row = {
+      studentId: canonical,
+      officialStudentId: canonical,
+      canonicalStudentId: canonical,
+      name,
+      estudiante: name,
+      nameKey,
+      estudianteKey: nameKey,
+      wixEmail: email,
+      correoWix: email,
+      emails,
+      identitySource: 'estudiantes-musicala',
+      schemaVersion: 2,
+      updatedAt: stamp(env.fs),
+      updatedBy: userEmail(env),
+      createdBy: userEmail(env)
+    };
+    await setDoc(doc(env.db, 'students', canonical), row, { merge: true });
+    clearCache('students');
+    await logAudit('students', canonical, 'import-directory-student', null, row);
+    notifyFirestoreChange({ entity: 'students', action: 'import-directory', id: canonical, studentId: canonical });
+    return { id: canonical, ...row };
+  }
   // Catálogo administrable: cada documento guarda ripName, aliases,
   // wixServiceId, wixServiceName y active. El navegador nunca consulta Wix
   // directamente; solo lee estas equivalencias internas.
@@ -1021,7 +1075,7 @@
 
   async function updateRegistroRow(recordId, data) {
     const env = await fb();
-    const { doc, getDoc, setDoc } = env.fs;
+    const { doc, getDoc, getDocFromServer, setDoc } = env.fs;
     const ref = doc(env.db, 'registro', recordId);
     const beforeSnap = await getDoc(ref);
     const before = beforeSnap.exists() ? beforeSnap.data() : {};
@@ -1032,11 +1086,66 @@
     row.updatedBy = userEmail(env);
     await upsertStudent(env, row);
     await setDoc(ref, row, { merge: true });
+    // Confirmación desde servidor: el editor por lote no se cierra hasta que
+    // Firebase devuelve los campos que se acaban de modificar.
+    const confirmedSnap = typeof getDocFromServer === 'function'
+      ? await getDocFromServer(ref)
+      : await getDoc(ref);
+    const confirmed = confirmedSnap.exists() ? confirmedSnap.data() : null;
+    if (!confirmed) throw new Error('Firebase no confirmó la actualización del registro.');
+    for (const [field, value] of Object.entries(data || {})) {
+      if (String(confirmed[field] ?? '') !== String(row[field] ?? value ?? '')) {
+        throw new Error(`Firebase no confirmó el campo ${field}.`);
+      }
+    }
     clearCache('registro');
-    await recalculateStudent(row.estudianteKey);
     await logAudit('registro', recordId, 'update', before, row);
     notifyFirestoreChange({ entity: 'registro', action: 'update', id: recordId, studentId: row.studentId || row.estudianteKey });
+    // El resumen agregado se actualiza sin bloquear la edición de más filas.
+    Promise.resolve(recalculateStudent(row.studentId || row.estudianteKey))
+      .catch(err => console.warn('No se pudo recalcular el saldo después de editar:', err));
     return { id: recordId, ...row };
+  }
+
+  async function updateRegistroMovimiento(recordId, rawMovement) {
+    const id = String(recordId || '').trim();
+    const movimiento = Number(rawMovement);
+    if (!id) throw new Error('El registro no tiene ID para guardar el movimiento.');
+    if (!Number.isFinite(movimiento)) throw new Error('El movimiento manual no es válido.');
+
+    const env = await fb();
+    const { doc, getDoc, getDocFromServer, setDoc } = env.fs;
+    const ref = doc(env.db, 'registro', id);
+    const beforeSnap = await getDoc(ref);
+    if (!beforeSnap.exists()) throw new Error('El registro ya no existe en la base.');
+    const before = beforeSnap.data() || {};
+    const changes = {
+      movimiento,
+      movimientoSaldo: movimiento,
+      movimientoManual: true,
+      movimientoManualAt: stamp(env.fs),
+      updatedAt: stamp(env.fs),
+      updatedBy: userEmail(env)
+    };
+    // Escritura mínima y autoritativa: el valor manual queda en ambos campos
+    // antes de cualquier recálculo derivado.
+    await setDoc(ref, changes, { merge: true });
+    const confirmedSnap = typeof getDocFromServer === 'function'
+      ? await getDocFromServer(ref)
+      : await getDoc(ref);
+    const confirmed = confirmedSnap.exists() ? confirmedSnap.data() : null;
+    const confirmedMovement = Number(confirmed?.movimiento);
+    const confirmedBalanceMovement = Number(confirmed?.movimientoSaldo);
+    if (!confirmed || confirmedMovement !== movimiento || confirmedBalanceMovement !== movimiento) {
+      throw new Error(`Firebase no confirmó el movimiento ${movimiento}. Recibido: ${confirmedMovement}/${confirmedBalanceMovement}.`);
+    }
+    clearCache('registro');
+    await logAudit('registro', id, 'update-manual-movement', before, { ...before, ...changes });
+    notifyFirestoreChange({ entity: 'registro', action: 'update', id, studentId: before.studentId || before.estudianteKey || '' });
+    // El saldo agregado se actualiza después, sin mantener bloqueado el modal.
+    Promise.resolve(recalculateStudent(before.studentId || before.estudianteKey || ''))
+      .catch(err => console.warn('No se pudo recalcular el saldo después del movimiento manual:', err));
+    return { ok: true, id, movimiento: confirmedMovement, movimientoSaldo: confirmedBalanceMovement };
   }
 
   async function deleteRegistroRow(recordId) {
@@ -1175,6 +1284,34 @@
   /* Vincula filas históricas a una identidad canónica elegida explícitamente
      en Conciliación. Solo modifica los IDs de los documentos seleccionados;
      jamás borra filas ni infiere homónimos. */
+  function needsRegistroIdentityReconciliation(before, {
+    canonical = '', provisionalCluster = '', targetKey = '', displayName = '', linkedIds = []
+  } = {}) {
+    const currentLinks = new Set((Array.isArray(before?.linkedStudentIds) ? before.linkedStudentIds : [])
+      .map(value => String(value || '').trim()).filter(Boolean));
+    const missingLink = linkedIds.some(value => !currentLinks.has(String(value || '').trim()));
+    const currentGroup = String(before?.groupKey || '').trim();
+    const currentCanonical = String(before?.canonicalStudentId || '').trim();
+    const currentCluster = String(before?.identityClusterKey || '').trim();
+    const currentStatus = String(before?.identityStatus || '').trim();
+    const currentNameKey = C().norm(before?.estudianteKey || before?.estudiante || before?.name);
+    const currentName = String(before?.estudiante || before?.name || '').trim();
+    const nameChanged = Boolean(displayName) && (currentName !== displayName || currentNameKey !== targetKey);
+
+    if (canonical) {
+      return String(before?.studentId || '').trim() !== canonical ||
+        currentCanonical !== canonical ||
+        (currentGroup && currentGroup !== canonical) ||
+        Boolean(currentCluster) || currentStatus === 'provisional' ||
+        missingLink || nameChanged;
+    }
+    return currentCanonical !== '' ||
+      currentGroup !== provisionalCluster ||
+      currentCluster !== provisionalCluster ||
+      currentStatus !== 'provisional' ||
+      missingLink || nameChanged;
+  }
+
   async function reconcileRegistroStudentIds({ recordIds, targetStudentId = '', targetName = '', expectedNameKey = '', expectedNameKeys = [] } = {}) {
     const env = await fb();
     const ids = Array.from(new Set(Array.isArray(recordIds) ? recordIds.map(String).filter(Boolean) : []));
@@ -1187,10 +1324,10 @@
     const expectedKeys = new Set([expected, ...(Array.isArray(expectedNameKeys) ? expectedNameKeys.map(C().norm) : [])].filter(Boolean));
     if (!ids.length) throw new Error('No hay registros seleccionados para conciliar.');
     if (!canonical && !targetKey) throw new Error('Selecciona un estudiante o nombre maestro valido.');
-    const { doc, getDoc, setDoc } = env.fs;
+    const { doc, getDoc, setDoc, deleteField } = env.fs;
     const changed = [];
     const linkedIds = new Set([canonical].filter(Boolean));
-    const rowsToUpdate = [];
+    const selectedRows = [];
     for (const id of ids) {
       const ref = doc(env.db, 'registro', id);
       const snap = await getDoc(ref);
@@ -1200,9 +1337,16 @@
       if (expectedKeys.size && !expectedKeys.has(nameKey)) throw new Error(`El registro ${id} no pertenece al nombre conciliado.`);
       [before.studentId, before.canonicalStudentId, ...(Array.isArray(before.linkedStudentIds) ? before.linkedStudentIds : [])]
         .map(value => String(value || '').trim()).filter(Boolean).forEach(value => linkedIds.add(value));
-      if (canonical && String(before.studentId || before.canonicalStudentId || '').trim() === canonical) continue;
-      rowsToUpdate.push({ id, ref, before });
+      selectedRows.push({ id, ref, before });
     }
+    // Revisa después de reunir todos los aliases. Antes se omitía una fila
+    // apenas su studentId coincidía, aunque conservara canonicalStudentId,
+    // groupKey o identityClusterKey antiguos; esa fila reaparecía como una
+    // segunda identidad después de cada conciliación.
+    const completeLinkedIds = Array.from(linkedIds);
+    const rowsToUpdate = selectedRows.filter(({ before }) => needsRegistroIdentityReconciliation(before, {
+      canonical, provisionalCluster, targetKey, displayName, linkedIds: completeLinkedIds
+    }));
     // Gather every legacy identifier before writing any row, so all linked
     // rows receive the same complete alias list (not one ID each).
     for (const { id, ref, before } of rowsToUpdate) {
@@ -1212,26 +1356,35 @@
         // Sin canónico se conservan los IDs originales; solo se añade una
         // llave de cluster provisional para mostrarlos en una sola ficha.
         studentId: canonical || String(before.studentId || '').trim(),
-        canonicalStudentId: canonical || String(before.canonicalStudentId || '').trim(),
-        ...(provisionalCluster ? { identityClusterKey: provisionalCluster } : {}),
+        canonicalStudentId: canonical || deleteField(),
+        groupKey: canonical || provisionalCluster,
+        identityClusterKey: provisionalCluster || deleteField(),
+        identityStatus: provisionalCluster ? 'provisional' : deleteField(),
         // El canónico manda; los IDs anteriores se conservan para auditoría,
         // futuras búsquedas y para no perder ningún enlace histórico.
-        linkedStudentIds: Array.from(linkedIds),
+        linkedStudentIds: completeLinkedIds,
         updatedAt: stamp(env.fs),
         updatedBy: userEmail(env),
         reconciledAt: stamp(env.fs),
         reconciledBy: userEmail(env)
       };
       await setDoc(ref, after, { merge: true });
-      await logAudit('registro', id, canonical ? 'reconcile-student-id' : 'reconcile-student-name', before, { ...before, ...after });
+      const auditAfter = { ...before, ...after };
+      if (canonical) {
+        delete auditAfter.identityClusterKey;
+        delete auditAfter.identityStatus;
+      } else {
+        delete auditAfter.canonicalStudentId;
+      }
+      await logAudit('registro', id, canonical ? 'reconcile-student-id' : 'reconcile-student-name', before, auditAfter);
       changed.push(id);
     }
-    if (changed.length || canonical) {
+    if (selectedRows.length) {
       await setDoc(doc(env.db, 'students', canonical || targetKey), {
         ...(canonical ? { studentId: canonical, officialStudentId: canonical } : {}),
         ...(displayName ? { name: displayName, nameKey: targetKey } : {}),
         ...(provisionalCluster ? { identityClusterKey: provisionalCluster, identityStatus: 'provisional' } : {}),
-        linkedStudentIds: Array.from(linkedIds),
+        linkedStudentIds: completeLinkedIds,
         updatedAt: stamp(env.fs),
         updatedBy: userEmail(env)
       }, { merge: true });
@@ -1870,15 +2023,16 @@
   }
 
   window.RIPRepository = {
-    loadRegistro, loadStudents, loadWixServiceMappings, loadWixPlanMappings, loadReconciliationDirectory, loadProgramacion, loadComputed,
+    loadRegistro, loadStudents, importDirectoryStudent, loadWixServiceMappings, loadWixPlanMappings, loadReconciliationDirectory, loadProgramacion, loadComputed,
       loadClientesB2C, loadPrimeraVez, loadAuditLog,
-    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, deleteRegistroRow, reconcileRegistroStudentIds, updateStudentWixEmail, unlinkStudentRelatedId,
+    addRegistroRow, addRegistroRowsBulk, updateRegistroRow, updateRegistroMovimiento, deleteRegistroRow, reconcileRegistroStudentIds, updateStudentWixEmail, unlinkStudentRelatedId,
     addPrimeraVez, updatePrimeraVez, deletePrimeraVez,
     loadPaymentMeta, findDuplicatePayments, savePaymentTransaction, watchPaymentWixActivation, addClienteB2C, updateClienteB2C,
     mergeStudents, previewMergeStudents,
     repairConfirmedJulietaDuplicates,
     loadStudentSchedule, saveSchedule, saveScheduleFrom, saveScheduleDate, appendScheduleDates,
     recalculateStudent, recalculateAllStudents, logAudit,
-    normalizeRegistro, normalizeRegistroUpdate, getDefaultServices, mergeServiceMeta, clearCache
+    normalizeRegistro, normalizeRegistroUpdate, getDefaultServices, mergeServiceMeta, clearCache,
+    needsRegistroIdentityReconciliation
   };
 })();

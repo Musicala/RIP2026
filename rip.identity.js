@@ -71,7 +71,7 @@
       if (!raw) continue;
       const docId = toText(raw.id);
       const official = toText(raw.officialStudentId);
-      const mergedInto = toText(raw.legacyAliasOf || raw.mergedIntoStudentId);
+      const mergedInto = toText(raw.legacyAliasOf || raw.mergedInto || raw.mergedIntoStudentId);
       // Un doc es "canónico" si viene del sync de identidad (studentId == id)
       // o si es un doc legado que ya conoce su officialStudentId.
       const canonicalId = mergedInto || (
@@ -120,6 +120,9 @@
 
       addTo(byNameKey, nameKey, canonicalId);
       addTo(byNameKey, docId === canonicalId ? existing.nameKey : docId, canonicalId);
+      // La fusión conserva el documento canónico anterior como traza. Su
+      // ID debe resolver al destino, no reaparecer como una ficha separada.
+      if (mergedInto && docId && docId !== canonicalId) addTo(byAlias, docId, canonicalId);
       for (const email of existing.emails) addTo(byEmail, email, canonicalId);
       for (const alias of existing.aliases) addTo(byAlias, alias, canonicalId);
     }
@@ -186,6 +189,10 @@
     // 1. studentId explícito ya guardado: es identidad, se respeta tal cual
     // aunque el índice local todavía no lo conozca.
     const explicit = toText(hints.studentId);
+    const mergedExplicit = explicit ? uniqueMatch(index.byAlias.get(explicit)) : { id: '', candidates: [] };
+    if (mergedExplicit.id) {
+      return { ...result, studentId: mergedExplicit.id, source: 'mergedStudentId' };
+    }
     if (explicit && (index.byCanonicalId.has(explicit) || looksLikeCanonicalId(explicit))) {
       return { ...result, studentId: explicit, source: 'explicit' };
     }

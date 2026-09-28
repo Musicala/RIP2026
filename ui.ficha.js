@@ -289,6 +289,9 @@
       return key;
     };
     const getPackageKey = (r) => {
+      if (window.RIPCalculations?.getPackageRedemptionKey) {
+        return window.RIPCalculations.getPackageRedemptionKey(r);
+      }
       // Los pagos de Taller suelen guardar la familia en Clasif. pagos, pero
       // los importados antiguos pueden tenerla solo en Clasificación.
       const value = isPagoRow(r) ? (r?.clasifPago || r?.clasif) : r?.clasif;
@@ -1498,7 +1501,7 @@
     state.currentStudentKey = studentKey;
 
     const student = (state.allStudents || []).find((s) => s.key === studentKey);
-    state.currentStudentName = student ? student.name : '';
+    state.currentStudentName = student ? student.name : (state.currentStudentName || '');
     state.currentSearchEntry = getSearchEntryByName(state, state.currentStudentName) || student || null;
     state.__viewYear = '2026';
     ctx.__fichaState = state;
@@ -1637,9 +1640,12 @@
 
   function apiCallEditor(params = {}) {
     if (window.RIPRepository) {
-      if (params.action === 'editRow') return window.RIPRepository.updateRegistroRow(params.rowId, JSON.parse(params.data || '{}')).then(() => ({ ok: true }));
+      // Firebase solo puede editar/eliminar documentos con ID. Las filas
+      // históricas identificadas por rowNum deben continuar por la API del
+      // editor de la hoja; enviarlas a Firestore producía un guardado fallido.
+      if (params.action === 'editRow' && params.rowId) return window.RIPRepository.updateRegistroRow(params.rowId, JSON.parse(params.data || '{}')).then(() => ({ ok: true }));
       if (params.action === 'addRow') return window.RIPRepository.addRegistroRow(JSON.parse(params.data || '{}')).then((r) => ({ ok: true, newId: r.id }));
-      if (params.action === 'deleteRow') return window.RIPRepository.deleteRegistroRow(params.rowId).then(() => ({ ok: true }));
+      if (params.action === 'deleteRow' && params.rowId) return window.RIPRepository.deleteRegistroRow(params.rowId).then(() => ({ ok: true }));
     }
     if (!EDITOR_API_URL) return Promise.reject(new Error('RIP_EDITOR_API_URL no esta configurada'));
     return new Promise((resolve, reject) => {
@@ -1727,7 +1733,9 @@
     modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
     modal.querySelector('.rip-modal-close')?.addEventListener('click', close);
     modal.querySelector('[data-close]')?.addEventListener('click', close);
-    modal.querySelector('[data-save]')?.addEventListener('click', () => {
+    modal.querySelector('[data-save]')?.addEventListener('click', async () => {
+      const saveButton = modal.querySelector('[data-save]');
+      const originalMovement = Number(row?.movimientoSaldo ?? row?.movimiento) || 0;
       const data = {
         tipo: modal.querySelector('#re_tipo')?.value || '',
         estudiante: row.estudiante || '',
@@ -1741,18 +1749,35 @@
         clasifPago: modal.querySelector('#re_clasifPago')?.value || '',
         movimiento: Number(modal.querySelector('#re_movimiento')?.value || 0) || 0
       };
+      const movementWasManuallyChanged = data.movimiento !== originalMovement;
       const isPackagePayment = norm(data.tipo) === 'pago' &&
         /(?:\bP\s*|Paquete\s*(?:de\s*)?)\d+/i.test(data.servicio);
-      if (isPackagePayment && window.RIPCalculations?.computeMovimiento) {
+      // El valor manual manda. Solo inferimos desde el nombre del paquete
+      // cuando la persona no modificó expresamente el campo Movimiento.
+      if (isPackagePayment && !movementWasManuallyChanged && window.RIPCalculations?.computeMovimiento) {
         data.movimiento = window.RIPCalculations.computeMovimiento({
           ...data,
           movimiento: 0,
           movimientoSaldo: 0
         });
-        data.movimientoSaldo = data.movimiento;
       }
-      onSave(data);
-      close();
+      data.movimientoSaldo = data.movimiento;
+      try {
+        if (saveButton) {
+          saveButton.disabled = true;
+          saveButton.textContent = 'Guardando…';
+        }
+        await onSave(data);
+        close();
+      } catch (err) {
+        console.error(err);
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = 'Guardar';
+        }
+        const message = err?.message || String(err || 'No se pudo guardar');
+        window.alert?.('No se pudo guardar: ' + message);
+      }
     });
 
     document.body.appendChild(modal);
@@ -1783,9 +1808,15 @@
       const state = ctx.__fichaState;
 
       if (editBtn) {
-        openRowEditModal(row, (data) => {
+        openRowEditModal(row, async (data) => {
           Object.assign(row, data);
           refreshEditableFicha(ctx, state);
+          const pending = (ctx.__fichaRowsWorking || []).filter(item => {
+            const base = findEditableRowByKey(ctx.__fichaRowsBase || [], getEditableRowKey(item));
+            return base && Object.keys(diffEditablePayload(item, base)).length > 0;
+          }).length;
+          if (ctx.el.btnFichaSaveEdits) ctx.el.btnFichaSaveEdits.textContent = `💾 Guardar cambios (${pending})`;
+          toast(ctx.el.toastWrap, 'Cambio pendiente. Guarda todos los cambios al final.', 'info');
         });
         return;
       }
@@ -1812,13 +1843,13 @@
 
   async function saveEditChanges(ctx, state) {
     const rows = (ctx.__fichaRowsWorking || []).map(cloneRow);
-    const baseMap = new Map((ctx.__fichaRowsBase || []).map((r) => [String(r.id), r]));
+    const baseMap = new Map((ctx.__fichaRowsBase || []).map((r) => [getEditableRowKey(r), r]));
 
     const created = rows.filter((r) => r.__isNew && !r.__deleted);
     const updated = rows
       .filter((r) => !r.__isNew && !r.__deleted)
       .map((r) => {
-        const base = baseMap.get(String(r.id)) || {};
+        const base = baseMap.get(getEditableRowKey(r)) || {};
         const changes = diffEditablePayload(r, base);
         return { row: r, changes };
       })
@@ -1862,13 +1893,18 @@
       return x;
     });
 
-    const others = (state.registro || []).filter((r) => r.estudianteKey !== state.currentStudentKey);
+    // En una ficha de revisión pueden coexistir varios IDs para el mismo
+    // nombre. Reemplazar por estudianteKey dejaba duplicadas o borraba filas
+    // ajenas; se reemplazan únicamente las filas que se estaban editando.
+    const editedIds = new Set((ctx.__fichaRowsBase || []).map(r => String(r?.id || '')).filter(Boolean));
+    const others = (state.registro || []).filter((r) => !editedIds.has(String(r?.id || '')));
     state.registro = window.RIPCalculations?.markDuplicateClasses ? window.RIPCalculations.markDuplicateClasses(others.concat(cleaned)) : others.concat(cleaned);
 
     ctx.__fichaRowsBase = cleaned.map(cloneRow);
     ctx.__fichaRowsWorking = cleaned.map(cloneRow);
     ctx.__fichaEditMode = false;
     toggleEditButtons(ctx, false);
+    if (ctx.el.btnFichaSaveEdits) ctx.el.btnFichaSaveEdits.textContent = '💾 Guardar cambios';
 
     // Evita que una fila eliminada reaparezca por caché local después de guardar.
     try { window.RIPCore?.clearCaches?.(); } catch (_) {}
@@ -1910,12 +1946,26 @@
       const cleanName = String(name || '').trim();
       const cleanKey = String(key || norm(cleanName)).trim();
       if (!cleanName || !cleanKey || cleanKey === targetKey) return;
-      if (!byKey.has(cleanKey)) byKey.set(cleanKey, { name: cleanName, key: cleanKey });
+      if (!byKey.has(cleanKey)) byKey.set(cleanKey, { name: cleanName, key: cleanKey, count: 0, saldo: 0 });
     };
-    (state.allStudents || []).forEach((s) => push(s.name || s.estudiante, s.key || s.nameKey));
-    (state.registro || []).forEach((r) => push(r.estudiante, r.estudianteKey));
+    (state.allStudents || []).forEach((s) => push(s.name || s.estudiante, s.key || s.studentId || s.canonicalStudentId || s.id || s.nameKey));
+    (state.registro || []).forEach((r) => push(r.estudiante, r.groupKey || r.studentId || r.canonicalStudentId || r.estudianteKey));
     (state.searchStudents || []).forEach((s) => push(s.name || s.estudiante, s.currentKey || s.key));
-    return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    for (const row of state.registro || []) {
+      const key = String(row?.groupKey || row?.studentId || row?.canonicalStudentId || row?.estudianteKey || '').trim();
+      const candidate = byKey.get(key);
+      if (!candidate) continue;
+      candidate.count += 1;
+      candidate.saldo += Number(row?.movimientoSaldo ?? row?.movimiento) || 0;
+    }
+    return Array.from(byKey.values()).map((candidate) => {
+      const signedSaldo = `${candidate.saldo > 0 ? '+' : ''}${candidate.saldo}`;
+      const shortKey = candidate.key.length > 12 ? `${candidate.key.slice(0, 6)}…${candidate.key.slice(-4)}` : candidate.key;
+      return {
+        ...candidate,
+        label: `${candidate.name} · saldo ${signedSaldo} · ${candidate.count} mov. · ${shortKey}`
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es') || a.key.localeCompare(b.key));
   }
 
   function openMergeStudentModal(ctx, state) {
@@ -1935,7 +1985,7 @@
 
     const candidates = getMergeCandidateStudents(state, targetKey);
     const options = candidates
-      .map((s) => `<option value="${escapeHTML(s.name)}" data-key="${escapeHTML(s.key)}"></option>`)
+      .map((s) => `<option value="${escapeHTML(s.label)}" data-key="${escapeHTML(s.key)}"></option>`)
       .join('');
 
     const modal = document.createElement('div');
@@ -1976,7 +2026,10 @@
     const resolveSource = () => {
       const raw = String(modal.querySelector('#mergeSourceStudent')?.value || '').trim();
       const key = norm(raw);
-      return candidates.find((s) => s.key === key || norm(s.name) === key) || (raw ? { name: raw, key } : null);
+      const exact = candidates.find((s) => s.key === raw || norm(s.label) === key);
+      if (exact) return exact;
+      const sameName = candidates.filter((s) => norm(s.name) === key);
+      return sameName.length === 1 ? sameName[0] : null;
     };
 
     modal.querySelector('.rip-modal-overlay')?.addEventListener('click', close);
@@ -2038,7 +2091,13 @@
           window.RIPRepository.loadPrimeraVez ? window.RIPRepository.loadPrimeraVez() : Promise.resolve(state.primeraVez || [])
         ]);
         state.registro = registro;
-        state.allStudents = (students || []).map((s) => ({ ...s, name: s.name || s.estudiante || s.id, key: s.nameKey || s.id }));
+        state.allStudents = (students || [])
+          .filter((s) => !(s.legacyAliasOf || s.mergedInto || s.mergedIntoStudentId))
+          .map((s) => ({
+          ...s,
+          name: s.name || s.estudiante || s.id,
+          key: s.studentId || s.canonicalStudentId || s.id || s.nameKey
+          }));
         state.programacion = programacion;
         state.primeraVez = primeraVez;
         try { window.RIPCore?.clearCaches?.(); } catch (_) {}

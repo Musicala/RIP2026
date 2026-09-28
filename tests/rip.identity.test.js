@@ -79,9 +79,46 @@ test('correo único resuelve', () => {
   assert.strictEqual(r.source, 'email');
 });
 
+test('el correo tiene prioridad sobre una variante del nombre', () => {
+  const r = identity.resolveWithIndex(index, { name: 'Ana Perez', email: 'ana@test.com' });
+  assert.strictEqual(r.studentId, 'aB3xK9mP2vR7sT4wX8Zz');
+  assert.strictEqual(r.source, 'email');
+});
+
 test('alias heredado (documento) resuelve sin usarlo como ID', () => {
   const r = identity.resolveWithIndex(index, { aliases: ['CC1030599272'] });
   assert.strictEqual(r.studentId, 'aB3xK9mP2vR7sT4wX8Zz');
+  assert.strictEqual(r.source, 'alias');
+});
+
+test('una ficha canónica fusionada resuelve a su destino', () => {
+  const idx = identity.buildIndex([
+    { id: 'oldCanonicalId1234567', studentId: 'oldCanonicalId1234567', identitySource: 'estudiantes-musicala', name: 'Ana Corta', legacyAliasOf: 'newCanonicalId7654321' },
+    { id: 'newCanonicalId7654321', studentId: 'newCanonicalId7654321', identitySource: 'estudiantes-musicala', name: 'Ana Completa' }
+  ]);
+  assert.strictEqual(identity.resolveWithIndex(idx, { name: 'Ana Corta' }).studentId, 'newCanonicalId7654321');
+});
+
+test('el campo mergedInto agrupa el studentId anterior en el destino', () => {
+  const idx = identity.buildIndex([
+    { id: 'oldCanonicalId1234567', studentId: 'oldCanonicalId1234567', identitySource: 'estudiantes-musicala', name: 'Jóvenes Ingenieros', mergedInto: 'newCanonicalId7654321' },
+    { id: 'newCanonicalId7654321', studentId: 'newCanonicalId7654321', identitySource: 'estudiantes-musicala', name: 'Jóvenes Ingenieros' }
+  ]);
+  const resolved = identity.resolveWithIndex(idx, { studentId: 'oldCanonicalId1234567' });
+  assert.strictEqual(resolved.studentId, 'newCanonicalId7654321');
+  assert.strictEqual(resolved.source, 'mergedStudentId');
+});
+
+test('un nombre guardado en mergedFrom sigue resolviendo tras una fusión antigua', () => {
+  const idx = identity.buildIndex([
+    {
+      id: 'newCanonicalId7654321', studentId: 'newCanonicalId7654321',
+      identitySource: 'estudiantes-musicala', name: 'Young engineers',
+      mergedFrom: ['jovenes ingenieros']
+    }
+  ]);
+  const r = identity.resolveWithIndex(idx, { name: 'Jovenes ingenieros', aliases: ['jovenes ingenieros'] });
+  assert.strictEqual(r.studentId, 'newCanonicalId7654321');
   assert.strictEqual(r.source, 'alias');
 });
 
@@ -101,6 +138,20 @@ test('HOMÓNIMOS: dos estudiantes con el mismo nombre NO se mezclan', () => {
 test('el homónimo se distingue por correo', () => {
   const r = identity.resolveWithIndex(index, { name: 'Juan Gómez', email: 'juan2@test.com' });
   assert.strictEqual(r.studentId, 'Kp3sD8fG1hJ6kL9mN2Qr');
+});
+
+test('hermanos con correo de acudiente se distinguen por el nombre exacto de la reserva', () => {
+  const idx = identity.buildIndex([
+    { id: 'AnaSarmiento001234567', studentId: 'AnaSarmiento001234567', identitySource: 'estudiantes-musicala', name: 'Ana Victoria Sarmiento Bermudez', emails: ['familia@test.com'] },
+    { id: 'JuanSarmiento0123456', studentId: 'JuanSarmiento0123456', identitySource: 'estudiantes-musicala', name: 'Juan Luis Sarmiento Bermudez', emails: ['familia@test.com'] }
+  ]);
+  const ana = identity.resolveWithIndex(idx, { name: 'Ana Victoria Sarmiento Bermudez', email: 'familia@test.com' });
+  const juan = identity.resolveWithIndex(idx, { name: 'Juan Luis Sarmiento Bermudez', email: 'familia@test.com' });
+  const ambiguous = identity.resolveWithIndex(idx, { name: 'Acudiente Sarmiento', email: 'familia@test.com' });
+  assert.strictEqual(ana.studentId, 'AnaSarmiento001234567');
+  assert.strictEqual(ana.source, 'email+name');
+  assert.strictEqual(juan.studentId, 'JuanSarmiento0123456');
+  assert.strictEqual(ambiguous.ambiguous, true);
 });
 
 test('un studentId canónico NUNCA se normaliza como llave de documento', () => {
