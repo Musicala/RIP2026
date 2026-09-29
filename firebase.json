@@ -16,6 +16,8 @@
       ".agents/**",
       ".claude/**",
       ".vscode/**",
+      "functions/**",
+      "tools/**",
       "tests/**",
       "README_PDF_FIX.txt",
       "membrete_b64_temp.txt"

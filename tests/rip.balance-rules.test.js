@@ -76,6 +76,21 @@ test('Mañanas con Arte se comporta como MS G', () => {
   );
 });
 
+test('Safe Mode usa el contador de talleres', () => {
+  assert.deepEqual(
+    C.classifyMovimiento({ tipo: 'Pago', servicio: 'Safe Mode Paquete de 4 clases' }),
+    { clasif: 'Taller', clasifPago: '' }
+  );
+  assert.deepEqual(
+    C.classifyMovimiento({ tipo: 'Clase', servicio: 'Safe Mode' }),
+    { clasif: 'Taller', clasifPago: '' }
+  );
+  assert.equal(
+    C.getPackageRedemptionKey({ tipo: 'Clase', servicio: 'Safe Mode' }),
+    C.getPackageRedemptionKey({ tipo: 'Clase', servicio: 'Taller de arte' })
+  );
+});
+
 test('un No clasificado heredado no bloquea el reconocimiento actualizado', () => {
   assert.deepEqual(
     C.classifyMovimiento({ tipo: 'Clase', servicio: 'MS: Piano', clasif: 'No clasificado' }),

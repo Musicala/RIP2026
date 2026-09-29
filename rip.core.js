@@ -211,7 +211,7 @@
     if (isTrialText(servicio, comentarioRaw)) return { clasifAuto: 'Prueba', clasifPagoAuto: isPago ? 'Prueba' : '' };
     if (isCourtesyText(servicio, comentarioRaw)) return { clasifAuto: 'Cortesia', clasifPagoAuto: isPago ? 'Cortesia' : '' };
     if (isPago) {
-      if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
+      if (test(s, /OpenHouse|Taller|Safe\s*Mode/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
       if (test(s, /musigym/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Musigym' };
       if (test(s, /Musifamiliar/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'MF' };
       if (test(s, /Ensamble/i)) return { clasifAuto: 'Pago', clasifPagoAuto: clasifPago || 'Ensamble' };
@@ -228,7 +228,7 @@
     if (test(s, /Musifamiliar/i)) return { clasifAuto: 'MF', clasifPagoAuto: '' };
     if (test(s, /Ensamble/i)) return { clasifAuto: 'Ensamble', clasifPagoAuto: '' };
     if (test(s, /FSA/i)) return { clasifAuto: 'FSA', clasifPagoAuto: '' };
-    if (test(s, /OpenHouse|Taller/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
+    if (test(s, /OpenHouse|Taller|Safe\s*Mode/i)) return { clasifAuto: 'Taller', clasifPagoAuto: '' };
     if (test(s, /vacacional/i)) return { clasifAuto: 'TV', clasifPagoAuto: '' };
     if (test(s, /spaces/i)) return { clasifAuto: 'Spaces', clasifPagoAuto: '' };
     if (test(s, /musigym/i)) return { clasifAuto: 'Musigym', clasifPagoAuto: '' };
@@ -377,6 +377,40 @@
     "2025": { fecha: 4, nombre: 3 }
   };
   const histLastClassCache = new Map(); // year -> Map(studentKey -> lastTs)
+  let identityAliasMap = new Map();
+
+  function setIdentityDirectory(students) {
+    const next = new Map();
+    const canonicalByName = new Map();
+
+    for (const student of students || []) {
+      const mergedTarget = String(student?.legacyAliasOf || student?.mergedInto || student?.mergedIntoStudentId || '').trim();
+      const ownId = String(student?.officialStudentId || student?.canonicalStudentId || student?.studentId || student?.id || '').trim();
+      if (mergedTarget) {
+        for (const rawAlias of [student?.id, student?.studentId, student?.officialStudentId, student?.canonicalStudentId]) {
+          const alias = String(rawAlias || '').trim();
+          if (alias && alias !== mergedTarget) next.set(alias, mergedTarget);
+        }
+        continue;
+      }
+      const nameKey = String(student?.nameKey || student?.estudianteKey || '').trim() || norm(student?.name || student?.estudiante);
+      if (!nameKey || !ownId) continue;
+      if (!canonicalByName.has(nameKey)) canonicalByName.set(nameKey, new Set());
+      canonicalByName.get(nameKey).add(ownId);
+      for (const linkedId of Array.isArray(student?.linkedStudentIds) ? student.linkedStudentIds : []) {
+        const alias = String(linkedId || '').trim();
+        if (alias && alias !== ownId) next.set(alias, ownId);
+      }
+    }
+
+    for (const [nameKey, ids] of canonicalByName.entries()) {
+      if (ids.size === 1) next.set(nameKey, [...ids][0]);
+    }
+    identityAliasMap = next;
+    return new Map(identityAliasMap);
+  }
+
+  RIPCore.setIdentityDirectory = setIdentityDirectory;
 
   function buildFirebasePack(registro, students, programacion, computed) {
     const calc = window.RIPCalculations;
@@ -458,6 +492,7 @@
       const targetKey = String(target || '').trim();
       if (legacyKey && targetKey) aliasMap.set(legacyKey, targetKey);
     }
+    identityAliasMap = new Map(aliasMap);
 
     // Una identidad "por revisar" puede abarcar filas recientes anotadas con
     // identityClusterKey y filas antiguas que solo conservan nameKey como
@@ -1150,6 +1185,7 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
   // =========================
   RIPCore.getStudentFicha = (registro, studentKey) => {
     const calc = window.RIPCalculations;
+    const resolvedStudentKey = String(identityAliasMap.get(String(studentKey || '').trim()) || studentKey || '').trim();
     const reviewNameKey = String(studentKey || '').startsWith('review:name:')
       ? String(studentKey).slice('review:name:'.length)
       : '';
@@ -1162,8 +1198,11 @@ RIPCore.loadAll = async ({ force = false, includeHistorical = false } = {}) => {
       // sí sola; solo permite ver y editar los registros que estaban bloqueados.
       if (reviewNameKey) return norm(r?.estudianteKey || r?.estudiante || r?.name) === reviewNameKey;
       const resolved = String(r?.groupKey || '').trim();
-      if (resolved) return resolved === studentKey;
-      return calc?.matchesStudentKey ? calc.matchesStudentKey(r, studentKey) : r.estudianteKey === studentKey;
+      if (resolved) return resolved === resolvedStudentKey;
+      const rowKey = calc?.getStudentGroupingKey
+        ? calc.getStudentGroupingKey(r, identityAliasMap)
+        : String(r?.studentId || r?.estudianteKey || '').trim();
+      return rowKey === resolvedStudentKey;
     });
     const subset = getMusigymRows(studentRows);
     for (const r of subset) {

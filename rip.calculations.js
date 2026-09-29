@@ -375,7 +375,7 @@
     if (tipo === 'pago') {
       // Taller/OpenHouse conserva su propia familia de paquete para que un
       // taller no consuma ni quede detrás de paquetes grupales o vacacionales.
-      if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
+      if (/openhouse|taller|safe\s*mode/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
       if (s.includes('musigym')) return { clasif: 'Pago', clasifPago: 'Musigym' };
       if (s.includes('musifamiliar')) return { clasif: 'Pago', clasifPago: 'MF' };
       if (s.includes('ensamble')) return { clasif: 'Pago', clasifPago: 'Ensamble' };
@@ -392,7 +392,7 @@
     if (s.includes('musifamiliar')) return { clasif: 'MF', clasifPago: '' };
     if (s.includes('ensamble')) return { clasif: 'Ensamble', clasifPago: '' };
     if (s.includes('fsa')) return { clasif: 'FSA', clasifPago: '' };
-    if (/openhouse|taller/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
+    if (/openhouse|taller|safe\s*mode/i.test(servicio)) return { clasif: 'Taller', clasifPago: '' };
     if (s.includes('vacacional')) return { clasif: 'TV', clasifPago: '' };
     if (s.includes('spaces')) return { clasif: 'Spaces', clasifPago: '' };
     if (s.includes('musigym')) return { clasif: 'Musigym', clasifPago: '' };
@@ -453,24 +453,36 @@
   }
 
   function isTrialCP(row) {
-    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    // En pagos, el comentario puede describir la composición del paquete
+    // (p. ej. "17 individuales + 1 prueba") sin convertir todo el pago en CP.
+    const comentario = norm(row?.tipo) === 'pago' ? '' : (row?.comentario || '');
+    const txt = norm(`${row?.servicio || ''} ${comentario} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
     const trial = /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
-    return trial && (/\bcp\b/.test(txt) || norm(row?.tipo) === 'pago');
+    // Un pago de prueba individual ordinario es "Prueba". Las pruebas
+    // grupales de sede se redimen como CP aun cuando el nombre legado no
+    // traiga la sigla.
+    const isImplicitGroupCP = norm(row?.tipo) === 'pago'
+      && /\bsede\b/.test(txt)
+      && /\bgrupal\b/.test(txt);
+    return trial && (/\bcp\b/.test(txt) || isImplicitGroupCP);
   }
 
   function isCourtesyCC(row) {
-    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
+    const comentario = norm(row?.tipo) === 'pago' ? '' : (row?.comentario || '');
+    const txt = norm(`${row?.servicio || ''} ${comentario} ${row?.clasif || ''} ${row?.clasifPago || ''}`);
     const courtesy = /\b(cortesia|gratis|obsequio)\b/.test(txt);
     return courtesy && (/\bcc\b/.test(txt) || norm(row?.tipo) === 'pago');
   }
 
   function isTrial(row) {
-    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''}`);
+    const comentario = norm(row?.tipo) === 'pago' ? '' : (row?.comentario || '');
+    const txt = norm(`${row?.servicio || ''} ${comentario}`);
     return /\b(prueba|clase de prueba|trial|diagnostico|diagnostica)\b/.test(txt);
   }
 
   function isCourtesy(row) {
-    const txt = norm(`${row?.servicio || ''} ${row?.comentario || ''}`);
+    const comentario = norm(row?.tipo) === 'pago' ? '' : (row?.comentario || '');
+    const txt = norm(`${row?.servicio || ''} ${comentario}`);
     return /\b(cortesia|cortesía|gratis|obsequio)\b/.test(txt);
   }
 
