@@ -146,7 +146,10 @@
       ],
       aliases: [
         { match: 'MS: Musicalitos - Exploración Músical', value: 'Iniciación musical' },
-        { match: 'MS: Musicalitos - Exploración Musical', value: 'Iniciación musical' }
+        { match: 'MS: Musicalitos - Exploración Musical', value: 'Iniciación musical' },
+        // La inscripción grupal no nombra un instrumento individual, pero sí
+        // identifica de forma segura la familia usada por Muestras Artísticas.
+        { match: 'Musigrandes Cuerdas Frotadas', value: 'Cuerdas frotadas' }
       ]
     },
     danza: {
